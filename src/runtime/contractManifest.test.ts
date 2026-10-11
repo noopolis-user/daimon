@@ -9,7 +9,7 @@ test("runtime contract manifest is data-only and deterministic", () => {
   assert.equal(first, canonicalJson(RUNTIME_CONTRACT_MANIFEST));
   assert.deepEqual(Object.keys(ENGINE_CREDENTIAL_MATERIAL), ["codex"]);
   assert.deepEqual(RUNTIME_CONTRACT_MANIFEST.supportedEngineKinds, ["agy", "codex", "grok"]);
-  assert.equal(RUNTIME_CONTRACT_MANIFEST_VERSION, "noopolis.daimon.runtime-contract-manifest.v3");
+  assert.equal(RUNTIME_CONTRACT_MANIFEST_VERSION, "noopolis.daimon.runtime-contract-manifest.v4");
   assert.equal(RUNTIME_CONTRACT_MANIFEST.organizationRuntimeConfigV2Schema.$id, "noopolis.daimon.organization-runtime.v2");
   assert.deepEqual(RUNTIME_CONTRACT_MANIFEST.wakeAcceptanceTypes, ["manual", "message", "schedule", "external"]);
   assert.deepEqual(RUNTIME_CONTRACT_MANIFEST.deliverySemantics, {

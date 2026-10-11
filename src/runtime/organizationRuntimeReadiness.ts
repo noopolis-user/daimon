@@ -19,7 +19,7 @@ export async function prepareProductionReadiness(
   config: OrganizationRuntimeConfig
 ): Promise<OrganizationRuntimeHostReadiness> {
   const clock = readTaskClock();
-  for (const agent of config.agents) reportEngineTaskClockGap(agent.engine.kind, agent.engine.kind === "grok");
+  for (const agent of config.agents) reportEngineTaskClockGap(agent.engine.kind);
   if (config.agents.some((agent) => agent.memory !== undefined)) memoryClockOptions(clock);
   const paths = await prepareOrganizationRuntimePaths(config.agents);
   let realm: AgySubscriptionRealm | undefined;

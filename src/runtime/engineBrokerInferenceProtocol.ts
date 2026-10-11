@@ -5,11 +5,11 @@ import type { GrokBrokerModel, GrokBrokerReasoningEffort } from "./grokBrokerMod
 import type { GrokInferencePurpose } from "./inferenceUsageLedger.js";
 
 /**
- * Evaluator inference grant frames, additive kinds of control protocol v2.
+ * Evaluator inference grant frames, introduced in v2 and carried by current v3.
  *
  * Both ends ship in this package (the organization-side client and the broker
- * service), so the kinds join v2 without a version bump; a broker that
- * predates them refuses the unknown kind and closes the connection, which the
+ * service), the kinds originally joined v2 without a version bump. A broker that
+ * predates a kind refuses it and closes the connection, which the
  * client reports as `unavailable`. The native relay forwards frames opaquely
  * and admits only the organization uid on `control.sock` (`SO_PEERCRED`), so
  * that check is what limits grants to the evaluator side.
@@ -22,7 +22,7 @@ export const ENGINE_BROKER_INFERENCE_FAILURE_CODES = SPEC.failureCodes;
 export type EngineBrokerInferenceFailureCode = (typeof ENGINE_BROKER_INFERENCE_FAILURE_CODES)[number];
 export const GROK_INFERENCE_PROXY_BASE_URL = `http://${GROK_ENGINE_BROKER.providerProxy.host}:${GROK_ENGINE_BROKER.providerProxy.port}/v1` as const;
 
-type V = "noopolis.daimon.engine-broker.v2";
+type V = typeof GROK_ENGINE_BROKER.controlProtocolVersion;
 export type EngineBrokerInferenceRequest =
   | Readonly<{ version: V; kind: "request_inference_grant"; requestId: string; model: GrokBrokerModel; reasoningEffort: GrokBrokerReasoningEffort; purpose: GrokInferencePurpose }>
   | Readonly<{ version: V; kind: "release_inference_grant"; requestId: string; grantId: string }>;
@@ -38,7 +38,7 @@ const member = <T extends string>(list: readonly T[], value: unknown): T => { if
 const grantId = (value: unknown): string => { if (typeof value !== "string" || !/^[a-f0-9]{32}$/u.test(value)) throw invalid(); return value; };
 const TOKEN = new RegExp(`^${SPEC.tokenPrefix}[A-Za-z0-9_-]{43}$`, "u");
 
-/** `input` has already passed the v2 envelope checks; `requestId` is the parsed id. */
+/** `input` has already passed the current envelope checks; `requestId` is the parsed id. */
 export function parseEngineBrokerInferenceRequest(input: JsonRecord, requestId: string, version: V): EngineBrokerInferenceRequest {
   if (input.kind === "request_inference_grant") {
     exact(input, ["version", "kind", "requestId", "model", "reasoningEffort", "purpose"]);

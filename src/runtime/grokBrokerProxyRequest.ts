@@ -32,15 +32,28 @@ export function authorizeGrokBrokerProxyRequest(input: GrokBrokerProxyInput, cap
   let parsed: Record<string, unknown>;
   // `__proto__` is refused at any depth: JSON.parse makes it an ordinary own
   // member, but an upstream JavaScript parser may treat it as a prototype.
-  try { parsed = JSON.parse(Buffer.from(input.body).toString("utf8"), (key, value: unknown) => { if (key === "__proto__") throw new Error(); return value; }) as Record<string, unknown>; } catch { throw new Error("broker proxy request rejected"); }
+  try {
+    parsed = JSON.parse(Buffer.from(input.body).toString("utf8"), (key, value: unknown) => {
+      if (key === "__proto__") throw new Error("broker proxy request rejected");
+      return value;
+    }) as Record<string, unknown>;
+  } catch { throw new Error("broker proxy request rejected"); }
   if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed) || parsed.stream !== true || !Array.isArray(parsed.messages)) throw new Error("broker proxy request rejected");
   if (parsed.model !== declared.model || parsed.reasoning_effort !== declared.reasoningEffort) throw new Error("broker proxy request rejected");
   if (!exactLeanTools(parsed.tools)) throw new Error("broker proxy request rejected");
   if (Object.keys(parsed).some((key) => !LEAN_BODY_MEMBERS.has(key)) || !validStreamOptions(parsed.stream_options)) throw new Error("broker proxy request rejected");
-  // Forward what was validated, never the worker's bytes: JSON.parse keeps the
-  // last of duplicate keys, and an upstream that keeps the first would
-  // otherwise see a different `tools`/`model`/`reasoning_effort` than the gate.
-  return { url: "https://cli-chat-proxy.grok.com/v1/chat/completions", headers: { authorization: `Bearer ${bearer}`, "content-type": "application/json", "x-xai-token-auth": "xai-grok-cli", "x-grok-model-override": declared.model, "x-grok-client-version": clientVersion, "x-grok-client-identifier": "grok-shell" }, body: Buffer.from(JSON.stringify(parsed)) };
+  // Keep origin/main's production handling: UTF-8 replacement decoding, then
+  // serialize the validated object (including last-member-wins duplicates).
+  // Only a clocked turn takes the stricter date rewrite before this gate.
+  return {
+    url: "https://cli-chat-proxy.grok.com/v1/chat/completions",
+    headers: {
+      authorization: `Bearer ${bearer}`, "content-type": "application/json",
+      "x-xai-token-auth": "xai-grok-cli", "x-grok-model-override": declared.model,
+      "x-grok-client-version": clientVersion, "x-grok-client-identifier": "grok-shell"
+    },
+    body: Buffer.from(JSON.stringify(parsed))
+  };
 }
 
 /** Top-level members of a Grok 1.0.34 lean worker chat-completions body (live stub capture). */

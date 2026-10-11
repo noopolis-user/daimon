@@ -1,12 +1,21 @@
+import { brokerClockObservation, type BrokerClockObservation } from "./grokBrokerTaskClock.js";
 import { chmod, lstat, unlink } from "node:fs/promises";
 import { createServer, type Server, type Socket } from "node:net";
-import { encodeEngineBrokerFrame,EngineBrokerFrameDecoder,parseEngineBrokerRequest,type EngineBrokerResponse } from "./engineBrokerProtocol.js";
+import {
+  encodeEngineBrokerFrame, EngineBrokerFrameDecoder, EngineBrokerProtocolMismatch,
+  parseEngineBrokerRequest, type EngineBrokerCleanupObservation, type EngineBrokerResponse
+} from "./engineBrokerProtocol.js";
 import type { EngineBrokerTurnAccounting, EngineBrokerTurnLimitOverrides } from "./engineBrokerTurnAccounting.js";
 import { EngineBrokerTurnFailure } from "./grokEngineBroker.js";
 import { GROK_INFERENCE_PROXY_BASE_URL, type EngineBrokerInferenceRequest } from "./engineBrokerInferenceProtocol.js";
 import { GrokInferenceGrantRefused, type GrokInferenceGrantIssued, type GrokInferenceGrantRequest } from "./grokInferenceGrants.js";
 export interface EngineBrokerServiceEngine {
-  turn(agentId:string,wakeId:string,prompt:string,mcpEndpoint:string,signal?:AbortSignal,limits?:EngineBrokerTurnLimitOverrides):Promise<Readonly<{text:string;workerPid:number;workerUid:number;workerStartTime:string}>&EngineBrokerTurnAccounting>;
+  turn(
+    agentId: string, wakeId: string, prompt: string, mcpEndpoint: string,
+    signal?: AbortSignal, limits?: EngineBrokerTurnLimitOverrides, processClock?: string
+  ): Promise<Readonly<{
+    text: string; workerPid: number; workerUid: number; workerStartTime: string;
+  }> & EngineBrokerTurnAccounting & BrokerClockObservation & EngineBrokerCleanupObservation>;
   readiness():Readonly<{providerProxyPort:number;mcpFacadePort:number;registrations:number;credentialStale:boolean;realmLease:boolean;workerIsolation:boolean}>;
   close():Promise<void>;
   /** Evaluator inference grants; an engine without them refuses every grant request as `unavailable`. Refusals throw {@link GrokInferenceGrantRefused}. */
@@ -19,7 +28,12 @@ export function startEngineBrokerService(broker:EngineBrokerServiceEngine,socket
 }
 export async function startEngineBrokerServiceWithIdentity(broker:EngineBrokerServiceEngine,socketPath:string,expectedUid:number){
   if(process.getuid?.()!==expectedUid)throw new Error("engine broker service requires broker identity");await removeOwnedSocket(socketPath,expectedUid);const active=new Map<string,AbortController>(),connections=new Set<Socket>();
-  const server=createServer((socket)=>{connections.add(socket);socket.once("close",()=>connections.delete(socket));handle(socket,broker,active);});await listen(server,socketPath);
+  const server = createServer((socket) => {
+    connections.add(socket);
+    socket.once("close", () => connections.delete(socket));
+    serveEngineBrokerConnection(socket, broker, active);
+  });
+  await listen(server, socketPath);
   try{await chmod(socketPath,0o600);await verifySocket(socketPath,expectedUid);}catch(error){await closeServer(server,connections);await unlink(socketPath).catch(()=>undefined);throw error;}
   let closed=false;return {close:async()=>{if(closed)return;closed=true;for(const controller of active.values())controller.abort();const results=await Promise.allSettled([closeServer(server,connections),broker.close()]);await unlink(socketPath).catch(()=>undefined);const failures=results.flatMap((result)=>result.status==="rejected"?[result.reason]:[]);if(failures.length)throw new AggregateError(failures,"engine broker service shutdown failed");},health:()=>({activeTurns:active.size,socketPath})};
 }
@@ -42,7 +56,74 @@ export async function startEngineBrokerServiceWithIdentity(broker:EngineBrokerSe
  * reader has disconnected.
  */
 function handleSocketError(socket:Socket,owned:()=>Readonly<{turnId:string;controller:AbortController}>|undefined):void{socket.on("error",()=>{owned()?.controller.abort();socket.destroy();});}
-function handle(socket:Socket,broker:EngineBrokerServiceEngine,active:Map<string,AbortController>):void{const decoder=new EngineBrokerFrameDecoder();let started=false,owned:Readonly<{turnId:string;controller:AbortController}>|undefined;handleSocketError(socket,()=>owned);socket.once("close",()=>owned?.controller.abort());socket.on("data",(chunk)=>{try{for(const value of decoder.push(chunk)){const request=parseEngineBrokerRequest(value);if(request.kind==="health"){if(started)throw new Error();started=true;const ready=broker.readiness();if(ready.providerProxyPort!==43123||ready.mcpFacadePort!==43124||ready.registrations<1||ready.credentialStale||!ready.realmLease||!ready.workerIsolation)throw new Error();return send(socket,{version:request.version,kind:"ready",requestId:request.requestId,brokerUid:2100,providerProxyPort:43123,mcpFacadePort:43124,registrations:ready.registrations,credentialStale:false,realmLease:true,workerIsolation:true});}if(request.kind==="cancel_turn"){active.get(request.turnId)?.abort();continue;}if(request.kind==="request_inference_grant"||request.kind==="release_inference_grant"){if(started)throw new Error();started=true;serveInferenceGrant(socket,broker,request);continue;}if(started||active.has(request.turnId))throw new Error();started=true;const controller=new AbortController();owned={turnId:request.turnId,controller};active.set(request.turnId,controller);socket.write(encodeEngineBrokerFrame({version:request.version,kind:"accepted",requestId:request.requestId,turnId:request.turnId}));void broker.turn(request.agentId,request.wakeId,request.prompt,request.mcpEndpoint,controller.signal,request.limits).then((result)=>send(socket,{version:request.version,kind:"completed",requestId:request.requestId,turnId:request.turnId,text:result.text,workerPid:result.workerPid,workerUid:result.workerUid,workerStartTime:result.workerStartTime,outcome:"completed",usage:result.usage,model:result.model,requests:result.requests,limitReason:"none"}),(error:unknown)=>failed(socket,request,error,controller.signal.aborted)).finally(()=>{if(active.get(request.turnId)===controller)active.delete(request.turnId);owned=undefined;});}}catch{socket.destroy();}});}
+/** @internal The production connection handler, also exercised over an in-memory transport. */
+export function serveEngineBrokerConnection(
+  socket: Socket, broker: EngineBrokerServiceEngine, active = new Map<string, AbortController>()
+): void {
+  const decoder = new EngineBrokerFrameDecoder();
+  let started = false;
+  let owned: Readonly<{ turnId: string; controller: AbortController }> | undefined;
+  handleSocketError(socket, () => owned);
+  socket.once("close", () => owned?.controller.abort());
+  socket.on("data", (chunk) => {
+    try {
+      for (const value of decoder.push(chunk)) {
+        const request = parseEngineBrokerRequest(value);
+        if (request.kind === "health") {
+          if (started) throw new Error();
+          started = true;
+          const ready = broker.readiness();
+          if (ready.providerProxyPort !== 43123 || ready.mcpFacadePort !== 43124 ||
+              ready.registrations < 1 || ready.credentialStale || !ready.realmLease || !ready.workerIsolation) {
+            throw new Error();
+          }
+          return send(socket, {
+            version: request.version, kind: "ready", requestId: request.requestId, brokerUid: 2100,
+            providerProxyPort: 43123, mcpFacadePort: 43124, registrations: ready.registrations,
+            credentialStale: false, realmLease: true, workerIsolation: true
+          });
+        }
+        if (request.kind === "cancel_turn") {
+          active.get(request.turnId)?.abort();
+          continue;
+        }
+        if (request.kind === "request_inference_grant" || request.kind === "release_inference_grant") {
+          if (started) throw new Error();
+          started = true;
+          serveInferenceGrant(socket, broker, request);
+          continue;
+        }
+        if (started || active.has(request.turnId)) throw new Error();
+        started = true;
+        const controller = new AbortController();
+        owned = { turnId: request.turnId, controller };
+        active.set(request.turnId, controller);
+        socket.write(encodeEngineBrokerFrame({
+          version: request.version, kind: "accepted", requestId: request.requestId, turnId: request.turnId
+        }));
+        void broker.turn(
+          request.agentId, request.wakeId, request.prompt, request.mcpEndpoint,
+          controller.signal, request.limits, request.processClock
+        ).then((result) => send(socket, {
+          version: request.version, kind: "completed", requestId: request.requestId, turnId: request.turnId,
+          text: result.text, ...brokerClockObservation(result.shellClock, result.providerClock),
+          ...(result.cleanupDiagnostic === undefined ? {} : { cleanupDiagnostic: result.cleanupDiagnostic }),
+          workerPid: result.workerPid, workerUid: result.workerUid, workerStartTime: result.workerStartTime,
+          outcome: "completed", usage: result.usage, model: result.model, requests: result.requests, limitReason: "none"
+        }), (error: unknown) => failed(socket, request, error, controller.signal.aborted)).finally(() => {
+          if (active.get(request.turnId) === controller) active.delete(request.turnId);
+          owned = undefined;
+        });
+      }
+    } catch (error) {
+      if (error instanceof EngineBrokerProtocolMismatch && !socket.writableEnded) {
+        // Flush one small, closed diagnostic before FIN; destroy would lose it.
+        socket.pause();
+        socket.end(encodeEngineBrokerFrame(error.diagnostic));
+      } else socket.destroy();
+    }
+  });
+}
 /**
  * Every failure the broker raises for a known registration carries its
  * accounting (a wake that tried to raise a limit: `usage: null`, zero
@@ -54,7 +135,15 @@ function failed(socket:Socket,request:Extract<ReturnType<typeof parseEngineBroke
   const accounting=error instanceof EngineBrokerTurnFailure?error.accounting:undefined;
   if(accounting===undefined){socket.destroy();return;}
   const code=error instanceof EngineBrokerTurnFailure?error.code:aborted?"cancelled":"engine_failed";
-  send(socket,{version:request.version,kind:"failed",requestId:request.requestId,turnId:request.turnId,code,...(error instanceof EngineBrokerTurnFailure&&error.diagnostic?{diagnostic:error.diagnostic}:{}),...(error instanceof EngineBrokerTurnFailure&&error.mcpCalls?{mcpCalls:error.mcpCalls}:{}),outcome:"failed",usage:accounting.usage,model:accounting.model,requests:accounting.requests,limitReason:accounting.limitReason});
+  send(socket, {
+    version: request.version, kind: "failed", requestId: request.requestId, turnId: request.turnId, code,
+    ...(error instanceof EngineBrokerTurnFailure ? brokerClockObservation(error.shellClock, error.providerClock) : {}),
+    ...(error instanceof EngineBrokerTurnFailure && error.diagnostic ? { diagnostic: error.diagnostic } : {}),
+    ...(error instanceof EngineBrokerTurnFailure && error.mcpCalls ? { mcpCalls: error.mcpCalls } : {}),
+    ...(error instanceof EngineBrokerTurnFailure && error.cleanupDiagnostic ? { cleanupDiagnostic: error.cleanupDiagnostic } : {}),
+    outcome: "failed", usage: accounting.usage, model: accounting.model,
+    requests: accounting.requests, limitReason: accounting.limitReason
+  });
 }
 /** One grant verb per connection, answered and closed; any failure becomes a closed-code refusal and never touches turn state. */
 function serveInferenceGrant(socket:Socket,broker:EngineBrokerServiceEngine,request:EngineBrokerInferenceRequest):void{

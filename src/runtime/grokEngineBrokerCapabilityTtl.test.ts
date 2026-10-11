@@ -26,7 +26,7 @@ const runWith = async (timeoutMs: number, overrides?: Parameters<typeof runGrokE
       },
       mcp: { register: (_agent, _turn, _endpoint, ttlMs) => { issued.mcp = ttlMs; return "mcp-capability-0123456789abcdef"; }, revoke: () => undefined },
       credentialStale: () => false,
-      prepareIsolation: async () => async () => undefined,
+      prepareIsolation: async () => ({ guard: async () => undefined, configVariant: "unclocked" }),
       runNative: async () => { throw new Error("worker not needed: the capabilities were already issued"); }
     };
     await runGrokEngineBrokerTurn(deps, registration, "wake-ttl", "prompt", "http://127.0.0.1:43124/mcp", undefined, overrides).catch(() => undefined);
