@@ -13,14 +13,25 @@ const config = { version: "noopolis.daimon.organization-runtime.v2", host: { bin
 const options = { slot: 0, workerUid: 2_200, workerHomePath: "/var/lib/daimon-workers/2200", architecture: "arm64", usageLedgerPath: "/run/slots/0/usage/usage.jsonl",
   limits: { maxRequests: 24, maxTokens: 400_000, timeoutMs: 480_000 }, acceptanceStorePath: "/run/paideia/control", denyPaths: ["/run/paideia", "/run/training/inputs"], seccompProfileSha256: "7".repeat(64) } as const;
 
+test("clocked projection binds the alternate config pin and the slot provisioning contract", () => {
+  const plain = resolveOrganizationGrokBrokerProjection(config, "foreman", options);
+  const clocked = resolveOrganizationGrokBrokerProjection(config, "foreman", { ...options, workerConfigVariant: "clocked" });
+  assert.equal(clocked.workerConfigVariant, "clocked");
+  assert.equal(clocked.workerConfigSha256, GROK_ENGINE_BROKER.worker.clockedConfigSha256["grok-4.6"].low);
+  assert.deepEqual(clocked.taskClock, GROK_ENGINE_BROKER.worker.taskClock);
+  assert.equal(plain.taskClock, undefined);
+  assert.notEqual(grokBrokerProjectionSha256(plain), grokBrokerProjectionSha256(clocked));
+  assert.throws(() => resolveOrganizationGrokBrokerProjection(config, "foreman", { ...options, workerConfigVariant: "clocked", denyPaths: ["/run/daimon-engine-broker"] }), /clock path is denied/u);
+});
+
 test("the projection is Daimon's own renderers and collectors, fully declared and deterministic", () => {
   const projection = resolveOrganizationGrokBrokerProjection(config, "foreman", options);
   const denyPaths = [GROK_SUBSCRIPTION_REALM.bootstrapMountPath, GROK_SUBSCRIPTION_REALM.durableMountPath, "/run/paideia/control", "/var/lib/spawnfile/instance/homes/peer", "/var/lib/spawnfile/instance/workspace/agents/peer", "/run/paideia", "/run/training/inputs"].sort();
   assert.deepEqual(projection, {
-    version: "noopolis.daimon.grok-broker-projection.v1", agentId: "foreman",
+    version: "noopolis.daimon.grok-broker-projection.v2", agentId: "foreman",
     workspacePath: "/var/lib/spawnfile/instance/workspace/agents/foreman", runtimeHomePath: "/var/lib/spawnfile/instance/homes/foreman",
     workerUid: 2_200, slot: 0, profilePath: "/var/lib/daimon-workers/2200/.grok/sandbox.toml", profileSha256: grokWorkerSandboxProfileSha256(denyPaths), denyPaths,
-    workerConfigSha256: grokBrokerWorkerConfigSha256({ model: "grok-4.6", reasoningEffort: "low" }), systemPromptSha256: GROK_ENGINE_BROKER.worker.systemPromptSha256,
+    workerConfigVariant: "unclocked", workerConfigSha256: grokBrokerWorkerConfigSha256({ model: "grok-4.6", reasoningEffort: "low" }), systemPromptSha256: GROK_ENGINE_BROKER.worker.systemPromptSha256,
     grokCliVersion: "1.0.34", grokExecutableSha256: GROK_ENGINE_BROKER.grokCliArtifacts.arm64.sha256, nativeAbiVersion: GROK_ENGINE_BROKER.nativeAbiVersion,
     model: "grok-4.6", reasoningEffort: "low", limits: options.limits, usageLedgerPath: options.usageLedgerPath,
     seccompProfileSha256: "7".repeat(64),

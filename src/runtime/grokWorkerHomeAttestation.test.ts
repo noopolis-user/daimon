@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test, { mock } from "node:test";
 
-import { grokBrokerWorkerConfigSha256, renderGrokBrokerWorkerConfig } from "./grokBrokerWorkerConfig.js";
+import { grokBrokerWorkerConfigPins, grokBrokerWorkerConfigSha256, renderGrokBrokerWorkerConfig } from "./grokBrokerWorkerConfig.js";
 import { assertGrokWorkerConfigBytes, assertGrokWorkerHomeEntries, verifyGrokWorkerHome } from "./grokWorkerHomeAttestation.js";
 
 type Kind = "dir" | "file" | "link";
@@ -59,6 +59,20 @@ test("accepts only the renderer's exact config bytes for the declared model poli
     renderGrokBrokerWorkerConfig(declared).replace('session_summary = "daimon-session-title-disabled"', 'session_summary = "grok-4.6"'),
     `${renderGrokBrokerWorkerConfig(declared)}\n[mcp_servers.extra]\nurl = "http://127.0.0.1:1/mcp"\n`
   ]) assert.throws(() => assertGrokWorkerConfigBytes(Buffer.from(tampered), grokBrokerWorkerConfigSha256(declared)), /attestation unavailable/u);
+});
+
+test("attestation identifies either pinned variant and refuses tampered clocked bytes", async (t) => {
+  const { home, uid } = await ownHome(t);
+  const policy = { model: "grok-4.6", reasoningEffort: "low" } as const;
+  const pins = grokBrokerWorkerConfigPins(policy);
+  assert.equal(await verifyGrokWorkerHome(home, pins, uid), "unclocked");
+  const file = path.join(home, "config.toml");
+  const clocked = renderGrokBrokerWorkerConfig(policy, "clocked");
+  for (const bytes of [clocked, clocked.replace('LC_ALL"="C', 'LC_ALL"="de_DE'), `${clocked}\n# tampered`]) {
+    await chmod(file, 0o600); await writeFile(file, bytes); await chmod(file, 0o444);
+    if (bytes === clocked) assert.equal(await verifyGrokWorkerHome(home, pins, uid), "clocked");
+    else await assert.rejects(verifyGrokWorkerHome(home, pins, uid), /attestation unavailable/u);
+  }
 });
 
 const ownHome = async (t: { after(fn: () => Promise<void>): void }) => {

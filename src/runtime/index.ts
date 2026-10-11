@@ -1,3 +1,4 @@
+export { GROK_BROKER_TASK_CLOCK, GROK_BROKER_TASK_CLOCK_PRELOAD_PATH, GROK_BROKER_TASK_CLOCK_FILE_PATH, type GrokWorkerConfigVariant } from "../contracts/grokBrokerTaskClock.js";
 export * from "./organizationRuntime.js";
 export * from "./contractManifest.js";
 export * from "./agySubscriptionRealm.js";

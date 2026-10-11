@@ -4,6 +4,9 @@ import { lstat, open } from "node:fs/promises";
 import path from "node:path";
 
 import { GROK_ENGINE_BROKER } from "../contracts/runtimeContractManifest.js";
+import type { GrokWorkerConfigVariant } from "../contracts/grokBrokerTaskClock.js";
+
+export type GrokWorkerConfigPins = string | Readonly<Record<GrokWorkerConfigVariant, string>>;
 
 type Entry = Pick<Stats, "uid" | "mode" | "nlink"> & Partial<Pick<Stats, "dev" | "ino">> & Readonly<{ isFile(): boolean; isDirectory(): boolean; isSymbolicLink(): boolean }>;
 const HOME = GROK_ENGINE_BROKER.worker.home;
@@ -34,15 +37,21 @@ export function assertGrokWorkerHomeEntries(entries: Readonly<Record<string, Ent
 }
 
 /** The worker's `config.toml` must be exactly the renderer's bytes for the declared policy. */
-export function assertGrokWorkerConfigBytes(bytes: Uint8Array, configSha256: string): void {
-  if (!/^[0-9a-f]{64}$/u.test(configSha256) || createHash("sha256").update(bytes).digest("hex") !== configSha256) throw unavailable();
+export function assertGrokWorkerConfigBytes(bytes: Uint8Array, pins: GrokWorkerConfigPins): GrokWorkerConfigVariant {
+  const digest = createHash("sha256").update(bytes).digest("hex");
+  const variants = typeof pins === "string" ? { unclocked: pins } : pins;
+  for (const variant of ["unclocked", "clocked"] as const) {
+    const pin = (variants as Partial<Record<GrokWorkerConfigVariant, string>>)[variant];
+    if (pin !== undefined && /^[0-9a-f]{64}$/u.test(pin) && digest === pin) return variant;
+  }
+  throw unavailable();
 }
 
 /**
  * Attests the worker home layout and that `config.toml` is exactly the
  * renderer's bytes for the declared model policy (`configSha256`).
  */
-export async function verifyGrokWorkerHome(grokHome: string, configSha256: string, rootUid: number = HOME.directory.uid): Promise<void> {
+export async function verifyGrokWorkerHome(grokHome: string, configSha256: GrokWorkerConfigPins, rootUid: number = HOME.directory.uid): Promise<GrokWorkerConfigVariant> {
   const entries: Record<string, Entry | undefined> = {};
   for (const name of [".", HOME.sessionsDirectory.relativePath, ...HOME.readOnlyFiles.names]) {
     try { entries[name] = await lstat(path.join(grokHome, name)); } catch { entries[name] = undefined; }
@@ -55,7 +64,7 @@ export async function verifyGrokWorkerHome(grokHome: string, configSha256: strin
     const before = entries["config.toml"]!;
     // Same inode as the lstat above, as in `secureOpen`: a rename between the two cannot swap in other bytes.
     if (!opened.isFile() || opened.size > 65_536 || opened.dev !== before.dev || opened.ino !== before.ino || opened.uid !== before.uid || opened.mode !== before.mode || opened.nlink !== 1) throw unavailable();
-    assertGrokWorkerConfigBytes(await handle.readFile(), configSha256);
+    return assertGrokWorkerConfigBytes(await handle.readFile(), configSha256);
   } catch { throw unavailable(); } finally { await handle?.close().catch(() => undefined); }
 }
 

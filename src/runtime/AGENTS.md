@@ -79,8 +79,8 @@ proxy saw. Usage rows carry `turn` (the idempotency key readers dedupe on —
 `requests.jsonl` beside the registration's `usageLedgerPath` with proxy-measured
 `started_at`/`ended_at`. A provider-reported model key must map to the declared
 model (`grok-4.6-build` → `grok-4.6`), otherwise the turn fails as rejected and
-is still metered. Control protocol v2 is refused-v1 on the wire because both
-ends ship in this package.
+is still metered. Control protocol v3 refuses v1/v2 on the wire because both
+ends ship in this package; the durable record adapters preserve old turns.
 
 A failed brokered turn also carries the worker's own last words. The launcher
 gives the worker one pipe for stdout and stderr and publishes no output for a
@@ -232,7 +232,7 @@ manifest-pinned per model and effort, so changing them rotates
 `GROK_ENGINE_BROKER.worker.configSha256` and every deployment must re-vendor.
 
 `grokBrokerProjection.ts` is the public, I/O-free projection of one brokered
-Grok agent's slot (`noopolis.daimon.grok-broker-projection.v1`): Daimon's own
+Grok agent's slot (`noopolis.daimon.grok-broker-projection.v2`): Daimon's own
 deny collectors plus the caller's evaluator paths, profile/config/prompt
 digests, pinned executable, model, limits and ledger. A Grok agent must declare
 `model` and `reasoningEffort` for it; nothing is defaulted, and a supplied
@@ -249,6 +249,20 @@ carries freshness: a supervisor-owned per-slot `generation` (strictly
 increasing) and the caller's recycle `nonce` (32 random bytes, hex). The
 verifier requires `{expectedNonce, minGeneration}` and refuses another nonce, a
 lower generation, and any v1 receipt.
+
+Brokered task clocks use control protocol v3 `start_turn.processClock`, derived
+only by `taskClockChildEnvironment`; v1/v2 wire frames refuse, while sealed
+v1/v2 records still replay. The default worker config and pins stay unchanged.
+The clocked variant's additional pins carry four shell-only variables, with a
+fixed library and timestamp-file path from `contracts/grokBrokerTaskClock.ts`.
+Attestation reports the installed variant before publication and gap reporting.
+`grokBrokerTaskClock.ts` atomically writes the requested offset or `+0` before
+launch; unclocked slots allow the turn and report the gap. A sealed turn records
+`shellClock` / `turns.jsonl`'s `shell_clock`; replay never rewrites the file.
+Clocked containers require one registration and no overlapping agent turns.
+Re-vendor manifest v4, projection v2 and worker bytes together; native ABI 2 and
+launcher artifacts do not change. Provisioning and the manual Linux check are
+in [`docs/broker-task-clock.md`](../../docs/broker-task-clock.md).
 
 `grokBrokerWorkerConfig.ts` is the only source of worker `config.toml` bytes;
 the manifest pins the sha256 of every model/effort combination and the broker

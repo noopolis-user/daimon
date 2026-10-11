@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import { mkdir, open, readFile, rename, unlink } from "node:fs/promises";
 import path from "node:path";
-import { parseEngineBrokerResponse, parseEngineBrokerV1TerminalResponse, type EngineBrokerRequest, type EngineBrokerTerminalResponse } from "./engineBrokerProtocol.js";
+import { ENGINE_BROKER_VERSION, parseEngineBrokerResponse, parseEngineBrokerV1TerminalResponse, parseEngineBrokerV2TerminalResponse, type EngineBrokerRequest, type EngineBrokerTerminalResponse } from "./engineBrokerProtocol.js";
 import type { GrokBrokerModel } from "./grokBrokerModelPolicy.js";
 import { EMPTY_BROKER_TURN_LEDGER, parseBrokerTurnLedgerLines, type BrokerTurnLedgerLines } from "./grokEngineBrokerLedger.js";
 
@@ -11,8 +11,9 @@ type Terminal = EngineBrokerTerminalResponse;
 export const ENGINE_BROKER_TURN_RECORD_V1 = "noopolis.daimon.engine-broker-turn.v1" as const;
 export const ENGINE_BROKER_TURN_RECORD_V2 = "noopolis.daimon.engine-broker-turn.v2" as const;
 // The digest deliberately excludes `limits` and the protocol version, so a v1
-// record written before the upgrade still identifies the same turn.
-const digest = (request: Start): string => createHash("sha256").update(JSON.stringify([request.turnId, request.agentId, request.wakeId, request.prompt,request.mcpEndpoint])).digest("hex");
+// record written before the upgrade still identifies the same unclocked turn.
+// A supplied process clock changes execution and must conflict with any other value.
+const digest = (request: Start): string => createHash("sha256").update(JSON.stringify([request.turnId, request.agentId, request.wakeId, request.prompt,request.mcpEndpoint,...(request.processClock === undefined ? [] : [request.processClock])])).digest("hex");
 const safe = (turnId: string): string => `${createHash("sha256").update(turnId).digest("hex")}.json`;
 type Observed = Readonly<{ version: typeof ENGINE_BROKER_TURN_RECORD_V1 | typeof ENGINE_BROKER_TURN_RECORD_V2; digest: string; state: "active" | "terminal"; bootId: string; response?: Terminal; ledger?: BrokerTurnLedgerLines }>;
 
@@ -58,7 +59,7 @@ export class EngineBrokerTurnRegistry {
 
 /**
  * Strict record parser. v2 accepts exactly `{version,digest,state,bootId}`
- * plus `response` and its sealed `ledger` bytes when terminal, and the response must be a v2 terminal frame.
+ * plus `response` and its sealed `ledger` bytes when terminal, and the response must be a v2 or v3 terminal frame (v2 upgrades on read).
  * v1 records keep their historical looser shape and are upgraded on read: no
  * usage (`null`), zero requests, `limitReason: "none"`, the declared model.
  */
@@ -74,7 +75,7 @@ export function parseEngineBrokerTurnRecord(text: string, model: GrokBrokerModel
     let legacy;
     try { legacy = parseEngineBrokerV1TerminalResponse(input.response); } catch { throw new Error("broker turn registry unavailable"); }
     const accounting = { outcome: legacy.kind, usage: null, model, requests: 0, limitReason: "none" } as const;
-    const response: Terminal = { ...legacy, ...accounting, version: "noopolis.daimon.engine-broker.v2" } as Terminal;
+    const response: Terminal = { ...legacy, ...accounting, version: ENGINE_BROKER_VERSION } as Terminal;
     return { version: ENGINE_BROKER_TURN_RECORD_V1, ...base, response };
   }
   if (input.version !== ENGINE_BROKER_TURN_RECORD_V2) throw new Error("broker turn conflict");
@@ -82,7 +83,7 @@ export function parseEngineBrokerTurnRecord(text: string, model: GrokBrokerModel
   if (Object.keys(input).length !== fields.length || fields.some((field) => !Object.hasOwn(input, field))) throw new Error("broker turn registry unavailable");
   if (input.state === "active") return { version: ENGINE_BROKER_TURN_RECORD_V2, ...base };
   let response;
-  try { response = parseEngineBrokerResponse(input.response); } catch { throw new Error("broker turn registry unavailable"); }
+  try { response = (input.response as { version?: unknown } | undefined)?.version === "noopolis.daimon.engine-broker.v2" ? parseEngineBrokerV2TerminalResponse(input.response) : parseEngineBrokerResponse(input.response); } catch { throw new Error("broker turn registry unavailable"); }
   if (response.kind !== "completed" && response.kind !== "failed") throw new Error("broker turn registry unavailable");
   const ledger = parseBrokerTurnLedgerLines(input.ledger, response.turnId);
   if ((response.usage === null) !== (ledger.usage === null)) throw new Error("broker turn registry unavailable");

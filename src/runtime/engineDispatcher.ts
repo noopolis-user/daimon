@@ -1,3 +1,4 @@
+import { brokerProcessClock } from "./grokBrokerTaskClock.js";
 import { reportEngineTaskClockGap } from "../pi/engineTaskClock.js";
 import { attentionTools, type AttentionRegistry } from "./attention.js";
 import { readTaskClock } from "./taskClock.js";
@@ -37,7 +38,7 @@ export async function startOrganizationRuntimeEngine(
   attention?: AttentionRegistry
 ): Promise<AgentHandle> {
   const clock = readTaskClock();
-  reportEngineTaskClockGap(agent.engine.kind, grokBroker !== undefined);
+  reportEngineTaskClockGap(agent.engine.kind);
   if (agent.memory !== undefined) memoryClockOptions(clock);
   // A declared Grok model is enforced by the broker proxy and worker config;
   // the direct path has neither, so it refuses rather than silently ignoring it.
@@ -174,10 +175,14 @@ function adapterFor(agent: OrganizationRuntimeAgentConfig, controlTokenEnv: stri
   return cliHarness(agent, sessionFactory, [controlTokenEnv], productionTools, wakeEnvironmentContext);
 }
 
-function grokBrokerTurnFor(agent: OrganizationRuntimeAgentConfig, grokBroker: EngineBrokerTurnClient, wakeEnvironmentContext: import("../pi/piAgentWakeSupport.js").PiWakeEnvironmentContextRef) {
+/** @internal The same callback used by the production session; no native process clock enters the engine environment. */
+export function grokBrokerTurnFor(agent: OrganizationRuntimeAgentConfig, grokBroker: EngineBrokerTurnClient, wakeEnvironmentContext: import("../pi/piAgentWakeSupport.js").PiWakeEnvironmentContextRef) {
   const limits = resolveEngineWakeLimitOverrides();
   const options = { ...(limits === undefined ? {} : { limits }), ...(agent.engine.model === undefined ? {} : { model: agent.engine.model }) };
-  return (prompt: string, endpoint: string, signal: AbortSignal) => grokBroker.turn(agent.id, wakeEnvironmentContext.current ?? "wake", prompt, endpoint, signal, options);
+  return (prompt: string, endpoint: string, signal: AbortSignal) => {
+    const processClock = brokerProcessClock();
+    return grokBroker.turn(agent.id, wakeEnvironmentContext.current ?? "wake", prompt, endpoint, signal, { ...options, ...(processClock === undefined ? {} : { processClock }) });
+  };
 }
 
 /**
