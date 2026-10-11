@@ -12,9 +12,14 @@ import { parseGrokFinalReply, parseGrokResponseToolNames, parseGrokUpstreamUsage
 import { GROK_ENGINE_BROKER } from "../contracts/runtimeContractManifest.js";
 import { serveGrokInferenceGrant } from "./grokInferenceProxy.js";
 import type { GrokInferenceGrants } from "./grokInferenceGrants.js";
+import { GrokBrokerProviderClockRefusal, type GrokBrokerProviderClock } from "./grokBrokerProviderClock.js";
 
 /** One running turn as the proxy sees it: its declared model/effort and its spend gate. */
-export type GrokBrokerProxyTurn = Readonly<{ policy: GrokBrokerModelPolicy; meter: GrokBrokerTurnMeter }>;
+export type GrokBrokerProxyTurn = Readonly<{
+  policy: GrokBrokerModelPolicy;
+  meter: GrokBrokerTurnMeter;
+  clock?: GrokBrokerProviderClock;
+}>;
 
 export type GrokBrokerCredentialAuthority = Readonly<{ accessToken(forceRefresh: boolean): Promise<string>; refreshAfterRejection?(rejectedTokenDigest:string):Promise<string>; markRejected(rejectedTokenDigest?:string): Promise<void>; isStale?(): boolean }>;
 export type GrokBrokerUpstream = (request: ReturnType<typeof authorizeGrokBrokerProxyRequest>, signal?: AbortSignal) => Promise<Readonly<{ status: number; headers: Readonly<Record<string, string>>; body: Uint8Array }>>;
@@ -30,12 +35,52 @@ export type GrokBrokerUpstream = (request: ReturnType<typeof authorizeGrokBroker
  * `grokInferenceProxy.ts`; every other bearer is looked up only among turn
  * capabilities. Without `grants` a prefixed bearer is simply refused.
  */
-export async function startGrokBrokerProxy(authority: GrokBrokerCredentialAuthority, upstream: GrokBrokerUpstream = defaultUpstream, policy: GrokBrokerModelPolicy = DEFAULT_GROK_BROKER_MODEL_POLICY, listenPort = 43_123, grants?: GrokInferenceGrants): Promise<Readonly<{ port: number; capabilities: EngineBrokerCapabilities; registerIsolationGuard(turnId:string,guard:()=>Promise<void>):void; revokeIsolationGuard(turnId:string):void; registerTurn(turnId:string,turn:GrokBrokerProxyTurn):void; revokeTurn(turnId:string):void; close(): Promise<void> }>> {
-  const declared = parseGrokBrokerModelPolicy(policy); const capabilities = new EngineBrokerCapabilities();
-  const guards=new Map<string,()=>Promise<void>>();const turns=new Map<string,GrokBrokerProxyTurn>();const server = createServer((request, response) => { void serve(request, response, authority, upstream, capabilities,guards,turns,declared,grants); });
-  await new Promise<void>((resolve, reject) => { server.once("error", reject); server.listen(listenPort, "127.0.0.1", () => { server.off("error", reject); resolve(); }); });
+export async function startGrokBrokerProxy(
+  authority: GrokBrokerCredentialAuthority, upstream: GrokBrokerUpstream = defaultUpstream,
+  policy: GrokBrokerModelPolicy = DEFAULT_GROK_BROKER_MODEL_POLICY, listenPort = 43_123,
+  grants?: GrokInferenceGrants
+) {
+  const handler = createGrokBrokerProxyHandler(authority, upstream, policy, grants);
+  const server = createServer((request, response) => { void handler.serve(request, response); });
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(listenPort, "127.0.0.1", () => { server.off("error", reject); resolve(); });
+  });
   const address = server.address() as AddressInfo;
-  return { port: address.port, capabilities,registerIsolationGuard(turnId,guard){guards.set(turnId,guard);},revokeIsolationGuard(turnId){guards.delete(turnId);},registerTurn(turnId,turn){turns.set(turnId,{policy:parseGrokBrokerModelPolicy(turn.policy),meter:turn.meter});},revokeTurn(turnId){turns.delete(turnId);}, close: () => new Promise<void>((resolve, reject) => { server.close((error) => error === undefined ? resolve() : reject(error)); /* `close` waits for every open connection, and a worker keeps its client pool's socket to this proxy open with nothing here accounting for it — so that wait has no bound. Ending them is this listener's to do, exactly as the MCP facade does. */ server.closeAllConnections(); }) };
+  return {
+    ...handler, port: address.port,
+    close: () => new Promise<void>((resolve, reject) => {
+      server.close((error) => error === undefined ? resolve() : reject(error));
+      // A worker's idle pooled socket otherwise leaves close() without a bound.
+      server.closeAllConnections();
+    })
+  };
+}
+
+/** @internal The production request handler, usable without opening a socket. */
+export function createGrokBrokerProxyHandler(
+  authority: GrokBrokerCredentialAuthority, upstream: GrokBrokerUpstream = defaultUpstream,
+  policy: GrokBrokerModelPolicy = DEFAULT_GROK_BROKER_MODEL_POLICY, grants?: GrokInferenceGrants
+) {
+  const declared = parseGrokBrokerModelPolicy(policy);
+  const capabilities = new EngineBrokerCapabilities();
+  const guards = new Map<string, () => Promise<void>>();
+  const turns = new Map<string, GrokBrokerProxyTurn>();
+  return {
+    capabilities,
+    registerIsolationGuard(turnId: string, guard: () => Promise<void>) { guards.set(turnId, guard); },
+    revokeIsolationGuard(turnId: string) { guards.delete(turnId); },
+    registerTurn(turnId: string, turn: GrokBrokerProxyTurn) {
+      turns.set(turnId, {
+        policy: parseGrokBrokerModelPolicy(turn.policy), meter: turn.meter,
+        ...(turn.clock === undefined ? {} : { clock: turn.clock })
+      });
+    },
+    revokeTurn(turnId: string) { turns.delete(turnId); },
+    serve: (request: IncomingMessage, response: ServerResponse) => serve(
+      request, response, authority, upstream, capabilities, guards, turns, declared, grants
+    )
+  };
 }
 
 /**
@@ -59,13 +104,21 @@ async function serve(request: IncomingMessage, response: ServerResponse, authori
   // child and launcher diagnostics are. Nothing reads them but {@link brokerFaultCause}.
   const secrets: string[] = [];
   try {
-    const body = await readBody(request); const headers = Object.fromEntries(Object.entries(request.headers).map(([key, value]) => [key, Array.isArray(value) ? value[0] : value]));
+    let body = await readBody(request);
+    const headers = Object.fromEntries(Object.entries(request.headers).map(([key, value]) => [key, Array.isArray(value) ? value[0] : value]));
     titleSink = headers.authorization === `Bearer ${GROK_SESSION_TITLE_SINK_KEY}`;
     const match=headers.authorization?.match(/^Bearer ([A-Za-z0-9_-]{40,})$/u);
     if(match)secrets.push(match[1]!);
     if(match&&match[1]!.startsWith(GROK_ENGINE_BROKER.inferenceGrants.tokenPrefix)){if(!grants)throw new GrokBrokerProxyRefusal("inference_grants_unavailable");return await serveGrokInferenceGrant({method:request.method??"",pathname:new URL(request.url??"/","http://127.0.0.1").pathname,headers,body,token:match[1]!},response,grants,authority,upstream);}
     const scope=match?capabilities.inspectToken(match[1]!):undefined;if(!scope)throw new GrokBrokerProxyRefusal("unknown_capability");const guard=guards.get(scope.turnId),turn=turns.get(scope.turnId);if(!guard||!turn)throw new GrokBrokerProxyRefusal("no_active_turn");
     try { await guard(); } catch (error) { throw new GrokBrokerProxyRefusal("worker_isolation_unverified"); }
+    // Neutralize engine context before the existing body gate or bearer read.
+    // The clock belongs to this turn, never to the slot's installed variant.
+    try { if (turn.clock !== undefined) body = Buffer.from(turn.clock.rewrite(body)); }
+    catch (error) {
+      if (error instanceof GrokBrokerProviderClockRefusal) throw new GrokBrokerProxyRefusal(error.reason);
+      throw error;
+    }
     // A fenced realm is not a transient fault: the credential is gone until an
     // operator re-logs in, and 503 made Grok blind-retry it (observed: fifteen
     // retries over five minutes, $0 spent, nothing learned). Named, 400, and

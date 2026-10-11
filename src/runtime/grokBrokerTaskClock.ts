@@ -5,9 +5,22 @@ import path from "node:path";
 
 import { GROK_BROKER_TASK_CLOCK, type GrokWorkerConfigVariant } from "../contracts/grokBrokerTaskClock.js";
 import { readTaskClock, taskClockChildEnvironment } from "./taskClock.js";
+import type { GrokBrokerProviderClockObservation } from "./grokBrokerProviderClock.js";
 
 export type BrokerShellClock = "task" | "real" | "gap";
 export type BrokerShellClockObservation = Readonly<{ shellClock?: BrokerShellClock }>;
+export type BrokerClockObservation = BrokerShellClockObservation & Readonly<{
+  providerClock?: GrokBrokerProviderClockObservation;
+}>;
+
+export function brokerClockObservation(
+  shellClock?: BrokerShellClock, providerClock?: GrokBrokerProviderClockObservation
+): BrokerClockObservation {
+  return {
+    ...(shellClock === undefined ? {} : { shellClock }),
+    ...(providerClock === undefined ? {} : { providerClock })
+  };
+}
 
 /** Relative seconds only: never a date, speed, loader path or arbitrary environment. */
 export function parseBrokerProcessClock(value: unknown): string {
