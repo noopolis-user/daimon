@@ -1,4 +1,5 @@
-import { parseBrokerProcessClock, type BrokerShellClockObservation } from "./grokBrokerTaskClock.js";
+import { parseBrokerProcessClock, type BrokerClockObservation } from "./grokBrokerTaskClock.js";
+import { parseGrokBrokerProviderClockObservation } from "./grokBrokerProviderClock.js";
 import { isEngineBrokerInferenceRequestKind, isEngineBrokerInferenceResponseKind, parseEngineBrokerInferenceRequest, parseEngineBrokerInferenceResponse, type EngineBrokerInferenceRequest, type EngineBrokerInferenceResponse } from "./engineBrokerInferenceProtocol.js";
 import { ENGINE_BROKER_MCP_CALL_NAME, ENGINE_BROKER_MCP_OUTSTANDING_MAX, ENGINE_BROKER_MCP_REFUSAL_REASONS, ENGINE_BROKER_MCP_TUNNEL_MAX, type EngineBrokerMcpCallObservation, type EngineBrokerMcpRefusalObservation, type EngineBrokerMcpTunnelObservation } from "./engineBrokerMcpCallLog.js";
 import { parseEngineBrokerTurnAccounting, parseEngineBrokerTurnLimitOverrides, type EngineBrokerTurnAccounting, type EngineBrokerTurnLimitOverrides } from "./engineBrokerTurnAccounting.js";
@@ -34,8 +35,15 @@ export const ENGINE_BROKER_MAX_DIAGNOSTIC_REASON_BYTES = 768;
 export type EngineBrokerResponse =
   | Readonly<{ version: typeof VERSION; kind: "ready"; requestId: string; brokerUid: 2100; providerProxyPort: 43123; mcpFacadePort: 43124; registrations: number; credentialStale: false; realmLease: true; workerIsolation: true }>
   | Readonly<{ version: typeof VERSION; kind: "accepted"; requestId: string; turnId: string }>
-  | (Readonly<{ version: typeof VERSION; kind: "completed"; requestId: string; turnId: string; text: string; workerPid: number; workerUid: number; workerStartTime: string }> & EngineBrokerTurnAccounting & BrokerShellClockObservation)
-  | (Readonly<{ version: typeof VERSION; kind: "failed"; requestId: string; turnId: string; code: EngineBrokerFailureCode; diagnostic?: EngineBrokerFailureDiagnostic; mcpCalls?: EngineBrokerMcpCallObservation }> & EngineBrokerTurnAccounting & BrokerShellClockObservation)
+  | (Readonly<{
+    version: typeof VERSION; kind: "completed"; requestId: string; turnId: string;
+    text: string; workerPid: number; workerUid: number; workerStartTime: string;
+  }> & EngineBrokerTurnAccounting & BrokerClockObservation)
+  | (Readonly<{
+    version: typeof VERSION; kind: "failed"; requestId: string; turnId: string;
+    code: EngineBrokerFailureCode; diagnostic?: EngineBrokerFailureDiagnostic;
+    mcpCalls?: EngineBrokerMcpCallObservation;
+  }> & EngineBrokerTurnAccounting & BrokerClockObservation)
   | EngineBrokerInferenceResponse;
 /**
  * The one name for a fenced credential realm. The turn's failure code, the
@@ -113,7 +121,11 @@ export function parseEngineBrokerV1TerminalResponse(value: unknown): EngineBroke
 /** v2 survives only in durable records. The wire always refuses it. */
 export function parseEngineBrokerV2TerminalResponse(value: unknown): EngineBrokerTerminalResponse {
   const input = record(value);
-  if (input.version !== "noopolis.daimon.engine-broker.v2" || (input.kind !== "completed" && input.kind !== "failed") || Object.hasOwn(input, "shellClock")) throw new TypeError("invalid broker frame");
+  if (input.version !== "noopolis.daimon.engine-broker.v2" ||
+      (input.kind !== "completed" && input.kind !== "failed") ||
+      Object.hasOwn(input, "shellClock") || Object.hasOwn(input, "providerClock")) {
+    throw new TypeError("invalid broker frame");
+  }
   return parseTerminal({ ...input, version: VERSION }, VERSION) as EngineBrokerTerminalResponse;
 }
 
@@ -121,8 +133,14 @@ function parseTerminal(input: JsonRecord, expected: typeof VERSION | typeof V1):
   const accounting = expected === VERSION ? ACCOUNTING : [];
   const shellClock = input.shellClock;
   if (shellClock !== undefined && (expected !== VERSION || !["task", "real", "gap"].includes(shellClock as string))) throw new TypeError("invalid broker frame");
-  const observation: BrokerShellClockObservation = shellClock === undefined ? {} : { shellClock: shellClock as "task" | "real" | "gap" };
-  const clockFields = shellClock === undefined ? [] : ["shellClock"];
+  if (input.providerClock !== undefined && expected !== VERSION) throw new TypeError("invalid broker frame");
+  const observation: BrokerClockObservation = {
+    ...(shellClock === undefined ? {} : { shellClock: shellClock as "task" | "real" | "gap" }),
+    ...(input.providerClock === undefined ? {} : {
+      providerClock: parseGrokBrokerProviderClockObservation(input.providerClock)
+    })
+  };
+  const clockFields = Object.keys(observation);
   if (input.kind === "completed") {
     exact(input, ["version", "kind", "requestId", "turnId", "text", "workerPid", "workerUid", "workerStartTime", ...accounting, ...clockFields]);
     if (!Number.isSafeInteger(input.workerPid) || (input.workerPid as number) < 1 || !Number.isSafeInteger(input.workerUid) || (input.workerUid as number) < 1) throw new TypeError("invalid broker frame");

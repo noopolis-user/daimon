@@ -1,5 +1,6 @@
 import type { GrokWorkerConfigVariant } from "../contracts/grokBrokerTaskClock.js";
-import { parseBrokerProcessClock, prepareBrokerTaskClock, type BrokerShellClock, type BrokerShellClockObservation, type writeBrokerTaskClock } from "./grokBrokerTaskClock.js";
+import { brokerClockObservation, parseBrokerProcessClock, prepareBrokerTaskClock, type BrokerShellClock, type BrokerClockObservation, type writeBrokerTaskClock } from "./grokBrokerTaskClock.js";
+import { GrokBrokerProviderClock, type GrokBrokerProviderClockObservation } from "./grokBrokerProviderClock.js";
 import { createHash, randomUUID } from "node:crypto";
 
 import { engineBrokerCapabilityTtlMs } from "./engineBrokerCapabilities.js";
@@ -19,9 +20,18 @@ import { awaitGrokWorkerIdentityEmpty, findGrokWorkerProcess, GROK_WORKER_REAP_W
 import type { EngineBrokerMcpActivity } from "./engineBrokerMcpCallLog.js";
 import { GrokWorkerAttestationFailure } from "./grokWorkerAttestation.js";
 
-export type GrokEngineBrokerTurnResult = Readonly<{ text: string; workerPid: number; workerUid: number; workerStartTime: string }> & EngineBrokerTurnAccounting & BrokerShellClockObservation;
+export type GrokEngineBrokerTurnResult = Readonly<{
+  text: string; workerPid: number; workerUid: number; workerStartTime: string;
+}> & EngineBrokerTurnAccounting & BrokerClockObservation;
 export class EngineBrokerTurnFailure extends Error {
-  constructor(readonly code: Exclude<EngineBrokerFailureCode, "turn_conflict" | "unavailable">, readonly diagnostic?: NativeBrokerDiagnostic, readonly accounting?: EngineBrokerTurnAccounting, readonly mcpCalls?: EngineBrokerMcpCallObservation, readonly shellClock?: BrokerShellClock) { super("engine broker turn failed"); }
+  constructor(
+    readonly code: Exclude<EngineBrokerFailureCode, "turn_conflict" | "unavailable">,
+    readonly diagnostic?: NativeBrokerDiagnostic,
+    readonly accounting?: EngineBrokerTurnAccounting,
+    readonly mcpCalls?: EngineBrokerMcpCallObservation,
+    readonly shellClock?: BrokerShellClock,
+    readonly providerClock?: GrokBrokerProviderClockObservation
+  ) { super("engine broker turn failed"); }
 }
 
 /** Everything one broker turn touches, injected so the accounting and limit paths run under test without a native launcher. */
@@ -68,6 +78,7 @@ export async function runGrokEngineBrokerTurn(deps: GrokEngineBrokerTurnDependen
   const begun = await deps.turns.begin(request, declared);
   const metering: BrokerTurnMetering = { usageLedgerPath: registration.usageLedgerPath, requestLedgerPath: engineBrokerRequestLedgerPathFor(registration.usageLedgerPath), sealLedgerPath: engineBrokerSealLedgerPathFor(registration.usageLedgerPath), agentId, wakeId };
   if (begun !== "start") { await ensureBrokerTurnLedgered(begun.ledger, turnId, metering); return replay(begun.replay); }
+  const clock = processClock === undefined ? undefined : new GrokBrokerProviderClock(processClock);
   const controller = new AbortController();
   let worker: Promise<GrokWorkerProcess | undefined> | undefined;
   const meter = new GrokBrokerTurnMeter(limits, () => controller.abort());
@@ -96,7 +107,7 @@ export async function runGrokEngineBrokerTurn(deps: GrokEngineBrokerTurnDependen
     const coverage = await prepareBrokerTaskClock(isolation.configVariant, processClock, deps.writeTaskClock);
     if (isolation.configVariant === "clocked" || processClock !== undefined) shellClock = coverage;
     deps.proxy.registerIsolationGuard(turnId, isolationGuard);
-    deps.proxy.registerTurn(turnId, { policy: registration.model, meter });
+    deps.proxy.registerTurn(turnId, { policy: registration.model, meter, clock });
     const capabilityTtlMs = engineBrokerCapabilityTtlMs(limits.timeoutMs);
     const providerCapability = deps.proxy.capabilities.issue(agentId, turnId, capabilityTtlMs), mcpCapability = deps.mcp.register(agentId, turnId, mcpEndpoint, capabilityTtlMs);
     watchdog = watchGrokBrokerTurnEnd({
@@ -121,8 +132,16 @@ export async function runGrokEngineBrokerTurn(deps: GrokEngineBrokerTurnDependen
     if (snapshot.limitReason !== "none") throw new Error("engine broker turn limit reached");
     const usage = decoded.usage === undefined ? streamOrMeterUsage(stream, snapshot) : usageOf(decoded.usage);
     const accounting = { outcome: "completed", usage, model: declared, requests: requestCount(stream, snapshot), limitReason: "none" } as const;
-    const completed = { version: request.version, kind: "completed", ...(shellClock === undefined ? {} : { shellClock }), requestId: request.requestId, turnId, text: decoded.text, workerPid: result.workerPid, workerUid: result.workerUid, workerStartTime: result.startTicks.toString(), ...accounting } as const;
-    const result_ = { text: completed.text, workerPid: completed.workerPid, workerUid: completed.workerUid, workerStartTime: completed.workerStartTime, ...(shellClock === undefined ? {} : { shellClock }), ...accounting };
+    const observation = brokerClockObservation(shellClock, clock?.snapshot());
+    const completed = {
+      version: request.version, kind: "completed", requestId: request.requestId, turnId,
+      text: decoded.text, workerPid: result.workerPid, workerUid: result.workerUid,
+      workerStartTime: result.startTicks.toString(), ...observation, ...accounting
+    } as const;
+    const result_ = {
+      text: completed.text, workerPid: completed.workerPid, workerUid: completed.workerUid,
+      workerStartTime: completed.workerStartTime, ...observation, ...accounting
+    };
     await finishBrokerTurnWithUsage(deps.turns, request, completed, metering, { notionalUsd: decoded.usage?.notionalUsd ?? 0, complete: decoded.usage?.complete ?? false, estimatedRequests: snapshot.estimatedRequests, requests: requestRows(stream, snapshot), ...(stream.sessionId === undefined ? {} : { session: stream.sessionId }) }, () => { sealed = result_; });
     return result_;
   } catch (error) {
@@ -141,7 +160,10 @@ export async function runGrokEngineBrokerTurn(deps: GrokEngineBrokerTurnDependen
     // Finished work is completed work. A worker that gave its final reply and was
     // then ended by the broker, refused its stdout by the launcher's output bound,
     // or left idle into the deadline did its job; only its exit went wrong.
-    const finished = vetoed ? undefined : await completedFromFinalReply(deps, registration, request, meter, error, endedBy, worker, isolationGuard, metering, (value) => { sealed = value; }, shellClock).catch(() => undefined);
+    const finished = vetoed ? undefined : await completedFromFinalReply(
+      deps, registration, request, meter, error, endedBy, worker, isolationGuard,
+      metering, (value) => { sealed = value; }, shellClock, clock
+    ).catch(() => undefined);
     if (finished !== undefined) return finished;
     // Sealed completed but its ledger append failed: the published record is the truth, exactly as on the success path.
     if (sealed !== undefined) return sealed;
@@ -155,10 +177,15 @@ export async function runGrokEngineBrokerTurn(deps: GrokEngineBrokerTurnDependen
     // a turn reports something other than why it failed.
     let mcpCalls: EngineBrokerMcpCallObservation | undefined;
     try { mcpCalls = deps.mcp.observe?.(turnId); } catch { mcpCalls = undefined; }
-    const failed: EngineBrokerTerminalResponse = { version: request.version, kind: "failed", requestId: request.requestId, turnId, code, ...(shellClock === undefined ? {} : { shellClock }), ...(diagnostic ? { diagnostic } : {}), ...(mcpCalls === undefined ? {} : { mcpCalls }), ...accounting };
+    const observation = brokerClockObservation(shellClock, clock?.snapshot());
+    const failed: EngineBrokerTerminalResponse = {
+      version: request.version, kind: "failed", requestId: request.requestId, turnId, code,
+      ...observation, ...(diagnostic ? { diagnostic } : {}),
+      ...(mcpCalls === undefined ? {} : { mcpCalls }), ...accounting
+    };
     const reason = snapshot.limitReason !== "none" ? limitReasonFor[snapshot.limitReason] : rejected ? "turn_rejected" : "unknown";
     await finishBrokerTurnWithUsage(deps.turns, request, failed, metering, { notionalUsd: 0, complete: false, reason, estimatedRequests: snapshot.estimatedRequests, requests: requestRows(stream, snapshot), ...(stream?.sessionId === undefined ? {} : { session: stream.sessionId }) });
-    throw new EngineBrokerTurnFailure(code, diagnostic, accounting, mcpCalls, shellClock);
+    throw new EngineBrokerTurnFailure(code, diagnostic, accounting, mcpCalls, shellClock, observation.providerClock);
   } finally {
     watchdog?.stop(); clearTimeout(timer); signal?.removeEventListener("abort", onAbort); meter.abortInFlight();
     deps.proxy.revokeTurn(turnId); deps.proxy.revokeIsolationGuard(turnId); deps.proxy.capabilities.revoke(turnId); deps.mcp.revoke(turnId);
@@ -167,9 +194,16 @@ export async function runGrokEngineBrokerTurn(deps: GrokEngineBrokerTurnDependen
 
 function replay(response: EngineBrokerTerminalResponse): GrokEngineBrokerTurnResult {
   const accounting = { outcome: response.outcome, usage: response.usage, model: response.model, requests: response.requests, limitReason: response.limitReason };
-  if (response.kind === "completed") return { text: response.text, workerPid: response.workerPid, workerUid: response.workerUid, workerStartTime: response.workerStartTime, ...(response.shellClock === undefined ? {} : { shellClock: response.shellClock }), ...accounting, outcome: "completed" };
+  if (response.kind === "completed") return {
+    text: response.text, workerPid: response.workerPid, workerUid: response.workerUid,
+    workerStartTime: response.workerStartTime,
+    ...brokerClockObservation(response.shellClock, response.providerClock), ...accounting, outcome: "completed"
+  };
   const code = response.code === "turn_conflict" || response.code === "unavailable" ? "engine_failed" : response.code;
-  throw new EngineBrokerTurnFailure(code, response.diagnostic as NativeBrokerDiagnostic | undefined, accounting, response.mcpCalls, response.shellClock);
+  throw new EngineBrokerTurnFailure(
+    code, response.diagnostic as NativeBrokerDiagnostic | undefined, accounting,
+    response.mcpCalls, response.shellClock, response.providerClock
+  );
 }
 
 /**
@@ -186,7 +220,18 @@ function replay(response: EngineBrokerTerminalResponse): GrokEngineBrokerTurnRes
  * for a caller cancellation, a rejected or unattested stdout, and a model
  * request or MCP tool call still in flight.
  */
-async function completedFromFinalReply(deps: GrokEngineBrokerTurnDependencies, registration: EngineBrokerServiceRegistration, request: Readonly<{ version: typeof ENGINE_BROKER_VERSION; kind: "start_turn"; requestId: string; turnId: string; agentId: string; wakeId: string; prompt: string; mcpEndpoint: string }>, meter: GrokBrokerTurnMeter, error: unknown, endedBy: GrokBrokerTurnEndReason | undefined, worker: Promise<GrokWorkerProcess | undefined> | undefined, isolationGuard: (() => Promise<void>) | undefined, metering: BrokerTurnMetering, onSealed: (result: GrokEngineBrokerTurnResult) => void, shellClock?: BrokerShellClock): Promise<GrokEngineBrokerTurnResult | undefined> {
+async function completedFromFinalReply(
+  deps: GrokEngineBrokerTurnDependencies, registration: EngineBrokerServiceRegistration,
+  request: Readonly<{
+    version: typeof ENGINE_BROKER_VERSION; kind: "start_turn"; requestId: string;
+    turnId: string; agentId: string; wakeId: string; prompt: string; mcpEndpoint: string;
+  }>,
+  meter: GrokBrokerTurnMeter, error: unknown, endedBy: GrokBrokerTurnEndReason | undefined,
+  worker: Promise<GrokWorkerProcess | undefined> | undefined,
+  isolationGuard: (() => Promise<void>) | undefined, metering: BrokerTurnMetering,
+  onSealed: (result: GrokEngineBrokerTurnResult) => void,
+  shellClock?: BrokerShellClock, clock?: GrokBrokerProviderClock
+): Promise<GrokEngineBrokerTurnResult | undefined> {
   const final = meter.finalReply(), snapshot = meter.snapshot();
   if (final === undefined || isolationGuard === undefined || snapshot.usage === null) return undefined;
   // A token or request limit is never finished work, whatever else failed beside it.
@@ -197,8 +242,16 @@ async function completedFromFinalReply(deps: GrokEngineBrokerTurnDependencies, r
   if (identity === undefined || identity.uid !== registration.workerUid) return undefined;
   await isolationGuard();
   const accounting = { outcome: "completed", usage: snapshot.usage, model: registration.model.model, requests: snapshot.requests, limitReason: "none" } as const;
-  const completed = { version: request.version, kind: "completed", ...(shellClock === undefined ? {} : { shellClock }), requestId: request.requestId, turnId: request.turnId, text: final.text, workerPid: identity.pid, workerUid: identity.uid, workerStartTime: identity.startTicks, ...accounting } as const;
-  const result = { text: completed.text, workerPid: completed.workerPid, workerUid: completed.workerUid, workerStartTime: completed.workerStartTime, ...(shellClock === undefined ? {} : { shellClock }), ...accounting };
+  const observation = brokerClockObservation(shellClock, clock?.snapshot());
+  const completed = {
+    version: request.version, kind: "completed", requestId: request.requestId, turnId: request.turnId,
+    text: final.text, workerPid: identity.pid, workerUid: identity.uid, workerStartTime: identity.startTicks,
+    ...observation, ...accounting
+  } as const;
+  const result = {
+    text: completed.text, workerPid: completed.workerPid, workerUid: completed.workerUid,
+    workerStartTime: completed.workerStartTime, ...observation, ...accounting
+  };
   await finishBrokerTurnWithUsage(deps.turns, request, completed, metering, { notionalUsd: 0, complete: false, estimatedRequests: snapshot.estimatedRequests, requests: requestRows(undefined, snapshot) }, () => onSealed(result));
   return result;
 }
