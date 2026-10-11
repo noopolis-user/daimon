@@ -184,7 +184,7 @@ class CliSession implements PiSessionLike {
 
   public async prompt(text: string): Promise<void> {
     if (this.disposed) throw new Error("CLI session is disposed");
-    reportEngineTaskClockGap(this.options.engine, this.options.grokBrokerTurn !== undefined);
+    reportEngineTaskClockGap(this.options.engine);
     await prepareCliRuntimeHome(this.input.runtimeHomePath);
     const deadline = this.options.timeoutMs === undefined ? undefined : Date.now() + this.options.timeoutMs;
     const environmentSecretValues = childSecretValues([

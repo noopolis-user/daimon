@@ -49,7 +49,7 @@ async function cancelledTurn(observe: () => EngineBrokerMcpCallObservation | und
     const deps: GrokEngineBrokerTurnDependencies = {
       turns: new EngineBrokerTurnRegistry(path.join(root, "turns")), proxy, credentialStale: () => false,
       mcp: { register: () => "mcp-capability-0123456789abcdef", revoke: () => undefined, observe },
-      prepareIsolation: async () => async () => undefined,
+      prepareIsolation: async () => ({ guard: async () => undefined, configVariant: "unclocked" }),
       runNative: async (_input, signal) => hangs(signal)
     };
     const controller = new AbortController();
@@ -222,7 +222,7 @@ test("a completed turn's seal row carries exactly its declared fields, and never
     const deps: GrokEngineBrokerTurnDependencies = {
       turns: new EngineBrokerTurnRegistry(path.join(root, "turns")), proxy, credentialStale: () => false,
       mcp: { register: () => "mcp-capability-0123456789abcdef", revoke: () => undefined, observe: () => ({ started: 1, answered: 1, undecoded: 0, outstanding: [] }) },
-      prepareIsolation: async () => async () => undefined,
+      prepareIsolation: async () => ({ guard: async () => undefined, configVariant: "unclocked" }),
       runNative: async () => ({ text: answered(reply), workerPid: 4_242, workerUid: 2_200, startTicks: 99n, diagnostic: { status: "ok", stage: "output", failureClass: "none", profileApplied: false, exitCode: 0, termSignal: 0, workerPid: 4_242, workerUid: 2_200, startTicks: "99" } })
     };
     const result = await runGrokEngineBrokerTurn(deps, registration(usageLedgerPath), "wake-done", "prompt", "http://127.0.0.1:43124/mcp");

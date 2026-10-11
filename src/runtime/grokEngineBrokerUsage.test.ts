@@ -71,7 +71,7 @@ const withBroker = async (body: (context: Readonly<{ root: string; turn: (wakeId
         const deps: GrokEngineBrokerTurnDependencies = {
           turns: syncDirectory === undefined ? new EngineBrokerTurnRegistry(turnStore) : new EngineBrokerTurnRegistry(turnStore, undefined, syncDirectory), proxy, credentialStale: () => false,
           mcp: { register: () => "mcp-capability-0123456789abcdef", revoke: () => undefined, observe: () => mcpObservation },
-          prepareIsolation: async () => async () => undefined,
+          prepareIsolation: async () => ({ guard: async () => undefined, configVariant: "unclocked" }),
           runNative: async (input: NativeBrokerTurn, signal: AbortSignal) => nativeResult(await worker(() => post(proxy.port, input.providerCapability), signal))
         };
         return runGrokEngineBrokerTurn(deps, registration, wakeId, "prompt", "http://127.0.0.1:43124/mcp", undefined, overrides);

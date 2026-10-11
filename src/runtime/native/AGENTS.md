@@ -12,6 +12,14 @@ descriptors, not protocol strings. Workers must start in a private process
 group with no-new-privileges, no capabilities, no core dump, and a parent-death
 signal. Unsupported platforms fail closed.
 
+The broker task clock adds no native env, argv or ABI field. Clocked worker
+configs apply preload only to shell children and read the broker-owned file at
+`/run/daimon-engine-broker/task-clock/faketime`. Provision and expose the whole
+directory in bubblewrap (never bind the renamed file inode), with worker read
+but no write access. `GROK_HOME` remains unchanged. See
+[`docs/broker-task-clock.md`](../../../docs/broker-task-clock.md) for slot modes,
+the one-registration constraint and the manual Linux check without model calls.
+
 **A supervised turn now has a ceiling, because it used to have none.**
 `supervise` waited for the worker to exit or the client to disappear, and if
 neither happened it waited for ever. A handler was found alive after 25 hours

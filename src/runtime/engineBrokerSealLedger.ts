@@ -82,6 +82,7 @@ export const renderBrokerTurnSealLine = (terminal: EngineBrokerTerminalResponse,
   requests: terminal.requests,
   model: terminal.model,
   limit_reason: terminal.limitReason,
+  ...(terminal.shellClock === undefined ? {} : { shell_clock: terminal.shellClock }),
   ...(terminal.kind === "failed" ? { code: terminal.code } : {}),
   ...(terminal.kind === "failed" && terminal.diagnostic !== undefined
     ? {

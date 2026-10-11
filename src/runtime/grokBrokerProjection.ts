@@ -1,3 +1,4 @@
+import { GROK_BROKER_TASK_CLOCK, type GrokWorkerConfigVariant } from "../contracts/grokBrokerTaskClock.js";
 import { createHash } from "node:crypto";
 import path from "node:path";
 
@@ -31,6 +32,8 @@ export type OrganizationGrokBrokerProjection = Readonly<{
   profileSha256: string;
   denyPaths: readonly string[];
   workerConfigSha256: string;
+  workerConfigVariant: GrokWorkerConfigVariant;
+  taskClock?: typeof GROK_BROKER_TASK_CLOCK;
   systemPromptSha256: string;
   grokCliVersion: string;
   grokExecutableSha256: string;
@@ -45,6 +48,8 @@ export type OrganizationGrokBrokerProjection = Readonly<{
 }>;
 
 export type OrganizationGrokBrokerProjectionOptions = Readonly<{
+  /** Clocked configs require one registration in the slot container. Defaults to the unchanged production bytes. */
+  workerConfigVariant?: GrokWorkerConfigVariant;
   /** Deployment-assigned slot identity. */
   slot: number;
   workerUid: number;
@@ -112,15 +117,19 @@ export function resolveOrganizationGrokBrokerProjection(config: unknown, agentId
   renderGrokWorkerSandboxProfile(denyPaths);
   const profileSha256 = grokWorkerSandboxProfileSha256(denyPaths);
   if (options.profileSha256 !== undefined && options.profileSha256 !== profileSha256) throw new Error("Grok broker projection profile digest mismatch");
-  const workerConfigSha256 = grokBrokerWorkerConfigSha256({ model, reasoningEffort });
-  if (workerConfigSha256 !== GROK_ENGINE_BROKER.worker.configSha256[model][reasoningEffort]) throw new Error("Grok broker projection worker config drifted from the manifest");
+  const workerConfigVariant = options.workerConfigVariant ?? "unclocked";
+  const workerConfigSha256 = grokBrokerWorkerConfigSha256({ model, reasoningEffort }, workerConfigVariant);
+  const pins = workerConfigVariant === "clocked" ? GROK_ENGINE_BROKER.worker.clockedConfigSha256 : GROK_ENGINE_BROKER.worker.configSha256;
+  if (workerConfigVariant === "clocked" && denyPaths.some((denied) => [GROK_BROKER_TASK_CLOCK.timestampFilePath, GROK_BROKER_TASK_CLOCK.preloadPath].some((file) => file === denied || file.startsWith(`${denied}/`)))) throw new Error("Grok broker task clock path is denied");
+  if (workerConfigSha256 !== pins[model][reasoningEffort]) throw new Error("Grok broker projection worker config drifted from the manifest");
   if (createHash("sha256").update(DAIMON_GROK_SYSTEM_PROMPT).digest("hex") !== GROK_ENGINE_BROKER.worker.systemPromptSha256) throw new Error("Grok broker projection system prompt drifted from the manifest");
   const artifact = GROK_ENGINE_BROKER.grokCliArtifacts[options.architecture];
   if (artifact === undefined) throw new Error("Grok broker projection requires a pinned architecture");
   const profilePath = path.posix.join(options.workerHomePath, ".grok", "sandbox.toml");
   const projection: OrganizationGrokBrokerProjection = {
     version: GROK_BROKER_PROJECTION_VERSION, agentId, workspacePath: agent.workspacePath, runtimeHomePath: agent.runtimeHomePath,
-    workerUid: options.workerUid, slot: options.slot, profilePath, profileSha256, denyPaths, workerConfigSha256,
+    workerUid: options.workerUid, slot: options.slot, profilePath, profileSha256, denyPaths, workerConfigSha256, workerConfigVariant,
+    ...(workerConfigVariant === "clocked" ? { taskClock: GROK_BROKER_TASK_CLOCK } : {}),
     systemPromptSha256: GROK_ENGINE_BROKER.worker.systemPromptSha256, grokCliVersion: GROK_ENGINE_BROKER.grokCliVersion, grokExecutableSha256: artifact.sha256,
     nativeAbiVersion: GROK_ENGINE_BROKER.nativeAbiVersion, model, reasoningEffort, limits: parseEngineBrokerTurnLimits(options.limits), usageLedgerPath: options.usageLedgerPath, seccompProfileSha256: options.seccompProfileSha256,
     attestation: { platform: "linux/landlock", enforced: true, restrictNetwork: true, profileName: GROK_WORKER_SANDBOX_PROFILE, sandboxRuntime: "bubblewrap", eventsPath: grokWorkerEventsPathFor(profilePath) }
