@@ -5,6 +5,8 @@ export type GrokBrokerProviderClockObservation = Readonly<{
   requests: number;
   linesRewritten: number;
   requestsWithoutDateLine: number;
+  /** Date-like message lines outside the injected block; absent on older seals. */
+  linesIgnored?: number;
   /** The last rewritten line's dates; null until a line is rewritten. */
   injectedDate: string | null;
   taskDate: string | null;
@@ -25,7 +27,7 @@ const MAX_TASK_MS = 253_402_300_799_999;
 export class GrokBrokerProviderClock {
   private readonly offsetMs: number;
   private observation: GrokBrokerProviderClockObservation = {
-    requests: 0, linesRewritten: 0, requestsWithoutDateLine: 0,
+    requests: 0, linesRewritten: 0, requestsWithoutDateLine: 0, linesIgnored: 0,
     injectedDate: null, taskDate: null
   };
 
@@ -46,33 +48,42 @@ export class GrokBrokerProviderClock {
     // history resends; a long turn may cross midnight between requests.
     const taskDate = new Date(taskMs).toISOString().slice(0, 10);
     let lines = 0;
+    let ignored = 0;
     let injectedDate: string | null = null;
-    const rewriteText = (text: string): string => text.replace(
-      /<user_info>([\s\S]*?)<\/user_info>/gu,
-      (_block, content: string) => {
-        const rewritten = content.split(/(\r\n|\r|\n)/u).map((line) => {
-          if (!DATE_LIKE.test(line)) return line;
-          const match = DATE_LINE.exec(line);
-          if (match === null) throw new GrokBrokerProviderClockRefusal("task_clock_date_format");
-          lines++;
-          injectedDate = match[1]!;
-          return `Today's date: ${taskDate}`;
-        }).join("");
-        return `<user_info>${rewritten}</user_info>`;
+    const countIgnored = (text: string) => text.split(/\r\n|\r|\n/u).filter((line) => DATE_LIKE.test(line)).length;
+    const rewriteText = (text: string, injected: boolean): string => {
+      const block = injected ? /<user_info>([\s\S]*?)<\/user_info>/u.exec(text) : null;
+      if (block === null) {
+        ignored += countIgnored(text);
+        return text;
       }
-    );
+      const before = text.slice(0, block.index), after = text.slice(block.index + block[0].length);
+      ignored += countIgnored(before) + countIgnored(after);
+      const rewritten = block[1]!.split(/(\r\n|\r|\n)/u).map((line) => {
+        if (!DATE_LIKE.test(line)) return line;
+        const match = DATE_LINE.exec(line);
+        if (match === null) throw new GrokBrokerProviderClockRefusal("task_clock_date_format");
+        lines++;
+        injectedDate = match[1]!;
+        return `Today's date: ${taskDate}`;
+      }).join("");
+      return `${before}<user_info>${rewritten}</user_info>${after}`;
+    };
     if (Array.isArray(parsed.value.messages)) {
+      let firstUser = true;
       for (const message of parsed.value.messages) {
-        if (!isRecord(message) || message.role !== "user") continue;
+        if (!isRecord(message)) continue;
+        const injected = message.role === "user" && firstUser;
+        if (message.role === "user") firstUser = false;
         if (typeof message.content === "string") {
-          message.content = rewriteText(message.content);
+          message.content = rewriteText(message.content, injected);
         } else if (Array.isArray(message.content)) {
           const parts = message.content.filter((part): part is Record<string, unknown> & { text: string } =>
             isRecord(part) && part.type === "text" && typeof part.text === "string"
           );
           // A block or date can straddle text parts. Replacements have exactly
           // the same width, so slicing restores every original part boundary.
-          const rewritten = rewriteText(parts.map((part) => part.text).join(""));
+          const rewritten = rewriteText(parts.map((part) => part.text).join(""), injected);
           let start = 0;
           for (const part of parts) {
             const end = start + part.text.length;
@@ -83,11 +94,12 @@ export class GrokBrokerProviderClock {
       }
     }
     // Commit only after the entire body passes: a refused request rewrites no
-    // lines upstream, even when an earlier block had the recognized format.
+    // lines upstream, even when an earlier line had the recognized format.
     this.observation = {
       requests: this.observation.requests,
       linesRewritten: this.observation.linesRewritten + lines,
       requestsWithoutDateLine: this.observation.requestsWithoutDateLine + (lines === 0 ? 1 : 0),
+      linesIgnored: (this.observation.linesIgnored ?? 0) + ignored,
       injectedDate: lines === 0 ? this.observation.injectedDate : injectedDate,
       taskDate: lines === 0 ? this.observation.taskDate : taskDate
     };
@@ -106,10 +118,11 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 export function parseGrokBrokerProviderClockObservation(value: unknown): GrokBrokerProviderClockObservation {
   if (!isRecord(value)) throw new TypeError("invalid broker frame");
   const fields = ["requests", "linesRewritten", "requestsWithoutDateLine", "injectedDate", "taskDate"];
-  if (Object.keys(value).length !== fields.length || fields.some((key) => !Object.hasOwn(value, key))) {
+  if (Object.keys(value).some((key) => !fields.includes(key) && key !== "linesIgnored") ||
+      fields.some((key) => !Object.hasOwn(value, key))) {
     throw new TypeError("invalid broker frame");
   }
-  for (const key of fields.slice(0, 3)) {
+  for (const key of [...fields.slice(0, 3), ...(Object.hasOwn(value, "linesIgnored") ? ["linesIgnored"] : [])]) {
     if (!Number.isSafeInteger(value[key]) || (value[key] as number) < 0) {
       throw new TypeError("invalid broker frame");
     }

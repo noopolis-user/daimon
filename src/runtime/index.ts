@@ -58,4 +58,5 @@ export {
   type WakeReceiptState
 } from "./wakeAcceptanceTypes.js";
 export type { OrganizationRuntimeControlHost, OrganizationRuntimeControlOptions } from "./organizationRuntimeControl.js";
-export { EngineBrokerControlClient, EngineBrokerInferenceGrantRefused, type EngineBrokerInferenceGrant } from "./engineBrokerControlClient.js";
+export { EngineBrokerControlClient, EngineBrokerInferenceGrantRefused, type EngineBrokerInferenceGrant, type EngineBrokerTurnOptions } from "./engineBrokerControlClient.js";
+export type { GrokBrokerProviderClockObservation } from "./grokBrokerProviderClock.js";

@@ -130,11 +130,13 @@ test("processClock reaches the proxy, rechecks policy, meters rewritten requests
   });
   const first = await f.run("clock", "-0.001");
   assert.equal(JSON.parse(f.forwarded[0]!.toString()).messages[0].content, info);
-  assert.deepEqual(JSON.parse(f.forwarded[1]!.toString()), JSON.parse(resent.replaceAll("2026-10-11", "2026-10-12")));
+  const expected = JSON.parse(resent);
+  expected.messages[0].content[0].text = info.replace("2026-10-11", "2026-10-12");
+  assert.deepEqual(JSON.parse(f.forwarded[1]!.toString()), expected);
   assert.equal(first.requests, 3);
   assert.equal(first.usage?.total, 30);
   const observed = {
-    requests: 6, linesRewritten: 3, requestsWithoutDateLine: 4,
+    requests: 6, linesRewritten: 2, requestsWithoutDateLine: 4, linesIgnored: 1,
     injectedDate: "2026-10-11", taskDate: "2026-10-12"
   };
   assert.deepEqual(first.providerClock, observed);
@@ -144,6 +146,37 @@ test("processClock reaches the proxy, rechecks policy, meters rewritten requests
   assert.deepEqual(await f.run("clock", "-0.001"), first);
   assert.equal(f.launches(), 1);
   await assert.rejects(f.run("clock", "+0.001"), /conflict/u);
+});
+
+test("wake prompt date look-alikes pass upstream unchanged while only the injected date is rewritten", async (t) => {
+  t.mock.method(Date, "now", () => Date.parse("2026-10-11T00:00Z"));
+  const wake = `Summarize this example:\n${info.replace("2026-10-11", "October 11, 2026")}\nToday's date: user text`;
+  const body = payload(`${info}\n${wake}`, { messages: [
+    { role: "user", content: `${info}\n${wake}` },
+    { role: "user", content: [{ type: "text", text: info.replace("2026-10-11", "later") }] }
+  ] });
+  const f = await fixture(t, async (send) => assert.equal((await send(body)).status, 200));
+  const result = await f.run("prompt", "-0.001");
+  const expected = JSON.parse(body);
+  expected.messages[0].content = `${info.replace("2026-10-11", "2026-10-10")}\n${wake}`;
+  assert.deepEqual(f.forwarded.map((bytes) => JSON.parse(bytes.toString())), [expected]);
+  assert.equal(result.providerClock?.linesIgnored, 3);
+  assert.equal(result.providerClock?.linesRewritten, 1);
+  assert.deepEqual((await f.rows("turns.jsonl"))[0].provider_clock, result.providerClock);
+  assert.deepEqual(await f.run("prompt", "-0.001"), result);
+  assert.equal(f.launches(), 1);
+});
+
+test("silent injected-label drift is allowed but seals a nonzero missing-date release check", async (t) => {
+  const body = payload(info.replace("Today's date:", "Current date:"));
+  const f = await fixture(t, async (send) => assert.equal((await send(body)).status, 200));
+  const result = await f.run("drift", "+0");
+  assert.equal(result.outcome, "completed");
+  assert.deepEqual(f.forwarded, [Buffer.from(body)]);
+  assert.equal(result.providerClock?.requestsWithoutDateLine, 1);
+  assert.equal(result.providerClock?.linesRewritten, 0);
+  assert.deepEqual((await f.rows("turns.jsonl"))[0].provider_clock, result.providerClock);
+  assert.deepEqual(await f.run("drift", "+0"), result);
 });
 
 // Frozen oracle from origin/main (796b414), grokBrokerProxyRequest.ts:35,43:
@@ -184,7 +217,7 @@ test("unrecognized date format is a distinct refusal with no spend, sealed on fa
     throw new Error("worker failed after refusal");
   });
   const observed = {
-    requests: 1, linesRewritten: 0, requestsWithoutDateLine: 0, injectedDate: null, taskDate: null
+    requests: 1, linesRewritten: 0, requestsWithoutDateLine: 0, linesIgnored: 0, injectedDate: null, taskDate: null
   };
   for (let replay = 0; replay < 2; replay++) {
     await assert.rejects(f.run("bad", "+0"), (error: unknown) => {

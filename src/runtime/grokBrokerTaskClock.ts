@@ -6,6 +6,7 @@ import path from "node:path";
 import { GROK_BROKER_TASK_CLOCK, type GrokWorkerConfigVariant } from "../contracts/grokBrokerTaskClock.js";
 import { readTaskClock, taskClockChildEnvironment } from "./taskClock.js";
 import type { GrokBrokerProviderClockObservation } from "./grokBrokerProviderClock.js";
+import { assertGrokWorkerConfigBytes, type GrokWorkerConfigPins } from "./grokWorkerHomeAttestation.js";
 
 /** Internal filesystem seam; tests wrap real handles to observe both fsyncs. */
 export type BrokerTaskClockFs = Pick<typeof import("node:fs/promises"), "lstat" | "open" | "rename" | "unlink">;
@@ -43,6 +44,31 @@ export function assertBrokerTaskClockSlot(variant: GrokWorkerConfigVariant, regi
   if (variant === "clocked" && registrations !== GROK_BROKER_TASK_CLOCK.maxRegistrations) {
     throw new Error("Grok broker task clock requires one registration per container slot");
   }
+}
+
+/** Discovery only; selected slots still require full attestation before reconciliation. */
+export async function needsBrokerTaskClockReconciliation(
+  profilePath: string, pins: GrokWorkerConfigPins,
+  file: string = GROK_BROKER_TASK_CLOCK.timestampFilePath
+): Promise<boolean> {
+  try {
+    // Even an unsafe directory entry must reach the fail-closed reconciliation.
+    await lstat(path.dirname(file));
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+  let handle: Awaited<ReturnType<typeof open>> | undefined;
+  try {
+    handle = await open(path.join(path.dirname(profilePath), "config.toml"),
+      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    const entry = await handle.stat();
+    if (!entry.isFile() || entry.size > 65_536) return false;
+    return assertGrokWorkerConfigBytes(await handle.readFile(), pins) === "clocked";
+  } catch {
+    // Missing or invalid unclocked provisioning is a per-turn attestation failure.
+    return false;
+  } finally { await handle?.close(); }
 }
 
 /** Pure provisioning seam: only the broker can replace entries; every worker can read. */

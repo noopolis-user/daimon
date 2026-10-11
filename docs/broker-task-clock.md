@@ -36,6 +36,11 @@ an exclusive temporary file, chmod, fsync and rename. A turn without a clock
 writes `+0`. Every terminal path resets to `+0` after worker termination,
 including a publication failure after rename. Startup reconciles a clocked
 slot to `+0` before serving, covering broker death that bypasses cleanup.
+Only a config matching the declared policy's clocked pin, or an existing clock
+directory, selects startup reconciliation and full attestation. Unclocked
+registrations without that directory defer attestation to their turns, so a
+mis-provisioned worker does not prevent broker startup. A selected clock slot's
+attestation or reconciliation failure still prevents startup.
 The broker checks that the worker identity has emptied before resetting;
 an unreaped worker or a reset failure fences the slot until restart. If the
 turn is already sealed, its terminal response and accounting still reach the
@@ -45,7 +50,7 @@ completed turn and includes the diagnostic in a failed turn's error. Subsequent
 turns, including replays, are refused with `unavailable` and the same diagnostic.
 This describes the live slot; it does not rewrite the seal, and a reconciled
 restart replays the original response without the warning. A publication
-failure prevents launch. An unclocked slot performs
+failure prevents launch. An unclocked slot without clock provisioning performs
 no clock-file I/O, allows the turn, and reports the existing gap when the field
 is present. Terminal responses record `shellClock: task|real|gap`; the sealed
 `turns.jsonl` projection records `shell_clock`. This records configured shell
@@ -59,14 +64,15 @@ comes from the real kernel clock; the static CLI ignores libfaketime, and the
 system prompt override does not replace this user-message envelope.
 
 For every turn with `processClock` (including `+0`), the broker's provider proxy
-rewrites every such line in user-role string content and `type: "text"` content
-parts before the existing model/effort/tool gate. It uses `realNow + offset` at
+rewrites such lines only in the **first `<user_info>` block of the first user
+message**, in string content or joined `type: "text"` content parts, before the
+existing model/effort/tool gate. It uses `realNow + offset` at
 each request, formatted in the launcher's pinned **UTC**, including later
-requests that resend history. Other roles, text outside these blocks and
-non-text parts retain their content. This works even if shell coverage is `gap`;
+requests that resend history. Other blocks, later messages, other roles, prompt
+look-alikes and non-text parts retain their content. This works even if shell coverage is `gap`;
 it does not shift the CLI, provider TLS, auth, or operational clocks.
 
-A date-like line with a different format refuses the whole request with HTTP
+A date-like line **inside that injected block** with a different format refuses the whole request with HTTP
 400 reason `task_clock_date_format`, before any upstream call or spend. A task
 instant outside the supported 1970–9999 UTC range refuses as
 `task_clock_date_range`. A request without the date line is allowed and counted.
@@ -84,7 +90,12 @@ as `provider_clock`, on completed and failed turns and on final-reply recovery:
   including a replacement whose date was already equal; body-policy refusals
   can therefore count here without spending upstream.
 - `requestsWithoutDateLine`: inspected bodies with no target date line; a
-  malformed date refusal is not counted as absence.
+  malformed injected date refusal is not counted as absence. Dates elsewhere
+  never mask a missing injected date.
+- `linesIgnored`: date-like lines in message text outside the injected block,
+  including prompt examples and other roles, counted without rewriting or
+  refusing them. Non-text parts are not inspected. Like `linesRewritten`, this
+  counts fully inspected bodies; absent on older seals.
 - `injectedDate`, `taskDate`: dates from the **last** rewritten line, or both
   `null` until a line is rewritten. No message content or timestamps are stored.
 
@@ -93,6 +104,22 @@ turns and older records have no `providerClock` member. Session-title requests
 remain locally refused through their existing sink and are not counted here.
 UUIDv7 session/conversation headers are not model context and are outside this
 rewrite; the proxy's existing header allowlist is unchanged.
+
+### Provider-date release check
+
+The control client's `turn(..., { onProviderClock })` option delivers the sealed
+observation on completion, failure and replay, before the promise settles.
+Collect it and fail the release check if **`requestsWithoutDateLine > 0`**.
+For a clocked release probe, also require an observation with `requests > 0` and
+`linesRewritten > 0`; missing evidence is not a pass. The same counts are
+available in terminal `providerClock` and `turns.jsonl`'s `provider_clock`.
+Test the pinned CLI against a local scripted provider, including resent history,
+before releasing a CLI upgrade: a new label such as `Current date:` is allowed
+at runtime but fails this check. Deduplicate ledger rows by `turn`.
+
+This is a caller/release policy, not a new proxy refusal. The observer cannot
+alter the terminal outcome; exceptions from it are ignored, so enforce the
+release check **after** awaiting the turn (or catching its failure).
 
 ## Spawnfile provisioning
 

@@ -34,24 +34,23 @@ test("clock dates use request-time UTC across midnight in both directions and in
     for (const [advance, date] of [[0, expected], [86_400_000, offset[0] === "-" ? "2026-10-11" : "2026-10-13"]] as const) {
       now = Date.parse(real) + advance;
       const wanted = structuredClone(original);
-      wanted.messages[3]!.content = `Today's date: outside\n${info(date)}\n${info(date)}`;
-      (wanted.messages[4]!.content as { text: string }[])[0]!.text = info(date).replaceAll("\n", "\r\n");
+      wanted.messages[3]!.content = `Today's date: outside\n${info(date)}\n${info("1999-12-31")}`;
       const actual = clock.rewrite(Buffer.from(JSON.stringify(original)));
       assert.deepEqual(JSON.parse(Buffer.from(actual).toString()), wanted);
     }
     assert.deepEqual(clock.snapshot(), {
-      requests: 2, linesRewritten: 6, requestsWithoutDateLine: 0,
+      requests: 2, linesRewritten: 2, requestsWithoutDateLine: 0, linesIgnored: 14,
       injectedDate: "2026-10-11", taskDate: offset[0] === "-" ? "2026-10-11" : "2026-10-13"
     });
   }
 });
 
-test("clock refuses changed date formats atomically, including content parts and later history", () => {
+test("clock refuses changed injected date formats atomically, including content parts", () => {
   const clock = new GrokBrokerProviderClock("+0", () => Date.parse("2026-10-11T12:00Z"));
   for (const date of ["", "October 11, 2026", "2026-10-11T00:00:00Z", "2026-1-11", "2026-10-11 ", "2026-10-11 extra"]) {
     for (const content of [info(date), [{ type: "text", text: info(date) }]]) {
       const body = { messages: [
-        { role: "user", content: info("2026-10-11") },
+        { role: "system", content: info("2026-10-11") },
         { role: "assistant", content: "history" },
         { role: "user", content }
       ] };
@@ -59,8 +58,51 @@ test("clock refuses changed date formats atomically, including content parts and
     }
   }
   assert.deepEqual(clock.snapshot(), {
-    requests: 12, linesRewritten: 0, requestsWithoutDateLine: 0, injectedDate: null, taskDate: null
+    requests: 12, linesRewritten: 0, requestsWithoutDateLine: 0, linesIgnored: 0, injectedDate: null, taskDate: null
   });
+});
+
+test("wake prompt look-alikes and later history are left intact and counted, even with malformed date lines", () => {
+  const clock = new GrokBrokerProviderClock("-0.001", () => Date.parse("2026-10-11T00:00Z"));
+  const wake = `Study this example:\n${info("October 11, 2026")}\nToday's date: prompt text\n${info("1999-12-31")}`;
+  for (const content of [
+    `${info("2026-10-11")}\n${wake}`,
+    [{ type: "text", text: info("2026-10-11").replaceAll("\n", "\r\n") }, { type: "text", text: `\n${wake}` }]
+  ]) {
+    const body = { messages: [
+      { role: "user", content },
+      { role: "assistant", content: info("TODAY") },
+      { role: "user", content: info("Today's date = later") }
+    ] };
+    const expected = structuredClone(body);
+    const first = expected.messages[0]!;
+    if (typeof first.content === "string") first.content = first.content.replace("2026-10-11", "2026-10-10");
+    else first.content[0]!.text = first.content[0]!.text.replace("2026-10-11", "2026-10-10");
+    assert.deepEqual(JSON.parse(Buffer.from(clock.rewrite(Buffer.from(JSON.stringify(body)))).toString()), expected);
+  }
+  assert.deepEqual(clock.snapshot(), {
+    requests: 2, linesRewritten: 2, requestsWithoutDateLine: 0, linesIgnored: 10,
+    injectedDate: "2026-10-11", taskDate: "2026-10-10"
+  });
+});
+
+test("missing injected dates never promote a prompt block or a later user message into the rewrite target", () => {
+  for (const first of [
+    "<user_info>\nCurrent date: 2026-10-11\n</user_info>\n" + info("2026-10-11"),
+    "no injected block",
+    [{ type: "image_url", image_url: { url: "image" } }]
+  ]) {
+    const clock = new GrokBrokerProviderClock("-1");
+    const body = Buffer.from(JSON.stringify({ messages: [
+      { role: "user", content: first }, { role: "user", content: info("October 11, 2026") }
+    ] }));
+    assert.deepEqual(clock.rewrite(body), body);
+    assert.deepEqual(clock.snapshot(), {
+      requests: 1, linesRewritten: 0, requestsWithoutDateLine: 1,
+      linesIgnored: typeof first === "string" && first.startsWith("<user_info>") ? 2 : 1,
+      injectedDate: null, taskDate: null
+    });
+  }
 });
 
 test("blocks and dates split across text parts rewrite without moving their boundaries", () => {
@@ -95,7 +137,7 @@ test("no target date leaves bytes intact and records absence without inventing d
   const body = Buffer.from(' { "messages" : [{"role":"user","content":"<user_info>\\nShell: /bin/sh\\n</user_info>"}] }\n');
   assert.deepEqual(clock.rewrite(body), body);
   assert.deepEqual(clock.snapshot(), {
-    requests: 1, linesRewritten: 0, requestsWithoutDateLine: 1, injectedDate: null, taskDate: null
+    requests: 1, linesRewritten: 0, requestsWithoutDateLine: 1, linesIgnored: 0, injectedDate: null, taskDate: null
   });
 });
 
@@ -117,10 +159,13 @@ test("terminal clock observations are closed, dates-only, and optional on old se
     outcome: "completed", usage: null, model: "grok-4.6", requests: 2, limitReason: "none"
   };
   assert.deepEqual(parseEngineBrokerResponse({ ...frame, providerClock }), { ...frame, providerClock });
+  const current = { ...providerClock, linesIgnored: 2 };
+  assert.deepEqual(parseEngineBrokerResponse({ ...frame, providerClock: current }), { ...frame, providerClock: current });
   assert.deepEqual(parseEngineBrokerResponse(frame), frame);
   assert.throws(() => parseEngineBrokerV2TerminalResponse({ ...frame, version: "noopolis.daimon.engine-broker.v2", providerClock }));
   for (const changed of [
     { requests: -1 }, { linesRewritten: 0 }, { requestsWithoutDateLine: 3 },
+    { linesIgnored: -1 }, { linesIgnored: 0.5 }, { linesIgnored: "1" },
     { injectedDate: "2026-10-11T00:00:00Z" }, { taskDate: null }, { extra: "body" }
   ]) {
     assert.throws(() => parseGrokBrokerProviderClockObservation({ ...providerClock, ...changed }), /invalid broker frame/u);
