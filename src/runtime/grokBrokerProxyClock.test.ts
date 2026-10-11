@@ -23,8 +23,10 @@ const payload = (content: unknown = info, extra: Record<string, unknown> = {}): 
 });
 
 type Reply = { status: number; body: string };
-type Send = (body: string) => Promise<Reply>;
-async function post(proxy: ReturnType<typeof createGrokBrokerProxyHandler>, token: string, body: string): Promise<Reply> {
+type Send = (body: string | Uint8Array) => Promise<Reply>;
+async function post(
+  proxy: ReturnType<typeof createGrokBrokerProxyHandler>, token: string, body: string | Uint8Array
+): Promise<Reply> {
   const request = new IncomingMessage(new Socket());
   request.method = "POST";
   request.url = "/v1/chat/completions";
@@ -82,6 +84,7 @@ async function fixture(t: TestContext, act: (send: Send) => Promise<void>, varia
     mcp: { register: () => "mcp", revoke() {} }, credentialStale: () => false,
     prepareIsolation: async () => ({ configVariant: variant, guard: async () => {} }),
     writeTaskClock: async () => {},
+    workerIdentityEmpty: async () => true, // No native worker is launched by this fixture.
     runNative: async (input) => {
       launches++;
       await act((body) => post(proxy, input.providerCapability, body));
@@ -143,11 +146,32 @@ test("processClock reaches the proxy, rechecks policy, meters rewritten requests
   await assert.rejects(f.run("clock", "+0.001"), /conflict/u);
 });
 
-test("unclocked requests are byte-identical and have no provider-clock observation", async (t) => {
+// Frozen oracle from origin/main (796b414), grokBrokerProxyRequest.ts:35,43:
+// replacement UTF-8 decode, JSON.parse with the prototype guard, JSON.stringify.
+// Deliberately independent of the new clock parser and production authorizer.
+function originMainBody(body: Uint8Array): Buffer {
+  const parsed: unknown = JSON.parse(Buffer.from(body).toString("utf8"), (key, value: unknown) => {
+    if (key === "__proto__") throw new Error("broker proxy request rejected");
+    return value;
+  });
+  return Buffer.from(JSON.stringify(parsed));
+}
+
+test("unclocked forwarding matches origin/main for whitespace, duplicates and invalid UTF-8", async (t) => {
   const raw = ` \n${JSON.stringify(JSON.parse(payload(info.replace("2026-10-11", "October 11, 2026"))), null, 2)}\n`;
-  const f = await fixture(t, async (send) => { assert.equal((await send(raw)).status, 200); });
+  const [before, after] = payload("INVALID_UTF8").split("INVALID_UTF8");
+  const inputs = [
+    Buffer.from(raw),
+    Buffer.from(payload().replace('"model":"grok-4.6"', '"model":"unsafe","\\u006dodel":"grok-4.6"')),
+    Buffer.from(payload().replace('"role":"user"', '"role":"system","role":"user"')),
+    Buffer.concat([Buffer.from(before!), Buffer.from([0x80, 0xc0, 0xaf]), Buffer.from(after!)])
+  ];
+  const f = await fixture(t, async (send) => {
+    for (const input of inputs) assert.equal((await send(input)).status, 200);
+  });
   const result = await f.run("real");
-  assert.deepEqual(f.forwarded, [Buffer.from(raw)]);
+  assert.deepEqual(f.forwarded, inputs.map(originMainBody));
+  assert.match(f.forwarded[3]!.toString(), /\uFFFD/u);
   assert.equal(Object.hasOwn(result, "providerClock"), false);
   assert.equal(Object.hasOwn((await f.rows("turns.jsonl"))[0], "provider_clock"), false);
 });

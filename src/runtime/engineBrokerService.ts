@@ -1,7 +1,10 @@
 import { brokerClockObservation, type BrokerClockObservation } from "./grokBrokerTaskClock.js";
 import { chmod, lstat, unlink } from "node:fs/promises";
 import { createServer, type Server, type Socket } from "node:net";
-import { encodeEngineBrokerFrame,EngineBrokerFrameDecoder,parseEngineBrokerRequest,type EngineBrokerResponse } from "./engineBrokerProtocol.js";
+import {
+  encodeEngineBrokerFrame, EngineBrokerFrameDecoder, EngineBrokerProtocolMismatch,
+  parseEngineBrokerRequest, type EngineBrokerResponse
+} from "./engineBrokerProtocol.js";
 import type { EngineBrokerTurnAccounting, EngineBrokerTurnLimitOverrides } from "./engineBrokerTurnAccounting.js";
 import { EngineBrokerTurnFailure } from "./grokEngineBroker.js";
 import { GROK_INFERENCE_PROXY_BASE_URL, type EngineBrokerInferenceRequest } from "./engineBrokerInferenceProtocol.js";
@@ -25,7 +28,12 @@ export function startEngineBrokerService(broker:EngineBrokerServiceEngine,socket
 }
 export async function startEngineBrokerServiceWithIdentity(broker:EngineBrokerServiceEngine,socketPath:string,expectedUid:number){
   if(process.getuid?.()!==expectedUid)throw new Error("engine broker service requires broker identity");await removeOwnedSocket(socketPath,expectedUid);const active=new Map<string,AbortController>(),connections=new Set<Socket>();
-  const server=createServer((socket)=>{connections.add(socket);socket.once("close",()=>connections.delete(socket));handle(socket,broker,active);});await listen(server,socketPath);
+  const server = createServer((socket) => {
+    connections.add(socket);
+    socket.once("close", () => connections.delete(socket));
+    serveEngineBrokerConnection(socket, broker, active);
+  });
+  await listen(server, socketPath);
   try{await chmod(socketPath,0o600);await verifySocket(socketPath,expectedUid);}catch(error){await closeServer(server,connections);await unlink(socketPath).catch(()=>undefined);throw error;}
   let closed=false;return {close:async()=>{if(closed)return;closed=true;for(const controller of active.values())controller.abort();const results=await Promise.allSettled([closeServer(server,connections),broker.close()]);await unlink(socketPath).catch(()=>undefined);const failures=results.flatMap((result)=>result.status==="rejected"?[result.reason]:[]);if(failures.length)throw new AggregateError(failures,"engine broker service shutdown failed");},health:()=>({activeTurns:active.size,socketPath})};
 }
@@ -48,7 +56,10 @@ export async function startEngineBrokerServiceWithIdentity(broker:EngineBrokerSe
  * reader has disconnected.
  */
 function handleSocketError(socket:Socket,owned:()=>Readonly<{turnId:string;controller:AbortController}>|undefined):void{socket.on("error",()=>{owned()?.controller.abort();socket.destroy();});}
-function handle(socket: Socket, broker: EngineBrokerServiceEngine, active: Map<string, AbortController>): void {
+/** @internal The production connection handler, also exercised over an in-memory transport. */
+export function serveEngineBrokerConnection(
+  socket: Socket, broker: EngineBrokerServiceEngine, active = new Map<string, AbortController>()
+): void {
   const decoder = new EngineBrokerFrameDecoder();
   let started = false;
   let owned: Readonly<{ turnId: string; controller: AbortController }> | undefined;
@@ -103,7 +114,13 @@ function handle(socket: Socket, broker: EngineBrokerServiceEngine, active: Map<s
           owned = undefined;
         });
       }
-    } catch { socket.destroy(); }
+    } catch (error) {
+      if (error instanceof EngineBrokerProtocolMismatch && !socket.writableEnded) {
+        // Flush one small, closed diagnostic before FIN; destroy would lose it.
+        socket.pause();
+        socket.end(encodeEngineBrokerFrame(error.diagnostic));
+      } else socket.destroy();
+    }
   });
 }
 /**

@@ -7,6 +7,10 @@ import { GROK_BROKER_TASK_CLOCK, type GrokWorkerConfigVariant } from "../contrac
 import { readTaskClock, taskClockChildEnvironment } from "./taskClock.js";
 import type { GrokBrokerProviderClockObservation } from "./grokBrokerProviderClock.js";
 
+/** Internal filesystem seam; tests wrap real handles to observe both fsyncs. */
+export type BrokerTaskClockFs = Pick<typeof import("node:fs/promises"), "lstat" | "open" | "rename" | "unlink">;
+const clockFs: BrokerTaskClockFs = { lstat, open, rename, unlink };
+
 export type BrokerShellClock = "task" | "real" | "gap";
 export type BrokerShellClockObservation = Readonly<{ shellClock?: BrokerShellClock }>;
 export type BrokerClockObservation = BrokerShellClockObservation & Readonly<{
@@ -54,23 +58,31 @@ export function assertBrokerTaskClockDirectory(entry: Pick<Stats, "uid" | "mode"
  * into the worker view keeps subsequent turns visible. No native ABI changes.
  * Paths/uid below are internal test seams, never control or service inputs.
  */
-export async function writeBrokerTaskClock(value: string | undefined, file: string = GROK_BROKER_TASK_CLOCK.timestampFilePath, brokerUid: number = GROK_BROKER_TASK_CLOCK.ownerUid): Promise<void> {
+export async function writeBrokerTaskClock(
+  value: string | undefined,
+  file: string = GROK_BROKER_TASK_CLOCK.timestampFilePath,
+  brokerUid: number = GROK_BROKER_TASK_CLOCK.ownerUid,
+  fs: BrokerTaskClockFs = clockFs
+): Promise<void> {
   const seconds = value === undefined ? "+0" : parseBrokerProcessClock(value);
   const directory = path.dirname(file);
-  const before = await lstat(directory);
+  const before = await fs.lstat(directory);
   assertBrokerTaskClockDirectory(before, brokerUid);
-  const parent = await open(directory, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+  const parent = await fs.open(directory, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
   const temporary = path.join(directory, `.faketime-${randomUUID()}.tmp`);
   let created = false;
   try {
     const pinned = await parent.stat();
     const verify = async () => {
-      const current = await lstat(directory);
+      const current = await fs.lstat(directory);
       assertBrokerTaskClockDirectory(current, brokerUid);
       if (current.dev !== pinned.dev || current.ino !== pinned.ino || before.dev !== pinned.dev || before.ino !== pinned.ino) throw new Error("Grok broker task clock directory changed");
     };
     await verify();
-    const handle = await open(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, GROK_BROKER_TASK_CLOCK.fileMode);
+    const handle = await fs.open(
+      temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
+      GROK_BROKER_TASK_CLOCK.fileMode
+    );
     created = true;
     try {
       const entry = await handle.stat();
@@ -80,11 +92,11 @@ export async function writeBrokerTaskClock(value: string | undefined, file: stri
       await handle.sync();
     } finally { await handle.close(); }
     await verify();
-    await rename(temporary, file);
+    await fs.rename(temporary, file);
     created = false;
     await parent.sync();
   } finally {
-    if (created) await unlink(temporary).catch(() => undefined);
+    if (created) await fs.unlink(temporary).catch(() => undefined);
     await parent.close();
   }
 }

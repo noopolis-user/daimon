@@ -24,14 +24,21 @@ for the declared model/effort and reports the variant; tampering refuses a turn.
 `start_turn.processClock` is an optional signed relative-seconds string with
 optional three-digit milliseconds, derived by `taskClockChildEnvironment`.
 It carries no path or environment map. Control protocol **v3** refuses v1/v2
-wire frames; both ends must upgrade together. Historical v1/v2 sealed turns
+wire frames with a bounded `protocol_mismatch` diagnostic naming the received
+and expected versions before closing; both ends must upgrade together. Old
+clients may still render their generic unavailable error. Historical v1/v2 sealed turns
 still replay. The request digest includes a supplied clock, so changing it
 for the same wake is a conflict. A replay never rewrites the clock file.
 Native ABI **2**, native argv/environment and launcher artifact pins do not change.
 
 Before native launch, a clocked slot writes the offset plus a newline through
 an exclusive temporary file, chmod, fsync and rename. A turn without a clock
-writes `+0`. A publication failure prevents launch. An unclocked slot performs
+writes `+0`. Every terminal path resets to `+0` after worker termination,
+including a publication failure after rename. Startup reconciles a clocked
+slot to `+0` before serving, covering broker death that bypasses cleanup.
+The broker checks that the worker identity has emptied before resetting;
+an unreaped worker or a reset failure fences the slot until restart. A
+publication failure prevents launch. An unclocked slot performs
 no clock-file I/O, allows the turn, and reports the existing gap when the field
 is present. Terminal responses record `shellClock: task|real|gap`; the sealed
 `turns.jsonl` projection records `shell_clock`. This records configured shell
@@ -56,9 +63,11 @@ A date-like line with a different format refuses the whole request with HTTP
 400 reason `task_clock_date_format`, before any upstream call or spend. A task
 instant outside the supported 1970–9999 UTC range refuses as
 `task_clock_date_range`. A request without the date line is allowed and counted.
-Unclocked requests retain their bytes, including whitespace and escaping. The
-existing spend gate still normalizes ambiguous duplicate JSON members to the
-validated values, and rejects invalid JSON/prototype keys.
+Unclocked forwarding matches origin/main 796b414: replacement UTF-8 decoding,
+JSON parsing with the prototype-key guard, then serialization of the validated
+object. Whitespace and escaping normalize, duplicate members use the last value,
+and invalid UTF-8 inside a JSON string becomes the replacement character. Only
+clocked turns enter the stricter date-rewrite parser before this existing gate.
 
 Every clocked terminal response seals `providerClock`; `turns.jsonl` projects it
 as `provider_clock`, on completed and failed turns and on final-reply recovery:
