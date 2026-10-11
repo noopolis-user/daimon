@@ -2,7 +2,6 @@ import { GROK_ENGINE_BROKER } from "../contracts/runtimeContractManifest.js";
 import { GROK_WORKER_VISIBLE_TOOLS } from "../contracts/grokWorkerContract.js";
 import type { EngineBrokerCapabilities } from "./engineBrokerCapabilities.js";
 import { DEFAULT_GROK_BROKER_MODEL_POLICY, parseGrokBrokerModelPolicy, type GrokBrokerModelPolicy } from "./grokBrokerModelPolicy.js";
-import { parseGrokBrokerProxyJson } from "./grokBrokerProxyJson.js";
 
 const MAX_BODY = 2 * 1024 * 1024;
 export type GrokBrokerProxyInput = Readonly<{ method: string; pathname: string; headers: Readonly<Record<string, string | undefined>>; body: Uint8Array; agentId?: string; turnId?: string }>;
@@ -31,17 +30,21 @@ export function authorizeGrokBrokerProxyRequest(input: GrokBrokerProxyInput, cap
   const clientVersion = input.headers["x-grok-client-version"];
   if (clientVersion !== GROK_ENGINE_BROKER.grokCliVersion) throw new Error("broker proxy request rejected");
   let parsed: Record<string, unknown>;
-  let body: Uint8Array;
   // `__proto__` is refused at any depth: JSON.parse makes it an ordinary own
   // member, but an upstream JavaScript parser may treat it as a prototype.
-  try { ({ value: parsed, body } = parseGrokBrokerProxyJson(input.body)); }
-  catch { throw new Error("broker proxy request rejected"); }
+  try {
+    parsed = JSON.parse(Buffer.from(input.body).toString("utf8"), (key, value: unknown) => {
+      if (key === "__proto__") throw new Error("broker proxy request rejected");
+      return value;
+    }) as Record<string, unknown>;
+  } catch { throw new Error("broker proxy request rejected"); }
   if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed) || parsed.stream !== true || !Array.isArray(parsed.messages)) throw new Error("broker proxy request rejected");
   if (parsed.model !== declared.model || parsed.reasoning_effort !== declared.reasoningEffort) throw new Error("broker proxy request rejected");
   if (!exactLeanTools(parsed.tools)) throw new Error("broker proxy request rejected");
   if (Object.keys(parsed).some((key) => !LEAN_BODY_MEMBERS.has(key)) || !validStreamOptions(parsed.stream_options)) throw new Error("broker proxy request rejected");
-  // Duplicate keys normalize to the validated object; ordinary worker JSON
-  // retains its bytes. Both paths preserve the gate's exact model/tool policy.
+  // Keep origin/main's production handling: UTF-8 replacement decoding, then
+  // serialize the validated object (including last-member-wins duplicates).
+  // Only a clocked turn takes the stricter date rewrite before this gate.
   return {
     url: "https://cli-chat-proxy.grok.com/v1/chat/completions",
     headers: {
@@ -49,7 +52,7 @@ export function authorizeGrokBrokerProxyRequest(input: GrokBrokerProxyInput, cap
       "x-xai-token-auth": "xai-grok-cli", "x-grok-model-override": declared.model,
       "x-grok-client-version": clientVersion, "x-grok-client-identifier": "grok-shell"
     },
-    body
+    body: Buffer.from(JSON.stringify(parsed))
   };
 }
 

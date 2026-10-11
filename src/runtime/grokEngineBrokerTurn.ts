@@ -1,5 +1,8 @@
 import type { GrokWorkerConfigVariant } from "../contracts/grokBrokerTaskClock.js";
-import { brokerClockObservation, parseBrokerProcessClock, prepareBrokerTaskClock, type BrokerShellClock, type BrokerClockObservation, type writeBrokerTaskClock } from "./grokBrokerTaskClock.js";
+import {
+  brokerClockObservation, parseBrokerProcessClock, prepareBrokerTaskClock,
+  writeBrokerTaskClock, type BrokerShellClock, type BrokerClockObservation
+} from "./grokBrokerTaskClock.js";
 import { GrokBrokerProviderClock, type GrokBrokerProviderClockObservation } from "./grokBrokerProviderClock.js";
 import { createHash, randomUUID } from "node:crypto";
 
@@ -42,6 +45,10 @@ export type GrokEngineBrokerTurnDependencies = Readonly<{
   credentialStale(): boolean;
   prepareIsolation(registration: EngineBrokerServiceRegistration): Promise<Readonly<{ guard: () => Promise<void>; configVariant: GrokWorkerConfigVariant }>>;
   writeTaskClock?: typeof writeBrokerTaskClock;
+  /** Startup attestation also owns cleanup when per-turn attestation fails. */
+  clockedSlot?: boolean;
+  /** A failed cleanup fences production dispatch until the broker restarts. */
+  taskClockFailed?(): void;
   runNative(input: NativeBrokerTurn, signal: AbortSignal): Promise<Readonly<NativeBrokerTurnResult>>;
   /** The worker the launcher started for this identity (`/proc` by default); only read when the broker ends a turn itself. */
   observeWorker?(workerUid: number): Promise<GrokWorkerProcess | undefined>;
@@ -97,6 +104,9 @@ export async function runGrokEngineBrokerTurn(deps: GrokEngineBrokerTurnDependen
   }, { once: true });
 
   let shellClock: BrokerShellClock | undefined;
+  let resetClock = deps.clockedSlot === true;
+  let nativeStarted = false;
+  let workerReaped = false;
   let nativeDiagnostic: NativeBrokerDiagnostic | undefined, attested = false, output: string | undefined, rejected = false, sealed: GrokEngineBrokerTurnResult | undefined;
   // Set when the broker itself ended the turn (`grokEngineBrokerTurnEnd.ts`); the worker seen at the final reply names the turn it ended.
   let endedBy: GrokBrokerTurnEndReason | undefined;
@@ -104,6 +114,8 @@ export async function runGrokEngineBrokerTurn(deps: GrokEngineBrokerTurnDependen
   try {
     const isolation = await deps.prepareIsolation(registration);
     isolationGuard = isolation.guard;
+    // Publication may throw after rename. Claim cleanup before attempting it.
+    resetClock ||= isolation.configVariant === "clocked";
     const coverage = await prepareBrokerTaskClock(isolation.configVariant, processClock, deps.writeTaskClock);
     if (isolation.configVariant === "clocked" || processClock !== undefined) shellClock = coverage;
     deps.proxy.registerIsolationGuard(turnId, isolationGuard);
@@ -120,6 +132,7 @@ export async function runGrokEngineBrokerTurn(deps: GrokEngineBrokerTurnDependen
       // An idle stall is a deadline of its own: it trips the meter as a timeout, so it seals like one.
       onEnd: (reason) => { endedBy = reason; if (reason === "idle") meter.trip("timeout"); else controller.abort(); }
     });
+    nativeStarted = true;
     const result = await deps.runNative({ slot: registration.slot, requestId: request.requestId, turnId, agentId, wakeId, prompt, providerCapability, mcpCapability }, controller.signal);
     nativeDiagnostic = result.diagnostic; output = result.text;
     if (result.workerUid !== registration.workerUid) throw new Error("engine broker worker identity mismatch");
@@ -153,7 +166,12 @@ export async function runGrokEngineBrokerTurn(deps: GrokEngineBrokerTurnDependen
     // A turn this broker aborted is sealed only once its worker identity is
     // empty (bounded): the agent's next turn must not start a worker the
     // previous launcher handler's identity-wide reap would kill.
-    if (controller.signal.aborted) await awaitGrokWorkerIdentityEmpty(registration.workerUid, deps.workerReapWaitMs ?? GROK_WORKER_REAP_WAIT_MS, deps.workerIdentityEmpty ?? grokWorkerIdentityEmpty);
+    if (controller.signal.aborted) {
+      workerReaped = await awaitGrokWorkerIdentityEmpty(
+        registration.workerUid, deps.workerReapWaitMs ?? GROK_WORKER_REAP_WAIT_MS,
+        deps.workerIdentityEmpty ?? ((uid) => grokWorkerIdentityEmpty(uid, undefined, resetClock))
+      );
+    }
     // Not aborted (an output-limit failure, say): nothing was killed, so the live view is the true one.
     if (!controller.signal.aborted) { let mcp = 0; try { mcp = deps.mcp.activity?.(turnId)?.inFlight ?? 0; } catch { mcp = 0; } inFlightAtEnd = mcp > 0 || meter.busy(); }
     const vetoed = cancelledByCaller || rejected || (output !== undefined && !attested) || inFlightAtEnd;
@@ -188,7 +206,30 @@ export async function runGrokEngineBrokerTurn(deps: GrokEngineBrokerTurnDependen
     throw new EngineBrokerTurnFailure(code, diagnostic, accounting, mcpCalls, shellClock, observation.providerClock);
   } finally {
     watchdog?.stop(); clearTimeout(timer); signal?.removeEventListener("abort", onAbort); meter.abortInFlight();
-    deps.proxy.revokeTurn(turnId); deps.proxy.revokeIsolationGuard(turnId); deps.proxy.capabilities.revoke(turnId); deps.mcp.revoke(turnId);
+    try {
+      deps.proxy.revokeTurn(turnId);
+      deps.proxy.revokeIsolationGuard(turnId);
+      deps.proxy.capabilities.revoke(turnId);
+      deps.mcp.revoke(turnId);
+    } finally {
+      if (resetClock) {
+        try {
+          // A disconnected launcher client can settle before its worker is reaped.
+          // Never change the clock of a surviving shell, or release the slot as healthy.
+          if (nativeStarted && !workerReaped) {
+            workerReaped = await awaitGrokWorkerIdentityEmpty(
+              registration.workerUid, deps.workerReapWaitMs ?? GROK_WORKER_REAP_WAIT_MS,
+              deps.workerIdentityEmpty ?? ((uid) => grokWorkerIdentityEmpty(uid, undefined, true))
+            );
+            if (!workerReaped) throw new Error("Grok broker task clock worker did not terminate");
+          }
+          await (deps.writeTaskClock ?? writeBrokerTaskClock)(undefined);
+        } catch (error) {
+          deps.taskClockFailed?.();
+          throw new Error("Grok broker task clock cleanup failed; restart required", { cause: error });
+        }
+      }
+    }
   }
 }
 

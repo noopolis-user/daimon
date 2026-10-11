@@ -14,6 +14,24 @@ const VERSION = "noopolis.daimon.engine-broker.v3" as const;
 export const ENGINE_BROKER_VERSION = VERSION;
 const V1 = "noopolis.daimon.engine-broker.v1" as const;
 export const ENGINE_BROKER_MAX_FRAME_BYTES = 1_048_576;
+const PROTOCOL_NAME = /^noopolis\.daimon\.engine-broker\.v[0-9]{1,6}$/u;
+const boundedProtocol = (value: unknown): string =>
+  typeof value === "string" && PROTOCOL_NAME.test(value) ? value : "<invalid>";
+
+/** Version refusal is independent of the incompatible operation's schema. */
+export type EngineBrokerProtocolDiagnostic = Readonly<{
+  kind: "protocol_mismatch"; receivedVersion: string; expectedVersion: string;
+}>;
+
+export class EngineBrokerProtocolMismatch extends TypeError {
+  readonly diagnostic: EngineBrokerProtocolDiagnostic;
+  constructor(received: unknown, expected: unknown = VERSION) {
+    const receivedVersion = boundedProtocol(received);
+    const expectedVersion = boundedProtocol(expected);
+    super(`invalid broker frame: protocol version mismatch (received ${receivedVersion}; expected ${expectedVersion})`);
+    this.diagnostic = { kind: "protocol_mismatch", receivedVersion, expectedVersion };
+  }
+}
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 
 export type EngineBrokerRequest =
@@ -73,7 +91,10 @@ const text = (value: unknown, maxBytes: number): string => {
   return value;
 };
 const id = (value: unknown): string => { const result = text(value, 128); if (!ID.test(result)) throw new TypeError("invalid broker frame"); return result; };
-const version = (value: unknown): typeof VERSION => { if (value !== VERSION) throw new TypeError(`invalid broker frame: protocol version mismatch (expected ${VERSION})`); return VERSION; };
+const version = (value: unknown): typeof VERSION => {
+  if (value !== VERSION) throw new EngineBrokerProtocolMismatch(value);
+  return VERSION;
+};
 
 export function parseEngineBrokerRequest(value: unknown): EngineBrokerRequest {
   const input = record(value); version(input.version);
@@ -97,7 +118,15 @@ export function parseEngineBrokerRequest(value: unknown): EngineBrokerRequest {
 }
 
 export function parseEngineBrokerResponse(value: unknown): EngineBrokerResponse {
-  const input = record(value); version(input.version);
+  const input = record(value);
+  if (input.kind === "protocol_mismatch") {
+    exact(input, ["kind", "receivedVersion", "expectedVersion"]);
+    for (const field of [input.receivedVersion, input.expectedVersion]) {
+      if (field !== "<invalid>" && boundedProtocol(field) !== field) throw new TypeError("invalid broker frame");
+    }
+    throw new EngineBrokerProtocolMismatch(input.receivedVersion, input.expectedVersion);
+  }
+  version(input.version);
   if(input.kind==="ready"){exact(input,["version","kind","requestId","brokerUid","providerProxyPort","mcpFacadePort","registrations","credentialStale","realmLease","workerIsolation"]);if(input.brokerUid!==2100||input.providerProxyPort!==43123||input.mcpFacadePort!==43124||!Number.isSafeInteger(input.registrations)||(input.registrations as number)<1||input.credentialStale!==false||input.realmLease!==true||input.workerIsolation!==true)throw new TypeError("invalid broker frame");return {version:VERSION,kind:"ready",requestId:id(input.requestId),brokerUid:2100,providerProxyPort:43123,mcpFacadePort:43124,registrations:input.registrations as number,credentialStale:false,realmLease:true,workerIsolation:true};}
   if (input.kind === "accepted") {
     exact(input, ["version", "kind", "requestId", "turnId"]);
@@ -247,7 +276,9 @@ function closedDiagnostic(value:JsonRecord):boolean{
   return value.status==="cancelled"&&worker&&value.stage==="wait"&&value.failureClass==="cancelled";
 }
 
-export function encodeEngineBrokerFrame(value: EngineBrokerRequest | EngineBrokerResponse): Buffer {
+export function encodeEngineBrokerFrame(
+  value: EngineBrokerRequest | EngineBrokerResponse | EngineBrokerProtocolDiagnostic
+): Buffer {
   const body = Buffer.from(JSON.stringify(value), "utf8");
   if (body.length > ENGINE_BROKER_MAX_FRAME_BYTES) throw new TypeError("invalid broker frame");
   const frame = Buffer.allocUnsafe(body.length + 4); frame.writeUInt32BE(body.length); body.copy(frame, 4); return frame;

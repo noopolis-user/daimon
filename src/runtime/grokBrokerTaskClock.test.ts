@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
-import { chmod, lstat, mkdir, mkdtemp, open, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import {
+  chmod, lstat, mkdir, mkdtemp, open, readFile, readdir, rename, rm, symlink, unlink, writeFile
+} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test, { type TestContext } from "node:test";
@@ -61,6 +63,31 @@ test("publication refuses unsafe directories and never follows a destination sym
   assert.equal((await lstat(file)).isSymbolicLink(), false);
   await assert.rejects(writeBrokerTaskClock("@2000-01-01", file, uid), /process clock/u);
   assert.equal(await readFile(file, "utf8"), "+2\n");
+});
+
+test("publication fsyncs the file before rename and the parent after rename", async (t) => {
+  const { directory, file, uid } = await fixture(t);
+  await writeFile(file, "+999\n");
+  const operations: string[] = [];
+  await writeBrokerTaskClock("-1.234", file, uid, {
+    lstat, unlink,
+    open: async (...args) => {
+      const handle = await open(...args);
+      const sync = handle.sync.bind(handle);
+      t.mock.method(handle, "sync", async () => {
+        operations.push(args[0] === directory ? "directory:sync" : "file:sync");
+        await sync();
+      });
+      return handle;
+    },
+    rename: async (source, target) => {
+      operations.push("rename");
+      assert.equal(await readFile(file, "utf8"), "+999\n");
+      await rename(source, target);
+    }
+  });
+  assert.deepEqual(operations, ["file:sync", "rename", "directory:sync"]);
+  assert.equal(await readFile(file, "utf8"), "-1.234\n");
 });
 
 test("provisioning admits only broker ownership, worker-readable modes and one clocked registration", () => {
