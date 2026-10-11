@@ -48,12 +48,12 @@ test("direct Grok writes the exact tool-child policy into its private home, then
 test("clock coverage gaps are explicit non-fatal readiness diagnostics", (t) => {
   clock(t);
   const warning = t.mock.method(console, "warn", () => {});
-  reportEngineTaskClockGap("agy"); reportEngineTaskClockGap("grok", true);
-  assert.equal(warning.mock.callCount(), 2);
+  reportEngineTaskClockGap("agy"); reportEngineTaskClockGap("grok");
+  assert.equal(warning.mock.callCount(), 1);
   assert.match(warning.mock.calls[0]!.arguments[0], /engine=agy.*native tools remain on real time; wake allowed/u);
-  assert.match(warning.mock.calls[1]!.arguments[0], /engine=grok.*attested broker worker config.*wake allowed/u);
+  // Broker warnings are deferred until the broker attests the actual worker config.
   reportEngineTaskClockGap("codex"); reportEngineTaskClockGap("grok");
   delete process.env.NOOPOLIS_TASK_CLOCK;
-  reportEngineTaskClockGap("agy"); reportEngineTaskClockGap("grok", true);
-  assert.equal(warning.mock.callCount(), 2);
+  reportEngineTaskClockGap("agy"); reportEngineTaskClockGap("grok");
+  assert.equal(warning.mock.callCount(), 1);
 });

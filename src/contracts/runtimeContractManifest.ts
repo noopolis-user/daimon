@@ -1,3 +1,4 @@
+import { GROK_BROKER_TASK_CLOCK } from "./grokBrokerTaskClock.js";
 import { WAKE_MOMENTS } from "./wakeMomentContract.js";
 import { OPERATOR_DRAIN, WORK_AVAILABILITY_SCHEMA, WORK_BLOCKED_SCHEMA } from "./attentionContract.js";
 import { GROK_BROKER_MODELS, GROK_BROKER_REASONING_EFFORTS, GROK_WORKER_MAX_TURNS, GROK_WORKER_TOOL_IDS, GROK_WORKER_VISIBLE_TOOLS } from "./grokWorkerContract.js";
@@ -8,7 +9,7 @@ import {
   ORGANIZATION_RUNTIME_MAX_STRING_CODEPOINTS
 } from "./organizationRuntimeContract.js";
 
-export const RUNTIME_CONTRACT_MANIFEST_VERSION = "noopolis.daimon.runtime-contract-manifest.v3" as const;
+export const RUNTIME_CONTRACT_MANIFEST_VERSION = "noopolis.daimon.runtime-contract-manifest.v4" as const;
 export const ORGANIZATION_RUNTIME_ACTIVITY_V2_VERSION = "noopolis.daimon.organization-runtime-activity.v2" as const;
 export const ENGINE_CREDENTIAL_MATERIAL = {
   codex: { sourceSlot: "codex-auth", sourceRelativePath: ".daimon-inbound/codex-auth", destinationRelativePath: ".codex/auth.json", directoryMode: 0o700, fileMode: 0o600 }
@@ -52,12 +53,19 @@ export const GROK_ENGINE_BROKER = {
     visibleTools: GROK_WORKER_VISIBLE_TOOLS,
     maxTurns: GROK_WORKER_MAX_TURNS,
     systemPromptSha256: "2c31c0085a54a4efbf9c0cf0b8124c56e47f38691b7f0c7fa233a74abaa8ddf8",
-    // sha256 of `renderGrokBrokerWorkerConfig({ model, reasoningEffort })`, the only accepted config.toml bytes.
+    // sha256 of `renderGrokBrokerWorkerConfig({ model, reasoningEffort })`, the unchanged production config.toml bytes.
     configSha256: {
       "grok-4.6": { low: "ab58499ac32678097c146479896f2b8a8e2b0e39aea22dc0a60b6227e370538e", medium: "df1a5cc84346e7f6bf6090492fbd19faaefb42953e3bb2e8c6cbc0572242403f", high: "65b0212564fb74042b1503d293fb8d3620276033264c0efade2a539ca09218e3" },
       "grok-4.5": { low: "8247127c3625ff7c5d8d527a53596b89ec6557a821ac46cfd00bd122b90daff6", medium: "59288cee61297bb8c002097061a48f77b09d310754187a253ee089f7172a9155", high: "c63c3387ce92d94ec3f690abfe98942afcd7c9e17ff84816bbe751f340ab251f" },
       "grok-build": { low: "fb343f2809903f26d21681470943235031f946e99085542fd89555eb7782cbb5", medium: "8a587ef75c90eab70d19b24583e60051d6fba9d90c558839fdbb15588b4cc656", high: "a23724e00d670caee185ba7690d2daa868173e53905cf446f5329666f01ab4e3" }
     },
+    // sha256 of renderGrokBrokerWorkerConfig(policy, "clocked"); no offset in these bytes.
+    clockedConfigSha256: {
+      "grok-4.6": { low: "634ec9ce49c9e8d508b574e7b183678330359cfed63738df209a38963c730dab", medium: "dacd7e1c2de68d9edd2250b436d76e67046d071f163d56b7c291a315f2342e8c", high: "7aac64db19a2f59967bbbe1ed7a8b748985927f0f15cad847eb8cd20535eb70b" },
+      "grok-4.5": { low: "831a68af36566ae24c1a8301b3fa866167fd173bf22334c2caf897c6d41c8a15", medium: "f517dfefb0b6ee6252d20bd81c057afca6d6f382c92c686d0b83e91a4a77ac07", high: "bf9d36286ec81fd5d37a726c5835d11349e8cc91bafe1428fef7171a3c509091" },
+      "grok-build": { low: "22adfcb78a281e768f878996de8665e56ff698bf9c46bf06ce894ef9c21c2512", medium: "74c5362427c371e06bbf4ea5f3e10024fdb8ea468103b2206f7f4e873572932a", high: "127e592c0df2c43de51559ae7c90e607f59e2b1ccf5b8c0a082cd64e46ab7823" }
+    },
+    taskClock: GROK_BROKER_TASK_CLOCK,
     // Worker `GROK_HOME` layout the broker attests before every turn. The home and
     // its `sessions/` directory are root-owned, worker-group writable and sticky so
     // Grok can create its own state but never replace a root-owned file.
@@ -83,7 +91,7 @@ export const GROK_ENGINE_BROKER = {
   },
   bounds: { promptBytes: 65_536, capabilityBytes: 4_096, capabilityBundleBytes: 8_196, outputBytes: 262_144 },
   // Accounting and limits (P2). The broker is the single sealed usage writer.
-  controlProtocolVersion: "noopolis.daimon.engine-broker.v2",
+  controlProtocolVersion: "noopolis.daimon.engine-broker.v3",
   turnRecordVersions: ["noopolis.daimon.engine-broker-turn.v1", "noopolis.daimon.engine-broker-turn.v2"],
   serviceConfigVersions: ["noopolis.daimon.engine-broker-service.v1", "noopolis.daimon.engine-broker-service.v2"],
   turnLimits: {
@@ -131,7 +139,7 @@ export const GROK_ENGINE_BROKER = {
       }
     }
   },
-  projectionVersion: "noopolis.daimon.grok-broker-projection.v1",
+  projectionVersion: "noopolis.daimon.grok-broker-projection.v2",
   slotPreflightVersion: "noopolis.daimon.grok-slot-preflight.v2",
   artifacts: {
     sourceSha256: "15836d7ad69f12ef581a6e5b8635c9db43b2177dac609160c0749d3d1fefbaa8",
