@@ -13,6 +13,19 @@ test("broker backend serves a turn and preserves worker attestation", async () =
   await withService(async (client) => {await client.ready();assert.equal(await client.turn("agent-a","wake-a","hello","http://127.0.0.1:44001/mcp"),"answer");});
 });
 
+test("the control client and service carry exactly the optional per-turn process clock", async () => {
+  const values: (string | undefined)[] = [];
+  await withService(async (client) => {
+    for (const processClock of ["-843385600.250", undefined]) {
+      assert.equal(await client.turn("a", "wake", "work", "http://127.0.0.1:1/mcp", undefined, { processClock }), "answer");
+    }
+    assert.deepEqual(values, ["-843385600.250", undefined]);
+  }, async (_agent, _wake, _prompt, _endpoint, _signal, _limits, processClock) => {
+    values.push(processClock);
+    return { text: "answer", workerPid: 22, workerUid: 2200, workerStartTime: "123", shellClock: processClock === undefined ? "real" : "task", ...completedAccounting };
+  });
+});
+
 test("health challenge fails closed when the credential realm is stale",async()=>{
   await withService(async(client)=>assert.rejects(client.ready(),/unavailable/u),undefined,()=>({providerProxyPort:43123,mcpFacadePort:43124,registrations:1,credentialStale:true,realmLease:true,workerIsolation:true}));
 });

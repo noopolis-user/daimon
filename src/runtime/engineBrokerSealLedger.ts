@@ -82,6 +82,15 @@ export const renderBrokerTurnSealLine = (terminal: EngineBrokerTerminalResponse,
   requests: terminal.requests,
   model: terminal.model,
   limit_reason: terminal.limitReason,
+  ...(terminal.shellClock === undefined ? {} : { shell_clock: terminal.shellClock }),
+  ...(terminal.providerClock === undefined ? {} : { provider_clock: {
+    requests: terminal.providerClock.requests,
+    linesRewritten: terminal.providerClock.linesRewritten,
+    requestsWithoutDateLine: terminal.providerClock.requestsWithoutDateLine,
+    ...(terminal.providerClock.linesIgnored === undefined ? {} : { linesIgnored: terminal.providerClock.linesIgnored }),
+    injectedDate: terminal.providerClock.injectedDate,
+    taskDate: terminal.providerClock.taskDate
+  } }),
   ...(terminal.kind === "failed" ? { code: terminal.code } : {}),
   ...(terminal.kind === "failed" && terminal.diagnostic !== undefined
     ? {

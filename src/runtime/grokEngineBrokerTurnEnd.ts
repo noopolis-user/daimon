@@ -1,4 +1,5 @@
 import { readdir, readFile } from "node:fs/promises";
+import { performance } from "node:perf_hooks";
 
 import type { EngineBrokerMcpActivity } from "./engineBrokerMcpCallLog.js";
 import type { GrokBrokerTurnMeter } from "./grokBrokerTurnMeter.js";
@@ -119,9 +120,11 @@ export async function findGrokWorkerProcess(uid: number, procRoot = "/proc"): Pr
 }
 
 /** No process at all, zombies included, owned by `uid`. */
-export async function grokWorkerIdentityEmpty(uid: number, procRoot = "/proc"): Promise<boolean> {
+export async function grokWorkerIdentityEmpty(
+  uid: number, procRoot = "/proc", requireReadable = false
+): Promise<boolean> {
   let entries: string[];
-  try { entries = await readdir(procRoot); } catch { return true; }
+  try { entries = await readdir(procRoot); } catch { return !requireReadable; }
   for (const entry of entries) {
     if (!/^\d+$/u.test(entry)) continue;
     try {
@@ -129,7 +132,10 @@ export async function grokWorkerIdentityEmpty(uid: number, procRoot = "/proc"): 
       // Zombies count, exactly as the launcher's own reap counts them.
       if (Number(/^Uid:\s+(\d+)/mu.exec(status)?.[1]) !== uid) continue;
       return false;
-    } catch { /* exiting mid-scan */ }
+    } catch (error) {
+      // ENOENT is a process exiting mid-scan; an unreadable identity is not empty.
+      if (requireReadable && (error as NodeJS.ErrnoException).code !== "ENOENT") return false;
+    }
   }
   return true;
 }
@@ -146,10 +152,11 @@ export async function awaitGrokWorkerIdentityEmpty(uid: number, timeoutMs: numbe
   // Empty must hold across a window longer than the launcher's own reap pass
   // (10 ms between scans): one empty glimpse can fall between its kill and its
   // re-scan, and that re-scan would kill the agent's next worker.
-  const deadline = Date.now() + timeoutMs;
+  // Cleanup must measure elapsed real time even if the wall clock changes.
+  const deadline = performance.now() + timeoutMs;
   let emptySince: number | undefined;
   for (;;) {
-    const now = Date.now();
+    const now = performance.now();
     if (await empty(uid).catch(() => false)) { emptySince ??= now; if (now - emptySince >= stableMs) return true; } else emptySince = undefined;
     if (now >= deadline) return false;
     await new Promise((resolve) => setTimeout(resolve, pollMs));

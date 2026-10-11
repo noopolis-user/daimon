@@ -48,7 +48,7 @@ async function withBroker(bodies: readonly string[], run: (harness: Harness) => 
           turns: new EngineBrokerTurnRegistry(path.join(root, "turns")), proxy, credentialStale: () => false,
           mcp: { register: () => "mcp-capability-0123456789abcdef", revoke: () => { ended++; }, activity: () => ({ inFlight: extra.mcpInFlight?.() ?? 0, lastActivityAt: 0 }) },
           workerIdentityEmpty: extra.identityEmpty ?? (async () => true), workerReapWaitMs: 2_000,
-          prepareIsolation: async () => async () => undefined,
+          prepareIsolation: async () => ({ guard: async () => undefined, configVariant: "unclocked" }),
           observeWorker: extra.observe ?? (async (uid) => uid === 2_200 ? { pid: 5_151, startTicks: "777" } : undefined),
           turnEnd,
           runNative: async (input: NativeBrokerTurn, signal: AbortSignal): Promise<NativeBrokerTurnResult> => {

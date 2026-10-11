@@ -7,7 +7,7 @@ import type { WakeEvent } from "../core/types.js";
 import { createOrganizationRuntimeHostForTest } from "./organizationRuntimeHost.js";
 import { createOrganizationRuntimeControlHostWithCoreForTest } from "./organizationRuntimeControl.js";
 import { prepareProductionReadiness } from "./organizationRuntimeReadiness.js";
-import { startOrganizationRuntimeEngine } from "./engineDispatcher.js";
+import { grokBrokerTurnFor, startOrganizationRuntimeEngine } from "./engineDispatcher.js";
 import type { EngineBrokerTurnClient } from "./engineBrokerControlClient.js";
 import type { AttentionRegistry } from "./attention.js";
 import { attentionTools } from "./attention.js";
@@ -35,7 +35,7 @@ test("host rejects invalid clock or conflicting MCP declarations before prefligh
   await assert.rejects(conflict.start(), /conflicts with MNEME_CLOCK_ANCHOR_MS/u);
   assert.equal(sideEffects, 0);
 });
-test("native broker clock gaps are reported without refusing readiness or dispatch", async (t) => {
+test("readiness and dispatch defer broker clock reporting until the worker config is attested", async (t) => {
   environment(t);
   const value = config(); value.agents[0]!.engine = { kind: "grok" };
   const parsed = parseOrganizationRuntimeConfig(value);
@@ -44,8 +44,19 @@ test("native broker clock gaps are reported without refusing readiness or dispat
   await assert.rejects(prepareProductionReadiness(parsed), (error: Error) => !error.message.includes("NOOPOLIS_TASK_CLOCK"));
   const paths = { verify: async () => { throw new Error("path readiness reached"); } };
   await assert.rejects(startOrganizationRuntimeEngine(parsed.agents[0]!, "CLOCK_TEST_TOKEN", paths as never, undefined, {} as EngineBrokerTurnClient), /path readiness reached/u);
-  assert.equal(warning.mock.callCount(), 2);
-  for (const call of warning.mock.calls) assert.match(call.arguments[0], /engine=grok.*wake allowed/u);
+  assert.equal(warning.mock.callCount(), 0);
+});
+test("the production broker callback sends the derived process clock on each clocked wake only", async (t) => {
+  environment(t);
+  const value = config(); value.agents[0]!.engine = { kind: "grok" };
+  const agent = parseOrganizationRuntimeConfig(value).agents[0]!;
+  const seen: unknown[] = [];
+  const context = { current: "one" };
+  const callback = grokBrokerTurnFor(agent, { turn: async (...args) => { seen.push([args[1], args[5]?.processClock]); return "done"; } }, context);
+  assert.equal(await callback("work", "http://127.0.0.1:1/mcp", new AbortController().signal), "done");
+  delete process.env.NOOPOLIS_TASK_CLOCK; context.current = "two";
+  await callback("work", "http://127.0.0.1:1/mcp", new AbortController().signal);
+  assert.deepEqual(seen, [["one", "-90799200"], ["two", undefined]]);
 });
 test("schedule delays remain real while durable occurrences and delivery IDs use task time", { timeout: 5000 }, async (t) => {
   environment(t);

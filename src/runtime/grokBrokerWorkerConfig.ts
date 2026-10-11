@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
 import path from "node:path";
+import { GROK_BROKER_TASK_CLOCK, type GrokWorkerConfigVariant } from "../contracts/grokBrokerTaskClock.js";
+import { shellEnvironmentPolicyEntries } from "../contracts/shellEnvironmentPolicy.js";
 
 import { GROK_ENGINE_BROKER } from "../contracts/runtimeContractManifest.js";
 import { DAIMON_GROK_SYSTEM_PROMPT, GROK_WORKER_MAX_TURNS, GROK_WORKER_TOOL_IDS } from "../contracts/grokWorkerContract.js";
@@ -105,8 +107,15 @@ export const renderGrokLeanBaseConfig = (): string => [
  * default *and* its closed enum, so it reaches the request body and nothing
  * else can be selected; the proxy then re-verifies it on every body.
  */
-export function renderGrokBrokerWorkerConfig(policy: Partial<GrokBrokerModelPolicy> = {}): string {
-  return renderGrokBrokerWorkerConfigWith(parseGrokBrokerModelPolicy(policy), PRODUCTION_ENDPOINTS);
+export function renderGrokBrokerWorkerConfig(policy: Partial<GrokBrokerModelPolicy> = {}, variant: GrokWorkerConfigVariant = "unclocked"): string {
+  if (variant !== "unclocked" && variant !== "clocked") throw new TypeError("invalid Grok worker config variant");
+  const base = renderGrokBrokerWorkerConfigWith(parseGrokBrokerModelPolicy(policy), PRODUCTION_ENDPOINTS);
+  return variant === "unclocked" ? base : `${base}\n[shell_environment_policy]\n${shellEnvironmentPolicyEntries({
+    LD_PRELOAD: GROK_BROKER_TASK_CLOCK.preloadPath,
+    FAKETIME_TIMESTAMP_FILE: GROK_BROKER_TASK_CLOCK.timestampFilePath,
+    FAKETIME_DONT_FAKE_MONOTONIC: "1",
+    LC_ALL: "C"
+  }).join("\n")}\n`;
 }
 
 /** Explicit-endpoint variant for the local live probe; production bytes come only from the function above. */
@@ -128,8 +137,14 @@ export function renderGrokBrokerWorkerConfigWith(policy: GrokBrokerModelPolicy, 
   ].join("\n");
 }
 
-export const grokBrokerWorkerConfigSha256 = (policy: Partial<GrokBrokerModelPolicy> = {}): string =>
-  createHash("sha256").update(renderGrokBrokerWorkerConfig(policy)).digest("hex");
+export const grokBrokerWorkerConfigSha256 = (policy: Partial<GrokBrokerModelPolicy> = {}, variant: GrokWorkerConfigVariant = "unclocked"): string =>
+  createHash("sha256").update(renderGrokBrokerWorkerConfig(policy, variant)).digest("hex");
+
+/** Pins, rather than recomputed digests, are the attestation authority. */
+export function grokBrokerWorkerConfigPins(policy: GrokBrokerModelPolicy): Readonly<Record<GrokWorkerConfigVariant, string>> {
+  return { unclocked: GROK_ENGINE_BROKER.worker.configSha256[policy.model][policy.reasoningEffort],
+    clocked: GROK_ENGINE_BROKER.worker.clockedConfigSha256[policy.model][policy.reasoningEffort] };
+}
 
 /**
  * TypeScript mirror of the argv compiled into `native/engineBrokerLauncherCore.inc`.

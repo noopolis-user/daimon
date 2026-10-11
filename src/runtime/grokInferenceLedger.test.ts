@@ -41,7 +41,7 @@ test("a judge grant used while a subject turn runs meters only into the inferenc
     const deps: GrokEngineBrokerTurnDependencies = {
       turns: new EngineBrokerTurnRegistry(path.join(root, "turns")), proxy, credentialStale: () => false,
       mcp: { register: () => "mcp-capability-0123456789abcdef", revoke: () => undefined },
-      prepareIsolation: async () => async () => undefined,
+      prepareIsolation: async () => ({ guard: async () => undefined, configVariant: "unclocked" }),
       runNative: async (input: NativeBrokerTurn) => {
         assert.equal(await post(proxy.port, input.providerCapability, leanBody), 200);
         judgeStatus = await post(proxy.port, issued.token, judgeBody);

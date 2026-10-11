@@ -1,8 +1,9 @@
 import { readTaskClock, taskClockChildEnvironment } from "../runtime/taskClock.js";
+import { shellEnvironmentPolicyEntries } from "../contracts/shellEnvironmentPolicy.js";
 
 /** Explicit set is scoped by the engines to shell/tool children, never provider traffic.
  * Pin an empty allowlist so ambient include filters cannot discard the clock values.
- * Sources/versions and the broker/AGY gaps are recorded in docs/runtime.md.
+ * Sources/versions and the broker contract and AGY gap are recorded in docs/runtime.md.
  */
 export function codexTaskClockArgs(): string[] {
   const env = taskClockChildEnvironment();
@@ -16,14 +17,13 @@ export function grokTaskClockConfig(): string {
 }
 
 function shellPolicy(env: Record<string, string>): string {
-  const set = Object.entries(env).map(([name, value]) => `${JSON.stringify(name)}=${JSON.stringify(value)}`).join(",");
-  return `{inherit="all",ignore_default_excludes=false,exclude=[],include_only=[],set={${set}}}`;
+  return `{${shellEnvironmentPolicyEntries(env).join(",")}}`;
 }
 
-/** Operational readiness diagnostic only: unsupported native tools do not refuse a wake. */
-export function reportEngineTaskClockGap(engine: "codex" | "grok" | "agy", brokered = false): void {
+/** Operational diagnostic only. Brokered Grok reports from its attested per-turn boundary. */
+export function reportEngineTaskClockGap(engine: "codex" | "grok" | "agy"): void {
   if (readTaskClock() === undefined) return;
   const gap = engine === "agy" ? "no supported tool-only environment setting"
-    : engine === "grok" && brokered ? "attested broker worker config has no per-wake shell environment input" : undefined;
+    : undefined; // Brokered Grok reports after config attestation, from its per-turn processClock field.
   if (gap) console.warn(`daimon: task clock coverage gap engine=${engine}: ${gap}; native tools remain on real time; wake allowed`);
 }

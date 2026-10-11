@@ -1,11 +1,12 @@
 import { createHash, randomUUID } from "node:crypto";
-import { createConnection } from "node:net";
-import { ENGINE_BROKER_VERSION, encodeEngineBrokerFrame,EngineBrokerFrameDecoder,parseEngineBrokerResponse } from "./engineBrokerProtocol.js";
+import { createConnection, type Socket } from "node:net";
+import { ENGINE_BROKER_VERSION, EngineBrokerProtocolMismatch, encodeEngineBrokerFrame,EngineBrokerFrameDecoder,parseEngineBrokerResponse } from "./engineBrokerProtocol.js";
 import type { EngineBrokerInferenceFailureCode, EngineBrokerInferenceRequest, EngineBrokerInferenceResponse } from "./engineBrokerInferenceProtocol.js";
 import { ENGINE_BROKER_MCP_REFUSAL_REASONS, type EngineBrokerMcpCallObservation, type EngineBrokerMcpRefusalObservation, type EngineBrokerMcpTunnelObservation } from "./engineBrokerMcpCallLog.js";
 import type { EngineBrokerTurnLimitOverrides } from "./engineBrokerTurnAccounting.js";
 import type { GrokBrokerModel, GrokBrokerReasoningEffort } from "./grokBrokerModelPolicy.js";
 import type { GrokInferencePurpose } from "./inferenceUsageLedger.js";
+import type { GrokBrokerProviderClockObservation } from "./grokBrokerProviderClock.js";
 
 /**
  * What the broker saw of the worker's MCP tool calls on a failed turn
@@ -31,11 +32,48 @@ export class EngineBrokerInferenceGrantRefused extends Error {
  * `limits` may only lower the registration's declared limits, and `model`,
  * when the agent declared one, must equal the model the broker sealed.
  */
-export type EngineBrokerTurnOptions = Readonly<{ limits?: EngineBrokerTurnLimitOverrides; model?: string }>;
+export type EngineBrokerTurnOptions = Readonly<{
+  limits?: EngineBrokerTurnLimitOverrides; model?: string; processClock?: string;
+  /** Sealed observation on completion, failure and replay; sink errors never change the turn. */
+  onProviderClock?: (observation: GrokBrokerProviderClockObservation) => void;
+}>;
 export interface EngineBrokerTurnClient { turn(agentId:string,wakeId:string,prompt:string,mcpEndpoint:string,signal?:AbortSignal,options?:EngineBrokerTurnOptions):Promise<string>; }
 export class EngineBrokerControlClient implements EngineBrokerTurnClient {
-  constructor(private readonly socketPath="/run/daimon-engine-broker/control.sock"){}
-  async ready():Promise<void>{const requestId=randomUUID(),socket=createConnection({path:this.socketPath}),decoder=new EngineBrokerFrameDecoder();await new Promise<void>((resolve,reject)=>{let settled=false;const fail=()=>{if(settled)return;settled=true;socket.destroy();reject(new Error("engine broker unavailable"));};socket.once("error",fail);socket.once("close",fail);socket.once("connect",()=>socket.write(encodeEngineBrokerFrame({version:ENGINE_BROKER_VERSION,kind:"health",requestId})));socket.on("data",(chunk)=>{try{for(const value of decoder.push(chunk)){const response=parseEngineBrokerResponse(value);if(response.kind!=="ready"||response.requestId!==requestId||settled)throw new Error();settled=true;socket.destroy();resolve();}}catch{fail();}});});}
+  constructor(
+    private readonly socketPath = "/run/daimon-engine-broker/control.sock",
+    /** Internal transport seam; the production client always opens the Unix socket. */
+    private readonly connect: (path: string) => Socket = (path) => createConnection({ path })
+  ) {}
+  async ready(): Promise<void> {
+    const requestId = randomUUID();
+    const socket = this.connect(this.socketPath);
+    const decoder = new EngineBrokerFrameDecoder();
+    await new Promise<void>((resolve, reject) => {
+      let settled = false;
+      const fail = (error?: unknown) => {
+        if (settled) return;
+        settled = true;
+        socket.destroy();
+        reject(controlFailure(error));
+      };
+      socket.once("error", fail);
+      socket.once("close", fail);
+      socket.once("connect", () => socket.write(encodeEngineBrokerFrame({
+        version: ENGINE_BROKER_VERSION, kind: "health", requestId
+      })));
+      socket.on("data", (chunk) => {
+        try {
+          for (const value of decoder.push(chunk)) {
+            const response = parseEngineBrokerResponse(value);
+            if (response.kind !== "ready" || response.requestId !== requestId || settled) throw new Error();
+            settled = true;
+            socket.destroy();
+            resolve();
+          }
+        } catch (error) { fail(error); }
+      });
+    });
+  }
   /**
    * Evaluator side (organization uid only; the native relay enforces it):
    * borrow the broker credential for one sequential lane of judge or optimizer
@@ -45,20 +83,125 @@ export class EngineBrokerControlClient implements EngineBrokerTurnClient {
   async requestInferenceGrant(request:Readonly<{model:GrokBrokerModel;reasoningEffort:GrokBrokerReasoningEffort;purpose:GrokInferencePurpose}>):Promise<EngineBrokerInferenceGrant>{
     const response=await this.exchange({version:ENGINE_BROKER_VERSION,kind:"request_inference_grant",requestId:randomUUID(),model:request.model,reasoningEffort:request.reasoningEffort,purpose:request.purpose});
     if(response.kind==="inference_grant_refused")throw new EngineBrokerInferenceGrantRefused(response.code);
-    if(response.kind!=="inference_grant"||response.model!==request.model||response.reasoningEffort!==request.reasoningEffort||response.purpose!==request.purpose)throw new Error("engine broker unavailable");
+    if(response.kind!=="inference_grant"||response.model!==request.model||response.reasoningEffort!==request.reasoningEffort||response.purpose!==request.purpose)throw new Error(`engine broker unavailable (requires control protocol ${ENGINE_BROKER_VERSION})`);
     const {version:_version,kind:_kind,requestId:_requestId,...grant}=response;return grant;
   }
   async releaseInferenceGrant(grantId:string):Promise<boolean>{
     const response=await this.exchange({version:ENGINE_BROKER_VERSION,kind:"release_inference_grant",requestId:randomUUID(),grantId});
     if(response.kind==="inference_grant_refused")throw new EngineBrokerInferenceGrantRefused(response.code);
-    if(response.kind!=="inference_grant_released"||response.grantId!==grantId)throw new Error("engine broker unavailable");
+    if(response.kind!=="inference_grant_released"||response.grantId!==grantId)throw new Error(`engine broker unavailable (requires control protocol ${ENGINE_BROKER_VERSION})`);
     return response.released;
   }
-  private exchange(request:EngineBrokerInferenceRequest):Promise<EngineBrokerInferenceResponse>{const socket=createConnection({path:this.socketPath}),decoder=new EngineBrokerFrameDecoder();return new Promise((resolve,reject)=>{let settled=false;const fail=()=>{if(settled)return;settled=true;socket.destroy();reject(new Error("engine broker unavailable"));};socket.once("error",fail);socket.once("close",fail);socket.once("connect",()=>socket.write(encodeEngineBrokerFrame(request)));socket.on("data",(chunk)=>{try{for(const value of decoder.push(chunk)){const response=parseEngineBrokerResponse(value);if(settled||response.requestId!==request.requestId||(response.kind!=="inference_grant"&&response.kind!=="inference_grant_released"&&response.kind!=="inference_grant_refused"))throw new Error();settled=true;socket.destroy();resolve(response);}}catch{fail();}});});}
-  async turn(agentId:string,wakeId:string,prompt:string,mcpEndpoint:string,signal?:AbortSignal,options:EngineBrokerTurnOptions={}):Promise<string>{
-    const turnId=createHash("sha256").update(`${agentId}\0${wakeId}`).digest("hex"),requestId=randomUUID();const request={version:ENGINE_BROKER_VERSION,kind:"start_turn",requestId,turnId,agentId,wakeId,prompt,mcpEndpoint,...(options.limits===undefined?{}:{limits:options.limits})} as const;const socket=createConnection({path:this.socketPath});const decoder=new EngineBrokerFrameDecoder();
-    return new Promise<string>((resolve,reject)=>{let accepted=false,settled=false;const fail=()=>{if(settled)return;settled=true;cleanup();reject(new Error("engine broker unavailable"));};const cleanup=()=>{signal?.removeEventListener("abort",abort);socket.destroy();};const abort=()=>fail();signal?.addEventListener("abort",abort,{once:true});if(signal?.aborted)return abort();socket.once("connect",()=>socket.write(encodeEngineBrokerFrame(request)));socket.on("data",(chunk)=>{try{for(const value of decoder.push(chunk)){const response=parseEngineBrokerResponse(value);if((response.kind!=="accepted"&&response.kind!=="completed"&&response.kind!=="failed")||response.requestId!==requestId||response.turnId!==turnId)throw new Error();if(response.kind==="accepted"){if(accepted)throw new Error();accepted=true;continue;}if(!accepted||settled)throw new Error();settled=true;cleanup();
-      if(options.model!==undefined&&response.model!==options.model){reject(new Error(`engine broker turn used model ${response.model}, not the declared ${options.model}`));return;}
-      if(response.kind==="completed")resolve(response.text);else reject(new Error(`engine broker turn failed (${response.code}${response.limitReason==="none"?"":`; limit=${response.limitReason}`}${response.diagnostic ? `; ${response.diagnostic.stage}/${response.diagnostic.failureClass}; exit=${response.diagnostic.exitCode}; signal=${response.diagnostic.termSignal}${response.diagnostic.reason===undefined?"":`; reason=${response.diagnostic.reason}`}` : ""}${renderMcpCalls(response.mcpCalls)})`));}}catch{fail();}});socket.once("error",fail);socket.once("close",()=>{if(!settled)fail();});});
+  private exchange(request: EngineBrokerInferenceRequest): Promise<EngineBrokerInferenceResponse> {
+    const socket = this.connect(this.socketPath);
+    const decoder = new EngineBrokerFrameDecoder();
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const fail = (error?: unknown) => {
+        if (settled) return;
+        settled = true;
+        socket.destroy();
+        reject(controlFailure(error));
+      };
+      socket.once("error", fail);
+      socket.once("close", fail);
+      socket.once("connect", () => socket.write(encodeEngineBrokerFrame(request)));
+      socket.on("data", (chunk) => {
+        try {
+          for (const value of decoder.push(chunk)) {
+            const response = parseEngineBrokerResponse(value);
+            if (settled || response.requestId !== request.requestId ||
+                (response.kind !== "inference_grant" && response.kind !== "inference_grant_released" &&
+                 response.kind !== "inference_grant_refused")) throw new Error();
+            settled = true;
+            socket.destroy();
+            resolve(response);
+          }
+        } catch (error) { fail(error); }
+      });
+    });
   }
+  async turn(
+    agentId: string, wakeId: string, prompt: string, mcpEndpoint: string,
+    signal?: AbortSignal, options: EngineBrokerTurnOptions = {}
+  ): Promise<string> {
+    const turnId = createHash("sha256").update(`${agentId}\0${wakeId}`).digest("hex");
+    const requestId = randomUUID();
+    const request = {
+      version: ENGINE_BROKER_VERSION, kind: "start_turn", requestId, turnId, agentId, wakeId, prompt, mcpEndpoint,
+      ...(options.limits === undefined ? {} : { limits: options.limits }),
+      ...(options.processClock === undefined ? {} : { processClock: options.processClock })
+    } as const;
+    const socket = this.connect(this.socketPath);
+    const decoder = new EngineBrokerFrameDecoder();
+    return new Promise<string>((resolve, reject) => {
+      let accepted = false;
+      let settled = false;
+      const fail = (error?: unknown) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        reject(controlFailure(error));
+      };
+      const cleanup = () => {
+        signal?.removeEventListener("abort", abort);
+        socket.destroy();
+      };
+      const abort = () => fail();
+      signal?.addEventListener("abort", abort, { once: true });
+      if (signal?.aborted) return abort();
+      socket.once("connect", () => socket.write(encodeEngineBrokerFrame(request)));
+      socket.on("data", (chunk) => {
+        try {
+          for (const value of decoder.push(chunk)) {
+            const response = parseEngineBrokerResponse(value);
+            if ((response.kind !== "accepted" && response.kind !== "completed" && response.kind !== "failed") ||
+                response.requestId !== requestId || response.turnId !== turnId) throw new Error();
+            if (response.kind === "accepted") {
+              if (accepted) throw new Error();
+              accepted = true;
+              continue;
+            }
+            if (!accepted || settled) throw new Error();
+            settled = true;
+            cleanup();
+            if (response.providerClock !== undefined) {
+              try { options.onProviderClock?.(response.providerClock); } catch { /* Observation cannot discard a terminal result. */ }
+            }
+            if (options.model !== undefined && response.model !== options.model) {
+              reject(new Error(`engine broker turn used model ${response.model}, not the declared ${options.model}`));
+              return;
+            }
+            if (response.kind === "completed") {
+              if (response.cleanupDiagnostic !== undefined) {
+                try {
+                  console.warn(`daimon: engine broker ${response.cleanupDiagnostic}`);
+                } catch {
+                  // An operational warning must not discard completed work.
+                }
+              }
+              resolve(response.text);
+            } else {
+              const limit = response.limitReason === "none" ? "" : `; limit=${response.limitReason}`;
+              const detail = response.diagnostic;
+              const reason = detail?.reason === undefined ? "" : `; reason=${detail.reason}`;
+              const diagnostic = detail === undefined ? "" :
+                `; ${detail.stage}/${detail.failureClass}; exit=${detail.exitCode}; signal=${detail.termSignal}${reason}`;
+              const cleanupDiagnostic = response.cleanupDiagnostic === undefined ? "" : `; ${response.cleanupDiagnostic}`;
+              reject(new Error(
+                `engine broker turn failed (${response.code}${limit}${diagnostic}${renderMcpCalls(response.mcpCalls)}${cleanupDiagnostic})`
+              ));
+            }
+          }
+        } catch (error) { fail(error); }
+      });
+      socket.once("error", fail);
+      socket.once("close", () => { if (!settled) fail(); });
+    });
+  }
+}
+
+function controlFailure(error: unknown): Error {
+  return error instanceof EngineBrokerProtocolMismatch ? error :
+    new Error(`engine broker unavailable (requires control protocol ${ENGINE_BROKER_VERSION})`);
 }
