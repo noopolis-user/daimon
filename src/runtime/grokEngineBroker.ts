@@ -1,4 +1,4 @@
-import { assertBrokerTaskClockSlot, writeBrokerTaskClock } from "./grokBrokerTaskClock.js";
+import { assertBrokerTaskClockSlot, needsBrokerTaskClockReconciliation, writeBrokerTaskClock } from "./grokBrokerTaskClock.js";
 import { DurableGrokBrokerCredentialAuthority } from "./grokBrokerCredentialAuthority.js";
 import { runNativeBrokerTurn } from "./engineBrokerNativeClient.js";
 import type { EngineBrokerServiceRegistration } from "./engineBrokerServiceConfig.js";
@@ -43,6 +43,7 @@ export type GrokEngineBrokerDependencies = Readonly<{
     GrokEngineBrokerTurnDependencies["proxy"] & { port: number; close(): Promise<void> }>;
   startMcp: () => Promise<GrokEngineBrokerTurnDependencies["mcp"] & { close(): Promise<void> }>;
   prepareAttestation: typeof prepareGrokWorkerAttestation;
+  needsTaskClockReconciliation: typeof needsBrokerTaskClockReconciliation;
   createIsolationGuard: typeof createGrokWorkerIsolationGuard;
   writeTaskClock: typeof writeBrokerTaskClock;
   workerIdentityEmpty: typeof grokWorkerIdentityEmpty;
@@ -55,6 +56,7 @@ const brokerDependencies: GrokEngineBrokerDependencies = {
   startProxy: startGrokBrokerProxy,
   startMcp: startEngineBrokerMcpFacade,
   prepareAttestation: prepareGrokWorkerAttestation,
+  needsTaskClockReconciliation: needsBrokerTaskClockReconciliation,
   createIsolationGuard: createGrokWorkerIsolationGuard,
   writeTaskClock: writeBrokerTaskClock,
   workerIdentityEmpty: (uid) => grokWorkerIdentityEmpty(uid, undefined, true),
@@ -86,16 +88,16 @@ export async function startGrokEngineBroker(
     // Reconcile before accepting traffic. A prior broker may have died after
     // publishing an offset; its finally never ran. The realm lease excludes peers.
     for (const registration of registrations.values()) {
-      const snapshot = await dependencies.prepareAttestation(attestationFor(registration));
-      assertBrokerTaskClockSlot(snapshot.configVariant, registrations.size);
-      if (snapshot.configVariant === "clocked") {
-        const reaped = await awaitGrokWorkerIdentityEmpty(
-          registration.workerUid, GROK_WORKER_REAP_WAIT_MS, dependencies.workerIdentityEmpty
-        );
-        if (!reaped) throw new Error("Grok broker task clock worker did not terminate");
-        await dependencies.writeTaskClock(undefined);
-        clockedSlot = true;
-      }
+      const attestation = attestationFor(registration);
+      if (!await dependencies.needsTaskClockReconciliation(registration.profilePath, attestation.configSha256)) continue;
+      await dependencies.prepareAttestation(attestation);
+      assertBrokerTaskClockSlot("clocked", registrations.size);
+      const reaped = await awaitGrokWorkerIdentityEmpty(
+        registration.workerUid, GROK_WORKER_REAP_WAIT_MS, dependencies.workerIdentityEmpty
+      );
+      if (!reaped) throw new Error("Grok broker task clock worker did not terminate");
+      await dependencies.writeTaskClock(undefined);
+      clockedSlot = true;
     }
     await authority.initialize();
     proxy = await dependencies.startProxy(authority, undefined, undefined, undefined, grants);

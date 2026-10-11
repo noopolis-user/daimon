@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmod, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import type { Socket } from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -7,9 +7,11 @@ import { Duplex } from "node:stream";
 import test, { type TestContext } from "node:test";
 import type { GrokWorkerConfigVariant } from "../contracts/grokBrokerTaskClock.js";
 import {
-  startGrokEngineBroker, type GrokEngineBrokerDependencies, type GrokEngineBrokerRegistration
+  EngineBrokerTurnFailure, startGrokEngineBroker, type GrokEngineBrokerDependencies, type GrokEngineBrokerRegistration
 } from "./grokEngineBroker.js";
-import { writeBrokerTaskClock } from "./grokBrokerTaskClock.js";
+import type { GrokBrokerProviderClockObservation } from "./grokBrokerProviderClock.js";
+import { needsBrokerTaskClockReconciliation, writeBrokerTaskClock } from "./grokBrokerTaskClock.js";
+import { renderGrokBrokerWorkerConfig } from "./grokBrokerWorkerConfig.js";
 import { EngineBrokerControlClient } from "./engineBrokerControlClient.js";
 import {
   EngineBrokerFrameDecoder, parseEngineBrokerResponse, type EngineBrokerResponse
@@ -47,14 +49,16 @@ function clientFor(broker: EngineBrokerServiceEngine, frames: EngineBrokerRespon
   });
 }
 
-async function fixture(t: TestContext, count = 1) {
+async function fixture(t: TestContext, count = 1, variant: GrokWorkerConfigVariant = "clocked", clockDirectory = variant === "clocked") {
   const root = await mkdtemp(path.join(os.tmpdir(), "daimon-clock-start-"));
   await chmod(root, 0o755);
   t.after(() => rm(root, { recursive: true, force: true }));
-  const file = path.join(root, "faketime");
-  await writeFile(file, "+888\n");
+  const file = path.join(root, "task-clock", "faketime");
+  if (clockDirectory) {
+    await mkdir(path.dirname(file), { mode: 0o755 });
+    await writeFile(file, "+888\n");
+  }
   const events: string[] = [];
-  let variant: GrokWorkerConfigVariant = "clocked";
   const dependencies: GrokEngineBrokerDependencies = {
     acquireLease: async () => {
       events.push("lease");
@@ -68,6 +72,7 @@ async function fixture(t: TestContext, count = 1) {
       events.push(`attest:${variant}`);
       return { configVariant: variant, dev: 1, ino: 1, size: 0, denyPaths: [] };
     },
+    needsTaskClockReconciliation: (profilePath, pins) => needsBrokerTaskClockReconciliation(profilePath, pins, file),
     createIsolationGuard: () => async () => {},
     workerIdentityEmpty: async () => {
       events.push("reap");
@@ -78,7 +83,7 @@ async function fixture(t: TestContext, count = 1) {
       await writeBrokerTaskClock(value, file, process.getuid!());
     },
     startProxy: async () => {
-      events.push(`proxy:${(await readFile(file, "utf8")).trim()}`);
+      events.push(`proxy:${(await readFile(file, "utf8").catch(() => "absent")).trim()}`);
       return {
         port: 43123, close: async () => { events.push("proxy:close"); },
         capabilities: { issue: () => "provider", revoke() {} },
@@ -93,21 +98,29 @@ async function fixture(t: TestContext, count = 1) {
   };
   const registrations: GrokEngineBrokerRegistration[] = Array.from({ length: count }, (_, index) => ({
     agentId: `agent-${index}`, slot: index, workerUid: 2200 + index, workspace: `/workspace/${index}`,
-    profilePath: `/home/${index}/.grok/sandbox.toml`,
-    eventsPath: `/home/${index}/.grok/sessions/sandbox-events.jsonl`, profileSha256: "a".repeat(64),
+    profilePath: path.join(root, `home-${index}`, ".grok", "sandbox.toml"),
+    eventsPath: path.join(root, `home-${index}`, ".grok", "sessions", "sandbox-events.jsonl"), profileSha256: "a".repeat(64),
     usageLedgerPath: path.join(root, `usage-${index}.jsonl`),
     limits: { maxRequests: 2, maxTokens: 100, timeoutMs: 5000 },
     model: { model: "grok-4.6", reasoningEffort: "low" }
   }));
+  const provisionConfig = async () => {
+    for (const registration of registrations) {
+      await mkdir(path.dirname(registration.profilePath), { recursive: true });
+      await writeFile(path.join(path.dirname(registration.profilePath), "config.toml"),
+        renderGrokBrokerWorkerConfig(registration.model, variant));
+    }
+  };
+  await provisionConfig();
   return {
-    file, events, dependencies,
+    file, events, dependencies, registrations,
     record: async () => {
       const directory = path.join(root, "turns");
       const files = await readdir(directory);
       assert.equal(files.length, 1, "only the admitted turn may have a record");
       return readFile(path.join(directory, files[0]!), "utf8");
     },
-    variant(value: GrokWorkerConfigVariant) { variant = value; },
+    async variant(value: GrokWorkerConfigVariant) { variant = value; await provisionConfig(); },
     start: async (overrides: Partial<GrokEngineBrokerDependencies> = {}) => {
       const broker = await startGrokEngineBroker({
         grokCommand: "unused", nativeClient: "unused", credentialHome: root,
@@ -141,18 +154,60 @@ test("production startup rejects multiple registrations when one config is clock
 });
 
 test("production per-turn admission rejects a newly clocked multi-registration slot", async (t) => {
-  const f = await fixture(t, 2);
-  f.variant("unclocked");
+  const f = await fixture(t, 2, "unclocked");
   const broker = await f.start();
   assert.equal(f.events.some((event) => event.startsWith("write:")), false);
-  f.variant("clocked");
+  await f.variant("clocked");
   await assert.rejects(
     broker.turn("agent-0", "one", "work", "http://127.0.0.1:1/mcp", undefined, undefined, "-1"),
     /engine broker turn failed/u
   );
   assert.equal(f.events.includes("launch"), false);
   assert.equal(f.events.some((event) => event.startsWith("write:")), false);
-  assert.equal(await readFile(f.file, "utf8"), "+888\n");
+  await assert.rejects(readFile(f.file), { code: "ENOENT" });
+});
+
+for (const provisioning of ["pinned", "missing", "invalid"] as const) {
+  test(`unclocked ${provisioning} provisioning cannot make startup depend on attestation`, async (t) => {
+    const f = await fixture(t, 2, "unclocked");
+    const config = path.join(path.dirname(f.registrations[0]!.profilePath), "config.toml");
+    if (provisioning === "missing") await rm(config);
+    if (provisioning === "invalid") await writeFile(config, "invalid config");
+    let attestations = 0;
+    const broker = await f.start({ prepareAttestation: async () => {
+      attestations++;
+      throw new Error("mis-provisioned unclocked worker");
+    } });
+    assert.equal(attestations, 0, "unclocked startup must not run full worker attestation");
+    assert.equal(broker.readiness().registrations, 2);
+    assert.equal(broker.readiness().workerIsolation, true);
+    assert.deepEqual(f.events, ["lease", "authority", "proxy:absent"]);
+    await assert.rejects(broker.turn("agent-0", "bad", "work", "http://127.0.0.1:1/mcp"), /engine broker turn failed/u);
+    assert.equal(attestations, 1, "the mis-provisioned worker still fails its own turn");
+    assert.equal(f.events.includes("launch"), false);
+    assert.equal(f.events.includes("lease:close"), false);
+    await assert.rejects(readFile(f.file), { code: "ENOENT" });
+  });
+}
+
+for (const [variant, directory] of [["clocked", false], ["clocked", true], ["unclocked", true]] as const) {
+  test(`${variant} config with clock directory ${directory}: required startup attestation fails closed`, async (t) => {
+    const f = await fixture(t, 1, variant, directory);
+    let attestations = 0;
+    await assert.rejects(f.start({ prepareAttestation: async () => {
+      attestations++;
+      throw new Error("clock slot attestation failed");
+    } }), /clock slot attestation failed/u);
+    assert.equal(attestations, 1);
+    assert.deepEqual(f.events, ["lease", "lease:close"]);
+  });
+}
+
+test("an existing clock directory is reconciled even after the config becomes unclocked", async (t) => {
+  const f = await fixture(t, 1, "unclocked", true);
+  await f.start();
+  assert.equal(await readFile(f.file, "utf8"), "+0\n");
+  assert.ok(f.events.indexOf("proxy:+0") > f.events.indexOf("write:+0"));
 });
 
 test("a startup reset failure refuses readiness and releases its realm lease", async (t) => {
@@ -169,6 +224,8 @@ for (const ending of ["success", "failure"] as const) {
     const f = await fixture(t);
     const warning = t.mock.method(console, "warn", () => {});
     const frames: EngineBrokerResponse[] = [];
+    const observations: GrokBrokerProviderClockObservation[] = [];
+    const onProviderClock = (observation: GrokBrokerProviderClockObservation) => { observations.push(observation); };
     let writes = 0;
     let beforeCleanup = "";
     const broker = await f.start({
@@ -201,7 +258,7 @@ for (const ending of ["success", "failure"] as const) {
     });
     const client = clientFor(broker, frames);
     const turn = (wake: string) => client.turn(
-      "agent-0", wake, "work", "http://127.0.0.1:1/mcp", undefined, { processClock: "-1" }
+      "agent-0", wake, "work", "http://127.0.0.1:1/mcp", undefined, { processClock: "-1", onProviderClock }
     );
     const pending = turn("one");
     if (ending === "success") {
@@ -236,12 +293,46 @@ for (const ending of ["success", "failure"] as const) {
     assert.equal(await readFile(f.file, "utf8"), "+0\n");
     assert.equal(restarted.readiness().workerIsolation, true);
     const replay = clientFor(restarted, frames).turn(
-      "agent-0", "one", "work", "http://127.0.0.1:1/mcp", undefined, { processClock: "-1" }
+      "agent-0", "one", "work", "http://127.0.0.1:1/mcp", undefined, { processClock: "-1", onProviderClock }
     );
     if (ending === "success") assert.equal(await replay, "sealed answer");
     else await assert.rejects(replay, { message: "engine broker turn failed (engine_failed)" });
     assert.equal(Object.hasOwn(frames.at(-1)!, "cleanupDiagnostic"), false, "restart clears the operational warning");
     assert.equal(warning.mock.callCount(), ending === "success" ? 1 : 0);
     assert.equal(f.events.filter((event) => event === "launch").length, 1, "restart replays without re-execution");
+    assert.equal(observations.length, 2, "completion/failure and sealed replay each expose the observation");
+    assert.deepEqual(observations[0], observations[1]);
   });
 }
+
+test("the control client exposes missing-date release evidence without changing completion or failure", async () => {
+  const clock: GrokBrokerProviderClockObservation = {
+    requests: 1, linesRewritten: 0, requestsWithoutDateLine: 1, linesIgnored: 2,
+    injectedDate: null, taskDate: null
+  };
+  for (const failed of [false, true]) for (const providerClock of [clock, undefined]) {
+    const seen: GrokBrokerProviderClockObservation[] = [];
+    const broker: EngineBrokerServiceEngine = {
+      turn: async () => {
+        const accounting = {
+          outcome: failed ? "failed" as const : "completed" as const,
+          usage: null, model: "grok-4.6" as const, requests: 1, limitReason: "none" as const
+        };
+        if (failed) throw new EngineBrokerTurnFailure("engine_failed", undefined, accounting, undefined, "task", providerClock);
+        return { text: "answer", workerPid: 42, workerUid: 2200, workerStartTime: "1", ...accounting,
+          ...(providerClock === undefined ? {} : { providerClock }) };
+      },
+      close: async () => {},
+      readiness: () => ({ providerProxyPort: 43123, mcpFacadePort: 43124, registrations: 1,
+        credentialStale: false, realmLease: true, workerIsolation: true })
+    };
+    const pending = clientFor(broker, []).turn("agent", "wake", "work", "http://127.0.0.1:1/mcp", undefined, {
+      processClock: "+0",
+      onProviderClock: (observation) => { seen.push(observation); throw new Error("observer failed"); }
+    });
+    if (failed) await assert.rejects(pending, { message: "engine broker turn failed (engine_failed)" });
+    else assert.equal(await pending, "answer");
+    assert.deepEqual(seen, providerClock === undefined ? [] : [clock]);
+    if (providerClock !== undefined) assert.ok(seen[0]!.requestsWithoutDateLine > 0, "caller can fail the release check");
+  }
+});

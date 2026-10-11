@@ -6,6 +6,7 @@ import { ENGINE_BROKER_MCP_REFUSAL_REASONS, type EngineBrokerMcpCallObservation,
 import type { EngineBrokerTurnLimitOverrides } from "./engineBrokerTurnAccounting.js";
 import type { GrokBrokerModel, GrokBrokerReasoningEffort } from "./grokBrokerModelPolicy.js";
 import type { GrokInferencePurpose } from "./inferenceUsageLedger.js";
+import type { GrokBrokerProviderClockObservation } from "./grokBrokerProviderClock.js";
 
 /**
  * What the broker saw of the worker's MCP tool calls on a failed turn
@@ -31,7 +32,11 @@ export class EngineBrokerInferenceGrantRefused extends Error {
  * `limits` may only lower the registration's declared limits, and `model`,
  * when the agent declared one, must equal the model the broker sealed.
  */
-export type EngineBrokerTurnOptions = Readonly<{ limits?: EngineBrokerTurnLimitOverrides; model?: string; processClock?: string }>;
+export type EngineBrokerTurnOptions = Readonly<{
+  limits?: EngineBrokerTurnLimitOverrides; model?: string; processClock?: string;
+  /** Sealed observation on completion, failure and replay; sink errors never change the turn. */
+  onProviderClock?: (observation: GrokBrokerProviderClockObservation) => void;
+}>;
 export interface EngineBrokerTurnClient { turn(agentId:string,wakeId:string,prompt:string,mcpEndpoint:string,signal?:AbortSignal,options?:EngineBrokerTurnOptions):Promise<string>; }
 export class EngineBrokerControlClient implements EngineBrokerTurnClient {
   constructor(
@@ -160,6 +165,9 @@ export class EngineBrokerControlClient implements EngineBrokerTurnClient {
             if (!accepted || settled) throw new Error();
             settled = true;
             cleanup();
+            if (response.providerClock !== undefined) {
+              try { options.onProviderClock?.(response.providerClock); } catch { /* Observation cannot discard a terminal result. */ }
+            }
             if (options.model !== undefined && response.model !== options.model) {
               reject(new Error(`engine broker turn used model ${response.model}, not the declared ${options.model}`));
               return;
