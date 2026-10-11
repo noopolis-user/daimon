@@ -3,7 +3,7 @@ import { chmod, lstat, unlink } from "node:fs/promises";
 import { createServer, type Server, type Socket } from "node:net";
 import {
   encodeEngineBrokerFrame, EngineBrokerFrameDecoder, EngineBrokerProtocolMismatch,
-  parseEngineBrokerRequest, type EngineBrokerResponse
+  parseEngineBrokerRequest, type EngineBrokerCleanupObservation, type EngineBrokerResponse
 } from "./engineBrokerProtocol.js";
 import type { EngineBrokerTurnAccounting, EngineBrokerTurnLimitOverrides } from "./engineBrokerTurnAccounting.js";
 import { EngineBrokerTurnFailure } from "./grokEngineBroker.js";
@@ -15,7 +15,7 @@ export interface EngineBrokerServiceEngine {
     signal?: AbortSignal, limits?: EngineBrokerTurnLimitOverrides, processClock?: string
   ): Promise<Readonly<{
     text: string; workerPid: number; workerUid: number; workerStartTime: string;
-  }> & EngineBrokerTurnAccounting & BrokerClockObservation>;
+  }> & EngineBrokerTurnAccounting & BrokerClockObservation & EngineBrokerCleanupObservation>;
   readiness():Readonly<{providerProxyPort:number;mcpFacadePort:number;registrations:number;credentialStale:boolean;realmLease:boolean;workerIsolation:boolean}>;
   close():Promise<void>;
   /** Evaluator inference grants; an engine without them refuses every grant request as `unavailable`. Refusals throw {@link GrokInferenceGrantRefused}. */
@@ -107,6 +107,7 @@ export function serveEngineBrokerConnection(
         ).then((result) => send(socket, {
           version: request.version, kind: "completed", requestId: request.requestId, turnId: request.turnId,
           text: result.text, ...brokerClockObservation(result.shellClock, result.providerClock),
+          ...(result.cleanupDiagnostic === undefined ? {} : { cleanupDiagnostic: result.cleanupDiagnostic }),
           workerPid: result.workerPid, workerUid: result.workerUid, workerStartTime: result.workerStartTime,
           outcome: "completed", usage: result.usage, model: result.model, requests: result.requests, limitReason: "none"
         }), (error: unknown) => failed(socket, request, error, controller.signal.aborted)).finally(() => {
@@ -139,6 +140,7 @@ function failed(socket:Socket,request:Extract<ReturnType<typeof parseEngineBroke
     ...(error instanceof EngineBrokerTurnFailure ? brokerClockObservation(error.shellClock, error.providerClock) : {}),
     ...(error instanceof EngineBrokerTurnFailure && error.diagnostic ? { diagnostic: error.diagnostic } : {}),
     ...(error instanceof EngineBrokerTurnFailure && error.mcpCalls ? { mcpCalls: error.mcpCalls } : {}),
+    ...(error instanceof EngineBrokerTurnFailure && error.cleanupDiagnostic ? { cleanupDiagnostic: error.cleanupDiagnostic } : {}),
     outcome: "failed", usage: accounting.usage, model: accounting.model,
     requests: accounting.requests, limitReason: accounting.limitReason
   });

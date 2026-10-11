@@ -37,8 +37,15 @@ writes `+0`. Every terminal path resets to `+0` after worker termination,
 including a publication failure after rename. Startup reconciles a clocked
 slot to `+0` before serving, covering broker death that bypasses cleanup.
 The broker checks that the worker identity has emptied before resetting;
-an unreaped worker or a reset failure fences the slot until restart. A
-publication failure prevents launch. An unclocked slot performs
+an unreaped worker or a reset failure fences the slot until restart. If the
+turn is already sealed, its terminal response and accounting still reach the
+client with the fixed `cleanupDiagnostic` value
+`task clock reset failed; slot fenced until restart`. The client warns on a
+completed turn and includes the diagnostic in a failed turn's error. Subsequent
+turns, including replays, are refused with `unavailable` and the same diagnostic.
+This describes the live slot; it does not rewrite the seal, and a reconciled
+restart replays the original response without the warning. A publication
+failure prevents launch. An unclocked slot performs
 no clock-file I/O, allows the turn, and reports the existing gap when the field
 is present. Terminal responses record `shellClock: task|real|gap`; the sealed
 `turns.jsonl` projection records `shell_clock`. This records configured shell

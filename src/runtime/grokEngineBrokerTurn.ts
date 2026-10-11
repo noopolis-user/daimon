@@ -9,7 +9,10 @@ import { createHash, randomUUID } from "node:crypto";
 import { engineBrokerCapabilityTtlMs } from "./engineBrokerCapabilities.js";
 import { decodeGrokHeadlessTurn } from "../pi/grokHeadlessResult.js";
 import { decodeGrokStreamUsage, type GrokStreamUsage } from "../pi/grokStreamUsage.js";
-import { ENGINE_BROKER_VERSION, type EngineBrokerFailureCode, type EngineBrokerTerminalResponse } from "./engineBrokerProtocol.js";
+import {
+  ENGINE_BROKER_VERSION, ENGINE_BROKER_TASK_CLOCK_RESET_FAILED,
+  type EngineBrokerCleanupObservation, type EngineBrokerFailureCode, type EngineBrokerTerminalResponse
+} from "./engineBrokerProtocol.js";
 import type { EngineBrokerMcpCallObservation } from "./engineBrokerMcpCallLog.js";
 import { lowerEngineBrokerTurnLimits, mapGrokReportedModel, type EngineBrokerTurnAccounting, type EngineBrokerTurnLimitOverrides, type EngineBrokerTurnUsage } from "./engineBrokerTurnAccounting.js";
 import { NativeBrokerTurnFailure, type NativeBrokerDiagnostic, type NativeBrokerTurn, type NativeBrokerTurnResult } from "./engineBrokerNativeClient.js";
@@ -25,15 +28,16 @@ import { GrokWorkerAttestationFailure } from "./grokWorkerAttestation.js";
 
 export type GrokEngineBrokerTurnResult = Readonly<{
   text: string; workerPid: number; workerUid: number; workerStartTime: string;
-}> & EngineBrokerTurnAccounting & BrokerClockObservation;
+}> & EngineBrokerTurnAccounting & BrokerClockObservation & EngineBrokerCleanupObservation;
 export class EngineBrokerTurnFailure extends Error {
   constructor(
-    readonly code: Exclude<EngineBrokerFailureCode, "turn_conflict" | "unavailable">,
+    readonly code: Exclude<EngineBrokerFailureCode, "turn_conflict">,
     readonly diagnostic?: NativeBrokerDiagnostic,
     readonly accounting?: EngineBrokerTurnAccounting,
     readonly mcpCalls?: EngineBrokerMcpCallObservation,
     readonly shellClock?: BrokerShellClock,
-    readonly providerClock?: GrokBrokerProviderClockObservation
+    readonly providerClock?: GrokBrokerProviderClockObservation,
+    readonly cleanupDiagnostic?: EngineBrokerCleanupObservation["cleanupDiagnostic"]
   ) { super("engine broker turn failed"); }
 }
 
@@ -107,6 +111,7 @@ export async function runGrokEngineBrokerTurn(deps: GrokEngineBrokerTurnDependen
   let resetClock = deps.clockedSlot === true;
   let nativeStarted = false;
   let workerReaped = false;
+  let sealedFailure: EngineBrokerTurnFailure | undefined;
   let nativeDiagnostic: NativeBrokerDiagnostic | undefined, attested = false, output: string | undefined, rejected = false, sealed: GrokEngineBrokerTurnResult | undefined;
   // Set when the broker itself ended the turn (`grokEngineBrokerTurnEnd.ts`); the worker seen at the final reply names the turn it ended.
   let endedBy: GrokBrokerTurnEndReason | undefined;
@@ -202,8 +207,12 @@ export async function runGrokEngineBrokerTurn(deps: GrokEngineBrokerTurnDependen
       ...(mcpCalls === undefined ? {} : { mcpCalls }), ...accounting
     };
     const reason = snapshot.limitReason !== "none" ? limitReasonFor[snapshot.limitReason] : rejected ? "turn_rejected" : "unknown";
-    await finishBrokerTurnWithUsage(deps.turns, request, failed, metering, { notionalUsd: 0, complete: false, reason, estimatedRequests: snapshot.estimatedRequests, requests: requestRows(stream, snapshot), ...(stream?.sessionId === undefined ? {} : { session: stream.sessionId }) });
-    throw new EngineBrokerTurnFailure(code, diagnostic, accounting, mcpCalls, shellClock, observation.providerClock);
+    const failure = new EngineBrokerTurnFailure(code, diagnostic, accounting, mcpCalls, shellClock, observation.providerClock);
+    await finishBrokerTurnWithUsage(deps.turns, request, failed, metering, {
+      notionalUsd: 0, complete: false, reason, estimatedRequests: snapshot.estimatedRequests,
+      requests: requestRows(stream, snapshot), ...(stream?.sessionId === undefined ? {} : { session: stream.sessionId })
+    }, () => { sealedFailure = failure; });
+    throw failure;
   } finally {
     watchdog?.stop(); clearTimeout(timer); signal?.removeEventListener("abort", onAbort); meter.abortInFlight();
     try {
@@ -226,6 +235,14 @@ export async function runGrokEngineBrokerTurn(deps: GrokEngineBrokerTurnDependen
           await (deps.writeTaskClock ?? writeBrokerTaskClock)(undefined);
         } catch (error) {
           deps.taskClockFailed?.();
+          // Cleanup cannot replace a published outcome. Report the live fence
+          // on the wire without rewriting the seal or its accounting.
+          if (sealed !== undefined) return { ...sealed, cleanupDiagnostic: ENGINE_BROKER_TASK_CLOCK_RESET_FAILED };
+          if (sealedFailure !== undefined) throw new EngineBrokerTurnFailure(
+            sealedFailure.code, sealedFailure.diagnostic, sealedFailure.accounting,
+            sealedFailure.mcpCalls, sealedFailure.shellClock, sealedFailure.providerClock,
+            ENGINE_BROKER_TASK_CLOCK_RESET_FAILED
+          );
           throw new Error("Grok broker task clock cleanup failed; restart required", { cause: error });
         }
       }
