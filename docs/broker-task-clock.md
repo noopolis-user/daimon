@@ -37,6 +37,47 @@ is present. Terminal responses record `shellClock: task|real|gap`; the sealed
 `turns.jsonl` projection records `shell_clock`. This records configured shell
 coverage, not proof that every command dynamically linked libfaketime.
 
+## Engine-injected date in provider requests
+
+Grok 1.0.34 also injects `Today's date: YYYY-MM-DD` inside a `<user_info>` block
+in the first user message. The supplied offline Linux capture shows that this
+comes from the real kernel clock; the static CLI ignores libfaketime, and the
+system prompt override does not replace this user-message envelope.
+
+For every turn with `processClock` (including `+0`), the broker's provider proxy
+rewrites every such line in user-role string content and `type: "text"` content
+parts before the existing model/effort/tool gate. It uses `realNow + offset` at
+each request, formatted in the launcher's pinned **UTC**, including later
+requests that resend history. Other roles, text outside these blocks and
+non-text parts retain their content. This works even if shell coverage is `gap`;
+it does not shift the CLI, provider TLS, auth, or operational clocks.
+
+A date-like line with a different format refuses the whole request with HTTP
+400 reason `task_clock_date_format`, before any upstream call or spend. A task
+instant outside the supported 1970–9999 UTC range refuses as
+`task_clock_date_range`. A request without the date line is allowed and counted.
+Unclocked requests retain their bytes, including whitespace and escaping. The
+existing spend gate still normalizes ambiguous duplicate JSON members to the
+validated values, and rejects invalid JSON/prototype keys.
+
+Every clocked terminal response seals `providerClock`; `turns.jsonl` projects it
+as `provider_clock`, on completed and failed turns and on final-reply recovery:
+
+- `requests`: requests inspected by the clock rewrite, including later refusals.
+- `linesRewritten`: recognized lines processed in fully rewritten bodies,
+  including a replacement whose date was already equal; body-policy refusals
+  can therefore count here without spending upstream.
+- `requestsWithoutDateLine`: inspected bodies with no target date line; a
+  malformed date refusal is not counted as absence.
+- `injectedDate`, `taskDate`: dates from the **last** rewritten line, or both
+  `null` until a line is rewritten. No message content or timestamps are stored.
+
+Replays retain the sealed observation without rewriting or recounting. Unclocked
+turns and older records have no `providerClock` member. Session-title requests
+remain locally refused through their existing sink and are not counted here.
+UUIDv7 session/conversation headers are not model context and are outside this
+rewrite; the proxy's existing header allowlist is unchanged.
+
 ## Spawnfile provisioning
 
 1. Re-vendor manifest **v4**, its emitted digest, the clocked config bytes and
