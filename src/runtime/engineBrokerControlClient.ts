@@ -164,15 +164,24 @@ export class EngineBrokerControlClient implements EngineBrokerTurnClient {
               reject(new Error(`engine broker turn used model ${response.model}, not the declared ${options.model}`));
               return;
             }
-            if (response.kind === "completed") resolve(response.text);
-            else {
+            if (response.kind === "completed") {
+              if (response.cleanupDiagnostic !== undefined) {
+                try {
+                  console.warn(`daimon: engine broker ${response.cleanupDiagnostic}`);
+                } catch {
+                  // An operational warning must not discard completed work.
+                }
+              }
+              resolve(response.text);
+            } else {
               const limit = response.limitReason === "none" ? "" : `; limit=${response.limitReason}`;
               const detail = response.diagnostic;
               const reason = detail?.reason === undefined ? "" : `; reason=${detail.reason}`;
               const diagnostic = detail === undefined ? "" :
                 `; ${detail.stage}/${detail.failureClass}; exit=${detail.exitCode}; signal=${detail.termSignal}${reason}`;
+              const cleanupDiagnostic = response.cleanupDiagnostic === undefined ? "" : `; ${response.cleanupDiagnostic}`;
               reject(new Error(
-                `engine broker turn failed (${response.code}${limit}${diagnostic}${renderMcpCalls(response.mcpCalls)})`
+                `engine broker turn failed (${response.code}${limit}${diagnostic}${renderMcpCalls(response.mcpCalls)}${cleanupDiagnostic})`
               ));
             }
           }

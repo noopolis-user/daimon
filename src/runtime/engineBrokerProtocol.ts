@@ -50,18 +50,24 @@ export type EngineBrokerRequest =
 export interface EngineBrokerFailureDiagnostic { status:string;stage:string;failureClass:string;profileApplied:boolean;reason?:string;exitCode:number;termSignal:number;workerPid:number;workerUid:number;startTicks:string }
 export const ENGINE_BROKER_MAX_DIAGNOSTIC_REASON_BYTES = 768;
 
+/** Operational state after sealing; never raw filesystem errors or worker text. */
+export const ENGINE_BROKER_TASK_CLOCK_RESET_FAILED = "task clock reset failed; slot fenced until restart";
+export type EngineBrokerCleanupObservation = Readonly<{
+  cleanupDiagnostic?: typeof ENGINE_BROKER_TASK_CLOCK_RESET_FAILED;
+}>;
+
 export type EngineBrokerResponse =
   | Readonly<{ version: typeof VERSION; kind: "ready"; requestId: string; brokerUid: 2100; providerProxyPort: 43123; mcpFacadePort: 43124; registrations: number; credentialStale: false; realmLease: true; workerIsolation: true }>
   | Readonly<{ version: typeof VERSION; kind: "accepted"; requestId: string; turnId: string }>
   | (Readonly<{
     version: typeof VERSION; kind: "completed"; requestId: string; turnId: string;
     text: string; workerPid: number; workerUid: number; workerStartTime: string;
-  }> & EngineBrokerTurnAccounting & BrokerClockObservation)
+  }> & EngineBrokerTurnAccounting & BrokerClockObservation & EngineBrokerCleanupObservation)
   | (Readonly<{
     version: typeof VERSION; kind: "failed"; requestId: string; turnId: string;
     code: EngineBrokerFailureCode; diagnostic?: EngineBrokerFailureDiagnostic;
     mcpCalls?: EngineBrokerMcpCallObservation;
-  }> & EngineBrokerTurnAccounting & BrokerClockObservation)
+  }> & EngineBrokerTurnAccounting & BrokerClockObservation & EngineBrokerCleanupObservation)
   | EngineBrokerInferenceResponse;
 /**
  * The one name for a fenced credential realm. The turn's failure code, the
@@ -152,7 +158,8 @@ export function parseEngineBrokerV2TerminalResponse(value: unknown): EngineBroke
   const input = record(value);
   if (input.version !== "noopolis.daimon.engine-broker.v2" ||
       (input.kind !== "completed" && input.kind !== "failed") ||
-      Object.hasOwn(input, "shellClock") || Object.hasOwn(input, "providerClock")) {
+      Object.hasOwn(input, "shellClock") || Object.hasOwn(input, "providerClock") ||
+      Object.hasOwn(input, "cleanupDiagnostic")) {
     throw new TypeError("invalid broker frame");
   }
   return parseTerminal({ ...input, version: VERSION }, VERSION) as EngineBrokerTerminalResponse;
@@ -163,7 +170,13 @@ function parseTerminal(input: JsonRecord, expected: typeof VERSION | typeof V1):
   const shellClock = input.shellClock;
   if (shellClock !== undefined && (expected !== VERSION || !["task", "real", "gap"].includes(shellClock as string))) throw new TypeError("invalid broker frame");
   if (input.providerClock !== undefined && expected !== VERSION) throw new TypeError("invalid broker frame");
-  const observation: BrokerClockObservation = {
+  const cleanupDiagnostic = input.cleanupDiagnostic;
+  if (cleanupDiagnostic !== undefined &&
+      (expected !== VERSION || cleanupDiagnostic !== ENGINE_BROKER_TASK_CLOCK_RESET_FAILED)) {
+    throw new TypeError("invalid broker frame");
+  }
+  const observation: BrokerClockObservation & EngineBrokerCleanupObservation = {
+    ...(cleanupDiagnostic === undefined ? {} : { cleanupDiagnostic }),
     ...(shellClock === undefined ? {} : { shellClock: shellClock as "task" | "real" | "gap" }),
     ...(input.providerClock === undefined ? {} : {
       providerClock: parseGrokBrokerProviderClockObservation(input.providerClock)

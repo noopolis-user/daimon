@@ -3,13 +3,17 @@ import { DurableGrokBrokerCredentialAuthority } from "./grokBrokerCredentialAuth
 import { runNativeBrokerTurn } from "./engineBrokerNativeClient.js";
 import type { EngineBrokerServiceRegistration } from "./engineBrokerServiceConfig.js";
 import type { EngineBrokerTurnLimitOverrides } from "./engineBrokerTurnAccounting.js";
+import { ENGINE_BROKER_TASK_CLOCK_RESET_FAILED } from "./engineBrokerProtocol.js";
 import { EngineBrokerTurnRegistry } from "./engineBrokerTurnRegistry.js";
 import { startGrokBrokerProxy } from "./grokBrokerProxy.js";
 import { startEngineBrokerMcpFacade } from "./engineBrokerMcpFacade.js";
 import { acquireGrokBrokerRealmLease } from "./grokBrokerRealmLease.js";
 import { grokBrokerWorkerConfigPins } from "./grokBrokerWorkerConfig.js";
 import { parseGrokBrokerModelPolicy } from "./grokBrokerModelPolicy.js";
-import { runGrokEngineBrokerTurn, type GrokEngineBrokerTurnDependencies, type GrokEngineBrokerTurnResult } from "./grokEngineBrokerTurn.js";
+import {
+  EngineBrokerTurnFailure, runGrokEngineBrokerTurn,
+  type GrokEngineBrokerTurnDependencies, type GrokEngineBrokerTurnResult
+} from "./grokEngineBrokerTurn.js";
 import { createGrokWorkerIsolationGuard,grokBrokerAttestationInput,prepareGrokWorkerAttestation } from "./grokWorkerAttestation.js";
 import { awaitGrokWorkerIdentityEmpty, GROK_WORKER_REAP_WAIT_MS, grokWorkerIdentityEmpty } from "./grokEngineBrokerTurnEnd.js";
 import { createLedgeredGrokInferenceGrants, GrokInferenceGrantRefused, type GrokInferenceGrantRequest } from "./grokInferenceGrants.js";
@@ -125,7 +129,14 @@ export async function startGrokEngineBroker(
   };
   return {
     turn: createGrokEngineBrokerTurnDispatch(
-      registrations, active, () => closed || clockFailed, runGrokEngineBrokerTurn.bind(undefined, deps)
+      registrations, active, () => closed, async (registration, ...args) => {
+        if (clockFailed) throw new EngineBrokerTurnFailure(
+          "unavailable", undefined,
+          { outcome: "failed", usage: null, model: registration.model.model, requests: 0, limitReason: "none" },
+          undefined, undefined, undefined, ENGINE_BROKER_TASK_CLOCK_RESET_FAILED
+        );
+        return runGrokEngineBrokerTurn(deps, registration, ...args);
+      }
     ),
     requestInferenceGrant(request: GrokInferenceGrantRequest) {
       if (closed || grants === undefined) throw new GrokInferenceGrantRefused("unavailable");

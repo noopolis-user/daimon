@@ -6,7 +6,9 @@ import test, { type TestContext } from "node:test";
 import type { GrokWorkerConfigVariant } from "../contracts/grokBrokerTaskClock.js";
 import { EngineBrokerTurnRegistry } from "./engineBrokerTurnRegistry.js";
 import type { EngineBrokerServiceRegistration } from "./engineBrokerServiceConfig.js";
-import { runGrokEngineBrokerTurn, type GrokEngineBrokerTurnDependencies } from "./grokEngineBrokerTurn.js";
+import {
+  EngineBrokerTurnFailure, runGrokEngineBrokerTurn, type GrokEngineBrokerTurnDependencies
+} from "./grokEngineBrokerTurn.js";
 import { writeBrokerTaskClock, type BrokerTaskClockFs } from "./grokBrokerTaskClock.js";
 
 async function fixture(t: TestContext, configVariant: GrokWorkerConfigVariant = "clocked") {
@@ -170,7 +172,8 @@ test("an unreaped worker fences the slot without changing a live shell's clock",
     workerIdentityEmpty: async () => false,
     workerReapWaitMs: 0,
     taskClockFailed: () => { fenced = true; }
-  }), /task clock cleanup failed; restart required/u);
+  }), (error: unknown) => error instanceof EngineBrokerTurnFailure && error.code === "engine_failed" &&
+    error.cleanupDiagnostic === "task clock reset failed; slot fenced until restart");
   assert.equal(fenced, true);
   assert.equal(await readFile(f.file, "utf8"), "-1\n");
 });

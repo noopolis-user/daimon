@@ -1,9 +1,34 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { encodeEngineBrokerFrame, EngineBrokerFrameDecoder, parseEngineBrokerRequest, parseEngineBrokerResponse, parseEngineBrokerV1TerminalResponse } from "./engineBrokerProtocol.js";
+import {
+  encodeEngineBrokerFrame, EngineBrokerFrameDecoder, parseEngineBrokerRequest, parseEngineBrokerResponse,
+  parseEngineBrokerV1TerminalResponse, parseEngineBrokerV2TerminalResponse
+} from "./engineBrokerProtocol.js";
 
 const accounting = { outcome: "completed", usage: { input: 20, cacheRead: 0, cacheWrite: 0, output: 10, total: 30 }, model: "grok-4.6", requests: 2, limitReason: "none" } as const;
 const start = { version: "noopolis.daimon.engine-broker.v3", kind: "start_turn", requestId: "request-1", turnId: "turn-1", agentId: "agent-1", wakeId: "wake-1", prompt: "work",mcpEndpoint:"http://127.0.0.1:4567/mcp" } as const;
+
+test("cleanup diagnostics are one fixed operational message on v3 terminal frames only", () => {
+  const common = { version: start.version, requestId: "r", turnId: "t", ...accounting };
+  for (const terminal of [
+    { ...common, kind: "completed", text: "done", workerPid: 12, workerUid: 2200, workerStartTime: "1" },
+    { ...common, kind: "failed", outcome: "failed", code: "engine_failed" }
+  ]) {
+    const observed = { ...terminal, cleanupDiagnostic: "task clock reset failed; slot fenced until restart" };
+    assert.deepEqual(parseEngineBrokerResponse(observed), observed);
+    assert.deepEqual(parseEngineBrokerResponse(terminal), terminal, "absence remains absence");
+    for (const cleanupDiagnostic of [null, {}, "", "reset failed", "private".repeat(1000), "line\nbreak"]) {
+      assert.throws(() => parseEngineBrokerResponse({ ...terminal, cleanupDiagnostic }), /invalid broker frame/u);
+    }
+    assert.throws(() => parseEngineBrokerV2TerminalResponse({
+      ...observed, version: "noopolis.daimon.engine-broker.v2"
+    }), /invalid broker frame/u);
+  }
+  assert.throws(() => parseEngineBrokerV1TerminalResponse({
+    version: "noopolis.daimon.engine-broker.v1", kind: "failed", requestId: "r", turnId: "t", code: "engine_failed",
+    cleanupDiagnostic: "task clock reset failed; slot fenced until restart"
+  }), /invalid broker frame/u);
+});
 
 test("broker frames survive arbitrary chunking and validate closed requests", () => {
   const encoded = encodeEngineBrokerFrame(start); const decoder = new EngineBrokerFrameDecoder(); const values: unknown[] = [];
