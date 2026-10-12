@@ -107,6 +107,7 @@ export const GROK_ENGINE_BROKER = {
   turnRecordVersions: ["noopolis.daimon.engine-broker-turn.v1", "noopolis.daimon.engine-broker-turn.v2"],
   serviceConfigVersions: ["noopolis.daimon.engine-broker-service.v1", "noopolis.daimon.engine-broker-service.v2", "noopolis.daimon.engine-broker-service.v3"],
   slotRouting: { key: "slot", repeatedAgentIds: true, slotEnvironment: "DAIMON_ENGINE_BROKER_SLOT", resetRequest: "reset_slot", resetResponse: "slot_reset", turnStoreDirectory: "slot-{slot}", controlCaller: "organization", workersMayControl: false },
+  runRequestBudget: { maximumField: "maxRunRequests", storeField: "runRequestStore", fileName: "run-requests.json", includesInferenceGrants: true, countsCredentialRetries: true },
   turnLimits: {
     keys: ["maxRequests", "maxTokens", "timeoutMs"],
     v1Defaults: { maxRequests: 32, maxTokens: 300_000, timeoutMs: 240_000 },

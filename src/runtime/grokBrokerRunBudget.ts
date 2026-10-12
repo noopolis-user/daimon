@@ -13,6 +13,7 @@ export class GrokBrokerRunLimit extends Error {
 export class GrokBrokerRunBudget {
   private tail: Promise<void> = Promise.resolve();
   private failed = false;
+  private closed = false;
   private constructor(readonly maximum: number, private readonly file: string, private used: number) {}
 
   static async open(maximum: number, file: string): Promise<GrokBrokerRunBudget> {
@@ -30,6 +31,7 @@ export class GrokBrokerRunBudget {
   }
 
   reserve(): Promise<void> {
+    if (this.closed) return Promise.reject(new Error("run request budget closed"));
     const reservation = this.tail.then(async () => {
       if (this.failed) throw new Error("run request checkpoint unavailable");
       if (this.used >= this.maximum) throw new GrokBrokerRunLimit();
@@ -51,5 +53,10 @@ export class GrokBrokerRunBudget {
     });
     this.tail = reservation.catch(() => undefined);
     return reservation;
+  }
+
+  async close(): Promise<void> {
+    this.closed = true;
+    await this.tail;
   }
 }

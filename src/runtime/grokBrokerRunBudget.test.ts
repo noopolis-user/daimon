@@ -29,3 +29,17 @@ test("a publication failure fences every subsequent reservation", async t => {
   await assert.rejects(budget.reserve());
   await assert.rejects(budget.reserve(), /unavailable/);
 });
+
+test("close fences new admissions and drains durable reservations before releasing ownership", async t => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "run-budget-close-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const file = path.join(root, "budget.json");
+  const budget = await GrokBrokerRunBudget.open(5, file);
+  const pending = Array.from({ length: 5 }, () => budget.reserve());
+  const closing = budget.close();
+  await assert.rejects(budget.reserve(), /closed/);
+  await closing;
+  assert.equal(JSON.parse(await readFile(file, "utf8")).used, 5);
+  await Promise.all(pending);
+  await assert.rejects((await GrokBrokerRunBudget.open(5, file)).reserve(), GrokBrokerRunLimit);
+});

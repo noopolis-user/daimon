@@ -161,6 +161,19 @@ v1/v2/v3 terminal formats remain readable, but old flat-store records are not
 automatically migrated into the new namespace. Drain outstanding old-version
 work before upgrading; preserve old records and ledgers for audit.
 
+## Shared request admission
+
+Service v3 accepts an optional positive integer `maxRunRequests`. One proxy-owned
+budget reserves and fsyncs capacity before every upstream attempt from any subject
+slot or evaluator grant. Credential retries consume another reservation; failures
+never refund one. Exhaustion returns `429` with `run_request_limit` without forwarding.
+The journal is `<runRequestStore>/run-requests.json`; the optional canonical absolute
+`runRequestStore` defaults to `turnStore`. Keep it outside resettable slot stores.
+Malformed checkpoints, changed limits and publication failures fail closed. Broker
+restart retains the count when the store survives. Spawnfile training retains the
+run store in a dedicated volume keyed by the run's output directory, independently
+of disposable slot state and the credential realm.
+
 ## Verification boundary
 
 Offline tests exercise real control framing/parsing over in-memory transports,
