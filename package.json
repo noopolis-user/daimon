@@ -44,7 +44,7 @@
     "clean": "rm -rf dist",
     "prepack": "npm run build",
     "prepublishOnly": "npm run typecheck && npm test",
-    "typecheck": "tsc --project tsconfig.json --noEmit && tsc --project scripts/tsconfig.json --noEmit",
+    "typecheck": "tsc --project tsconfig.json --noEmit && tsc --project scripts/tsconfig.json --noEmit && tsc --project .github/scripts/ci/tsconfig.json",
     "verify:contract-manifest": "node --import tsx scripts/emitRuntimeContractManifest.ts --check",
     "verify:native": "node --experimental-strip-types src/runtime/native/verifyArtifacts.ts",
     "verify:production-closure": "node --experimental-strip-types scripts/verifyProductionClosure.ts",
