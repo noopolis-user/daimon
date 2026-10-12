@@ -1,3 +1,4 @@
+import path from "node:path";
 import { constants } from "node:fs";
 import { open, rename, stat } from "node:fs/promises";
 
@@ -177,15 +178,25 @@ export const renderGrokTurnRequestLines = (entry: GrokTurnRequestEntry): string 
  * same rotation and file mode as both ledgers. Advisory: never rejects. The
  * broker uses it to append the exact bytes it sealed into a turn record.
  */
+const ledgerWrites = new Map<string, Promise<boolean>>();
+
 export const recordLedgerLines = async (file: string, lines: string): Promise<boolean> => {
   if (lines.length === 0) return false;
-  try { await rotate(file); await appendLines(file, lines); return true; } catch { return false; }
+  const key = path.resolve(file);
+  const previous = ledgerWrites.get(key) ?? Promise.resolve(true);
+  const pending = previous.then(async () => {
+    try { await rotate(key); await appendLines(key, lines); return true; } catch { return false; }
+  });
+  ledgerWrites.set(key, pending);
+  try { return await pending; } finally {
+    if (ledgerWrites.get(key) === pending) ledgerWrites.delete(key);
+  }
 };
 
 /** Advisory and never rejects, like {@link recordTurnRequests}; an empty turn writes nothing. */
 export const recordGrokTurnRequests = async (file: string, entry: GrokTurnRequestEntry): Promise<boolean> => {
   if (entry.requests.length === 0) return false;
-  try { await rotate(file); await appendLines(file, renderGrokTurnRequestLines(entry)); return true; } catch { return false; }
+  try { return await recordLedgerLines(file, renderGrokTurnRequestLines(entry)); } catch { return false; }
 };
 
 const rotate = async (file: string): Promise<void> => {
@@ -194,16 +205,8 @@ const rotate = async (file: string): Promise<void> => {
   if (size >= TURN_USAGE_ROTATE_BYTES) await rename(file, `${file}.1`);
 };
 
-/**
- * One `write(2)` for the whole wake's rows.
- *
- * Turns for different agents run concurrently inside the single broker process.
- * `O_APPEND` makes a single sub-page write atomic against them, so a wake's rows
- * are contiguous and never interleaved with another wake's — which matters more
- * here than in the per-wake ledger, because a row only means something beside
- * the other rows of its own thread. A wake with enough requests to exceed a page
- * is still append-ordered per line; interleaving would cost grouping, not
- * correctness, since every row carries its own thread id.
+/** Rotation and all writes are serialized per canonical path in this broker process.
+ * The realm lease excludes another broker. Independent paths remain concurrent.
  */
 const appendLines = async (file: string, lines: string): Promise<void> => {
   const bytes = Buffer.from(lines, "utf8");
@@ -225,9 +228,7 @@ const appendLines = async (file: string, lines: string): Promise<void> => {
 export const recordTurnRequests = async (file: string, entry: TurnRequestEntry): Promise<boolean> => {
   if (entry.requests.length === 0) return false;
   try {
-    await rotate(file);
-    await appendLines(file, renderTurnRequestLines(entry));
-    return true;
+    return await recordLedgerLines(file, renderTurnRequestLines(entry));
   } catch {
     /* advisory: instrumentation never fails a wake that published */
     return false;

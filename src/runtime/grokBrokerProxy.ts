@@ -1,3 +1,4 @@
+import { GrokBrokerRunLimit, type GrokBrokerRunBudget } from "./grokBrokerRunBudget.js";
 import { createHash } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -38,9 +39,9 @@ export type GrokBrokerUpstream = (request: ReturnType<typeof authorizeGrokBroker
 export async function startGrokBrokerProxy(
   authority: GrokBrokerCredentialAuthority, upstream: GrokBrokerUpstream = defaultUpstream,
   policy: GrokBrokerModelPolicy = DEFAULT_GROK_BROKER_MODEL_POLICY, listenPort = 43_123,
-  grants?: GrokInferenceGrants
+  grants?: GrokInferenceGrants, runBudget?: GrokBrokerRunBudget
 ) {
-  const handler = createGrokBrokerProxyHandler(authority, upstream, policy, grants);
+  const handler = createGrokBrokerProxyHandler(authority, upstream, policy, grants, runBudget);
   const server = createServer((request, response) => { void handler.serve(request, response); });
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
@@ -60,8 +61,14 @@ export async function startGrokBrokerProxy(
 /** @internal The production request handler, usable without opening a socket. */
 export function createGrokBrokerProxyHandler(
   authority: GrokBrokerCredentialAuthority, upstream: GrokBrokerUpstream = defaultUpstream,
-  policy: GrokBrokerModelPolicy = DEFAULT_GROK_BROKER_MODEL_POLICY, grants?: GrokInferenceGrants
+  policy: GrokBrokerModelPolicy = DEFAULT_GROK_BROKER_MODEL_POLICY, grants?: GrokInferenceGrants, runBudget?: GrokBrokerRunBudget
 ) {
+  const admittedUpstream: GrokBrokerUpstream = async (request, signal) => {
+    signal?.throwIfAborted();
+    await runBudget?.reserve();
+    signal?.throwIfAborted();
+    return upstream(request, signal);
+  };
   const declared = parseGrokBrokerModelPolicy(policy);
   const capabilities = new EngineBrokerCapabilities();
   const guards = new Map<string, () => Promise<void>>();
@@ -78,7 +85,7 @@ export function createGrokBrokerProxyHandler(
     },
     revokeTurn(turnId: string) { turns.delete(turnId); },
     serve: (request: IncomingMessage, response: ServerResponse) => serve(
-      request, response, authority, upstream, capabilities, guards, turns, declared, grants
+      request, response, authority, admittedUpstream, capabilities, guards, turns, declared, grants
     )
   };
 }
@@ -145,6 +152,11 @@ async function serve(request: IncomingMessage, response: ServerResponse, authori
     response.writeHead(result.status, { "content-type": result.headers["content-type"] ?? "application/json", "cache-control": "no-store" }); response.end(result.body);
   } catch (error) {
     settle?.(undefined);
+    if (error instanceof GrokBrokerRunLimit) {
+      response.writeHead(429, { "content-type": "application/json", "cache-control": "no-store" });
+      response.end('{"error":"run_request_limit"}');
+      return;
+    }
     // Name the refusal on the broker's own stderr (reason code only, never a body
     // or a token) so a failing turn is diagnosable without a stub harness —
     // except for the two requests every healthy turn makes anyway.

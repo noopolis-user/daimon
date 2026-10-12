@@ -98,7 +98,7 @@ async function fixture(t: TestContext, act: (send: Send) => Promise<void>, varia
     ),
     rows: async (file: string) => (await readFile(path.join(root, file), "utf8")).trim().split("\n").map((line) => JSON.parse(line)),
     record: async (wake: string) => {
-      const id = createHash("sha256").update(`agent\0${wake}`).digest("hex");
+      const id = createHash("sha256").update(`0\0agent\0${wake}`).digest("hex");
       const file = createHash("sha256").update(id).digest("hex");
       return JSON.parse(await readFile(path.join(root, "turns", `${file}.json`), "utf8"));
     }

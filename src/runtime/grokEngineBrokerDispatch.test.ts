@@ -9,12 +9,12 @@ function deferred() {
 }
 
 test("the broker forwards the clock and refuses overlapping wakes before either can change the slot file", async () => {
-  const registration = { agentId: "agent" } as GrokEngineBrokerRegistration;
+  const registration = { agentId: "agent", slot: 0 } as GrokEngineBrokerRegistration;
   const active: GrokBrokerActiveTurns = new Map();
   const gate = deferred();
   const seen: unknown[][] = [];
   const result = { text: "done", workerPid: 42, workerUid: 2200, workerStartTime: "1", outcome: "completed", usage: null, model: "grok-4.6", requests: 0, limitReason: "none" } as const;
-  const dispatch = createGrokEngineBrokerTurnDispatch(new Map([["agent", registration]]), active, () => false, async (slot, ...args) => {
+  const dispatch = createGrokEngineBrokerTurnDispatch(new Map([[0, registration]]), active, () => false, async (slot, ...args) => {
     seen.push([slot, ...args]);
     await gate.promise;
     return result;
@@ -40,7 +40,7 @@ test("cancellation retains the identity claim until the prior turn actually fini
   const cleanup = deferred();
   const controller = new AbortController();
   let signal: AbortSignal | undefined;
-  const dispatch = createGrokEngineBrokerTurnDispatch(new Map([["agent", { agentId: "agent" } as GrokEngineBrokerRegistration]]), active, () => false,
+  const dispatch = createGrokEngineBrokerTurnDispatch(new Map([[0, { agentId: "agent", slot: 0 } as GrokEngineBrokerRegistration]]), active, () => false,
     async (_slot, _wake, _prompt, _endpoint, received) => { signal = received; await cleanup.promise; throw new Error("cancelled"); });
   const first = dispatch("agent", "one", "work", "http://127.0.0.1:1/mcp", controller.signal);
   const failed = assert.rejects(first, /cancelled/u);

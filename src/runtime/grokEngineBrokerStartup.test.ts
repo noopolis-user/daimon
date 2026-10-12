@@ -115,7 +115,7 @@ async function fixture(t: TestContext, count = 1, variant: GrokWorkerConfigVaria
   return {
     file, events, dependencies, registrations,
     record: async () => {
-      const directory = path.join(root, "turns");
+      const directory = path.join(root, "turns", "slot-0");
       const files = await readdir(directory);
       assert.equal(files.length, 1, "only the admitted turn may have a record");
       return readFile(path.join(directory, files[0]!), "utf8");
@@ -145,26 +145,6 @@ test("production startup reconciles a stale clock after leasing and reaping, bef
   await writeFile(f.file, "-444.123\n");
   await f.start();
   assert.equal(await readFile(f.file, "utf8"), "+0\n");
-});
-
-test("production startup rejects multiple registrations when one config is clocked", async (t) => {
-  const f = await fixture(t, 2);
-  await assert.rejects(f.start(), /one registration/u);
-  assert.deepEqual(f.events, ["lease", "attest:clocked", "lease:close"]);
-});
-
-test("production per-turn admission rejects a newly clocked multi-registration slot", async (t) => {
-  const f = await fixture(t, 2, "unclocked");
-  const broker = await f.start();
-  assert.equal(f.events.some((event) => event.startsWith("write:")), false);
-  await f.variant("clocked");
-  await assert.rejects(
-    broker.turn("agent-0", "one", "work", "http://127.0.0.1:1/mcp", undefined, undefined, "-1"),
-    /engine broker turn failed/u
-  );
-  assert.equal(f.events.includes("launch"), false);
-  assert.equal(f.events.some((event) => event.startsWith("write:")), false);
-  await assert.rejects(readFile(f.file), { code: "ENOENT" });
 });
 
 for (const provisioning of ["pinned", "missing", "invalid"] as const) {
@@ -258,7 +238,7 @@ for (const ending of ["success", "failure"] as const) {
     });
     const client = clientFor(broker, frames);
     const turn = (wake: string) => client.turn(
-      "agent-0", wake, "work", "http://127.0.0.1:1/mcp", undefined, { processClock: "-1", onProviderClock }
+      "agent-0", wake, "work", "http://127.0.0.1:1/mcp", undefined, { slot: 0, processClock: "-1", onProviderClock }
     );
     const pending = turn("one");
     if (ending === "success") {
@@ -293,7 +273,7 @@ for (const ending of ["success", "failure"] as const) {
     assert.equal(await readFile(f.file, "utf8"), "+0\n");
     assert.equal(restarted.readiness().workerIsolation, true);
     const replay = clientFor(restarted, frames).turn(
-      "agent-0", "one", "work", "http://127.0.0.1:1/mcp", undefined, { processClock: "-1", onProviderClock }
+      "agent-0", "one", "work", "http://127.0.0.1:1/mcp", undefined, { slot: 0, processClock: "-1", onProviderClock }
     );
     if (ending === "success") assert.equal(await replay, "sealed answer");
     else await assert.rejects(replay, { message: "engine broker turn failed (engine_failed)" });

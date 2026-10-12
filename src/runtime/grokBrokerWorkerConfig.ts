@@ -1,3 +1,4 @@
+import { brokerTaskClockFileFor } from "./grokBrokerSlot.js";
 import { createHash } from "node:crypto";
 import path from "node:path";
 import { GROK_BROKER_TASK_CLOCK, type GrokWorkerConfigVariant } from "../contracts/grokBrokerTaskClock.js";
@@ -107,12 +108,12 @@ export const renderGrokLeanBaseConfig = (): string => [
  * default *and* its closed enum, so it reaches the request body and nothing
  * else can be selected; the proxy then re-verifies it on every body.
  */
-export function renderGrokBrokerWorkerConfig(policy: Partial<GrokBrokerModelPolicy> = {}, variant: GrokWorkerConfigVariant = "unclocked"): string {
+export function renderGrokBrokerWorkerConfig(policy: Partial<GrokBrokerModelPolicy> = {}, variant: GrokWorkerConfigVariant = "unclocked", slot = 0): string {
   if (variant !== "unclocked" && variant !== "clocked") throw new TypeError("invalid Grok worker config variant");
   const base = renderGrokBrokerWorkerConfigWith(parseGrokBrokerModelPolicy(policy), PRODUCTION_ENDPOINTS);
   return variant === "unclocked" ? base : `${base}\n[shell_environment_policy]\n${shellEnvironmentPolicyEntries({
     LD_PRELOAD: GROK_BROKER_TASK_CLOCK.preloadPath,
-    FAKETIME_TIMESTAMP_FILE: GROK_BROKER_TASK_CLOCK.timestampFilePath,
+    FAKETIME_TIMESTAMP_FILE: brokerTaskClockFileFor(slot),
     FAKETIME_DONT_FAKE_MONOTONIC: "1",
     LC_ALL: "C"
   }).join("\n")}\n`;
@@ -137,13 +138,15 @@ export function renderGrokBrokerWorkerConfigWith(policy: GrokBrokerModelPolicy, 
   ].join("\n");
 }
 
-export const grokBrokerWorkerConfigSha256 = (policy: Partial<GrokBrokerModelPolicy> = {}, variant: GrokWorkerConfigVariant = "unclocked"): string =>
-  createHash("sha256").update(renderGrokBrokerWorkerConfig(policy, variant)).digest("hex");
+export const grokBrokerWorkerConfigSha256 = (policy: Partial<GrokBrokerModelPolicy> = {}, variant: GrokWorkerConfigVariant = "unclocked", slot = 0): string =>
+  createHash("sha256").update(renderGrokBrokerWorkerConfig(policy, variant, slot)).digest("hex");
 
-/** Pins, rather than recomputed digests, are the attestation authority. */
-export function grokBrokerWorkerConfigPins(policy: GrokBrokerModelPolicy): Readonly<Record<GrokWorkerConfigVariant, string>> {
+/** Validate the slot-zero template pin before deriving bytes for another canonical slot path. */
+export function grokBrokerWorkerConfigPins(policy: GrokBrokerModelPolicy, slot = 0): Readonly<Record<GrokWorkerConfigVariant, string>> {
+  const base = GROK_ENGINE_BROKER.worker.clockedConfigSha256[policy.model][policy.reasoningEffort];
+  if (grokBrokerWorkerConfigSha256(policy, "clocked", 0) !== base) throw new Error("Grok clocked config template drifted from manifest");
   return { unclocked: GROK_ENGINE_BROKER.worker.configSha256[policy.model][policy.reasoningEffort],
-    clocked: GROK_ENGINE_BROKER.worker.clockedConfigSha256[policy.model][policy.reasoningEffort] };
+    clocked: grokBrokerWorkerConfigSha256(policy, "clocked", slot) };
 }
 
 /**

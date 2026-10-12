@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { createConnection, type Socket } from "node:net";
-import { ENGINE_BROKER_VERSION, EngineBrokerProtocolMismatch, encodeEngineBrokerFrame,EngineBrokerFrameDecoder,parseEngineBrokerResponse } from "./engineBrokerProtocol.js";
+import { ENGINE_BROKER_VERSION, EngineBrokerProtocolMismatch, encodeEngineBrokerFrame,EngineBrokerFrameDecoder,parseEngineBrokerResponse, parseEngineBrokerSlot, type EngineBrokerRequest, type EngineBrokerResponse } from "./engineBrokerProtocol.js";
 import type { EngineBrokerInferenceFailureCode, EngineBrokerInferenceRequest, EngineBrokerInferenceResponse } from "./engineBrokerInferenceProtocol.js";
 import { ENGINE_BROKER_MCP_REFUSAL_REASONS, type EngineBrokerMcpCallObservation, type EngineBrokerMcpRefusalObservation, type EngineBrokerMcpTunnelObservation } from "./engineBrokerMcpCallLog.js";
 import type { EngineBrokerTurnLimitOverrides } from "./engineBrokerTurnAccounting.js";
@@ -33,7 +33,7 @@ export class EngineBrokerInferenceGrantRefused extends Error {
  * when the agent declared one, must equal the model the broker sealed.
  */
 export type EngineBrokerTurnOptions = Readonly<{
-  limits?: EngineBrokerTurnLimitOverrides; model?: string; processClock?: string;
+  limits?: EngineBrokerTurnLimitOverrides; model?: string; processClock?: string; slot?: number;
   /** Sealed observation on completion, failure and replay; sink errors never change the turn. */
   onProviderClock?: (observation: GrokBrokerProviderClockObservation) => void;
 }>;
@@ -92,7 +92,11 @@ export class EngineBrokerControlClient implements EngineBrokerTurnClient {
     if(response.kind!=="inference_grant_released"||response.grantId!==grantId)throw new Error(`engine broker unavailable (requires control protocol ${ENGINE_BROKER_VERSION})`);
     return response.released;
   }
-  private exchange(request: EngineBrokerInferenceRequest): Promise<EngineBrokerInferenceResponse> {
+  async resetSlot(slot: number): Promise<void> {
+    const response = await this.exchange({ version: ENGINE_BROKER_VERSION, kind: "reset_slot", requestId: randomUUID(), slot: parseEngineBrokerSlot(slot) });
+    if (response.kind !== "slot_reset" || response.slot !== slot) throw new Error("engine broker reset unavailable");
+  }
+  private exchange(request: EngineBrokerInferenceRequest | Extract<EngineBrokerRequest, {kind: "reset_slot"}>): Promise<EngineBrokerInferenceResponse | Extract<EngineBrokerResponse, {kind: "slot_reset"}>> {
     const socket = this.connect(this.socketPath);
     const decoder = new EngineBrokerFrameDecoder();
     return new Promise((resolve, reject) => {
@@ -112,7 +116,7 @@ export class EngineBrokerControlClient implements EngineBrokerTurnClient {
             const response = parseEngineBrokerResponse(value);
             if (settled || response.requestId !== request.requestId ||
                 (response.kind !== "inference_grant" && response.kind !== "inference_grant_released" &&
-                 response.kind !== "inference_grant_refused")) throw new Error();
+                 response.kind !== "inference_grant_refused" && response.kind !== "slot_reset")) throw new Error();
             settled = true;
             socket.destroy();
             resolve(response);
@@ -125,10 +129,14 @@ export class EngineBrokerControlClient implements EngineBrokerTurnClient {
     agentId: string, wakeId: string, prompt: string, mcpEndpoint: string,
     signal?: AbortSignal, options: EngineBrokerTurnOptions = {}
   ): Promise<string> {
-    const turnId = createHash("sha256").update(`${agentId}\0${wakeId}`).digest("hex");
+    const configured = process.env.DAIMON_ENGINE_BROKER_SLOT;
+    const slot = options.slot ?? (configured === undefined ? undefined : parseEngineBrokerSlot(/^(0|[1-9][0-9]*)$/u.test(configured) ? Number(configured) : NaN));
+    if (slot !== undefined) parseEngineBrokerSlot(slot);
+    const turnId = createHash("sha256").update(`${slot === undefined ? "" : `${slot}\0`}${agentId}\0${wakeId}`).digest("hex");
     const requestId = randomUUID();
     const request = {
       version: ENGINE_BROKER_VERSION, kind: "start_turn", requestId, turnId, agentId, wakeId, prompt, mcpEndpoint,
+      ...(slot === undefined ? {} : { slot }),
       ...(options.limits === undefined ? {} : { limits: options.limits }),
       ...(options.processClock === undefined ? {} : { processClock: options.processClock })
     } as const;
