@@ -1,3 +1,4 @@
+import { GrokBrokerRunLimit } from "./grokBrokerRunBudget.js";
 import { createHash } from "node:crypto";
 import type { ServerResponse } from "node:http";
 
@@ -52,6 +53,7 @@ export async function serveGrokInferenceGrant(input: GrokInferenceProxyInput, re
     json(response, result.status, result.body, result.headers["content-type"]);
   } catch (error) {
     settle?.(undefined);
+    if (error instanceof GrokBrokerRunLimit) return json(response, 429, '{"error":"run_request_limit"}');
     // Same rule as the subject path: a policy miss is non-retryable (400), because a
     // retryable 503 makes the client re-send a request the broker will never accept,
     // charging estimated usage for every attempt. 503 stays for transient faults only.

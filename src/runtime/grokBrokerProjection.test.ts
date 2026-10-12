@@ -28,7 +28,7 @@ test("the projection is Daimon's own renderers and collectors, fully declared an
   const projection = resolveOrganizationGrokBrokerProjection(config, "foreman", options);
   const denyPaths = [GROK_SUBSCRIPTION_REALM.bootstrapMountPath, GROK_SUBSCRIPTION_REALM.durableMountPath, "/run/paideia/control", "/var/lib/spawnfile/instance/homes/peer", "/var/lib/spawnfile/instance/workspace/agents/peer", "/run/paideia", "/run/training/inputs"].sort();
   assert.deepEqual(projection, {
-    version: "noopolis.daimon.grok-broker-projection.v2", agentId: "foreman",
+    version: "noopolis.daimon.grok-broker-projection.v3", agentId: "foreman",
     workspacePath: "/var/lib/spawnfile/instance/workspace/agents/foreman", runtimeHomePath: "/var/lib/spawnfile/instance/homes/foreman",
     workerUid: 2_200, slot: 0, profilePath: "/var/lib/daimon-workers/2200/.grok/sandbox.toml", profileSha256: grokWorkerSandboxProfileSha256(denyPaths), denyPaths,
     workerConfigVariant: "unclocked", workerConfigSha256: grokBrokerWorkerConfigSha256({ model: "grok-4.6", reasoningEffort: "low" }), systemPromptSha256: GROK_ENGINE_BROKER.worker.systemPromptSha256,

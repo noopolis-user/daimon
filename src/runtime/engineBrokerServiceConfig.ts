@@ -7,6 +7,7 @@ import { TURN_REQUEST_LEDGER } from "./turnRequestLedger.js";
 import { TURN_USAGE_LEDGER } from "./turnUsageLedger.js";
 
 export const ENGINE_BROKER_SERVICE_V1 = "noopolis.daimon.engine-broker-service.v1" as const;
+export const ENGINE_BROKER_SERVICE_V3 = "noopolis.daimon.engine-broker-service.v3" as const;
 export const ENGINE_BROKER_SERVICE_V2 = "noopolis.daimon.engine-broker-service.v2" as const;
 
 /** One root-provisioned broker slot. Every field is fixed at provisioning time; a wake can only lower `limits`. */
@@ -24,7 +25,7 @@ export type EngineBrokerServiceRegistration = Readonly<{
  * registration's usage ledger or its `requests.jsonl`, and not the container
  * ledger the wake fuse sums.
  */
-export type EngineBrokerServiceConfig = Readonly<{ credentialHome: string; turnStore: string; registrations: readonly EngineBrokerServiceRegistration[]; inferenceLedgerPath?: string }>;
+export type EngineBrokerServiceConfig = Readonly<{ credentialHome: string; turnStore: string; registrations: readonly EngineBrokerServiceRegistration[]; inferenceLedgerPath?: string; maxRunRequests?: number; runRequestStore?: string }>;
 
 const V1_REGISTRATION = ["agentId", "slot", "workerUid", "workspace", "profilePath", "eventsPath", "profileSha256"] as const;
 const V2_REGISTRATION = [...V1_REGISTRATION, "usageLedgerPath", "limits", "model"] as const;
@@ -51,6 +52,8 @@ export const engineBrokerSealLedgerPathFor = (usageLedgerPath: string): string =
 /**
  * Strict `service.json` parser.
  *
+ * v3 retains seven-field registrations and binds slotPolicies by slot; agent IDs
+ * may repeat, while worker UIDs, slots and ledger streams must be distinct.
  * v2 requires every registration to declare its usage ledger, limits and model
  * (`model.id`/`model.reasoningEffort` from the closed lists); unknown keys at
  * any level are refused. v1 is still accepted and receives today's defaults:
@@ -59,27 +62,54 @@ export const engineBrokerSealLedgerPathFor = (usageLedgerPath: string): string =
  */
 export function parseEngineBrokerServiceConfig(value: unknown): EngineBrokerServiceConfig {
   if (!plain(value)) throw invalid();
-  const v2 = value.version === ENGINE_BROKER_SERVICE_V2;
+  const v3 = value.version === ENGINE_BROKER_SERVICE_V3;
+  const v2 = v3 || value.version === ENGINE_BROKER_SERVICE_V2;
   if (!v2 && value.version !== ENGINE_BROKER_SERVICE_V1) throw invalid();
-  const top = ["version", "credentialHome", "turnStore", "registrations"];
+  const top = ["version", "credentialHome", "turnStore", "registrations", ...(v3 ? ["slotPolicies"] : [])];
+  if (v3 && Object.hasOwn(value, "maxRunRequests")) {
+    if (!Number.isSafeInteger(value.maxRunRequests) || (value.maxRunRequests as number) < 1) throw invalid();
+    top.push("maxRunRequests");
+  }
+  if (v3 && Object.hasOwn(value, "runRequestStore")) {
+    if (!absolute(value.runRequestStore) || value.maxRunRequests === undefined) throw invalid();
+    top.push("runRequestStore");
+  }
   exact(value, v2 && Object.hasOwn(value, "inferenceLedgerPath") ? [...top, "inferenceLedgerPath"] : top);
   if (!absolute(value.credentialHome) || !absolute(value.turnStore) || !Array.isArray(value.registrations) || value.registrations.length === 0) throw invalid();
-  const seen = new Set<string>(), slots = new Set<number>();
+  const policies = new Map<number, Record<string, unknown>>();
+  if (v3) {
+    if (!Array.isArray(value.slotPolicies) || value.slotPolicies.length !== value.registrations.length) throw invalid();
+    for (const policy of value.slotPolicies) {
+      if (!plain(policy)) throw invalid();
+      exact(policy, ["slot", "usageLedgerPath", "limits", "model"]);
+      if (!Number.isSafeInteger(policy.slot) || (policy.slot as number) < 0 || policies.has(policy.slot as number)) throw invalid();
+      policies.set(policy.slot as number, policy);
+    }
+  }
+  const seen = new Set<string>(), slots = new Set<number>(), workers = new Set<number>();
+  const ledgers = new Set<string>();
   const registrations = value.registrations.map((entry: unknown): EngineBrokerServiceRegistration => {
     if (!plain(entry)) throw invalid();
-    exact(entry, v2 ? V2_REGISTRATION : V1_REGISTRATION);
+    exact(entry, v2 && !v3 ? V2_REGISTRATION : V1_REGISTRATION);
     const { agentId, slot, workerUid, workspace, profilePath, eventsPath, profileSha256 } = entry;
-    if (typeof agentId !== "string" || !agentId.trim() || seen.has(agentId) || !Number.isSafeInteger(slot) || (slot as number) < 0 || slots.has(slot as number) || !Number.isSafeInteger(workerUid) || (workerUid as number) < 2200 || !absolute(workspace) || !absolute(profilePath) || !absolute(eventsPath) || typeof profileSha256 !== "string" || !/^[a-f0-9]{64}$/u.test(profileSha256) || eventsPath !== grokWorkerEventsPathFor(profilePath) || !profilePath.endsWith("/sandbox.toml")) throw invalid();
-    seen.add(agentId); slots.add(slot as number);
+    if (typeof agentId !== "string" || !agentId.trim() || (!v3 && seen.has(agentId)) || !Number.isSafeInteger(slot) || (slot as number) < 0 || slots.has(slot as number) || !Number.isSafeInteger(workerUid) || (workerUid as number) < 2200 || workers.has(workerUid as number) || !absolute(workspace) || !absolute(profilePath) || !absolute(eventsPath) || typeof profileSha256 !== "string" || !/^[a-f0-9]{64}$/u.test(profileSha256) || eventsPath !== grokWorkerEventsPathFor(profilePath) || !profilePath.endsWith("/sandbox.toml")) throw invalid();
+    seen.add(agentId); slots.add(slot as number); workers.add(workerUid as number);
     const base = { agentId, slot: slot as number, workerUid: workerUid as number, workspace, profilePath, eventsPath, profileSha256 };
     if (!v2) return { ...base, usageLedgerPath: TURN_USAGE_LEDGER.filePath, limits: DEFAULT_GROK_BROKER_TURN_LIMITS, model: DEFAULT_GROK_BROKER_MODEL_POLICY };
-    const usageLedgerPath = entry.usageLedgerPath;
+    const policy = v3 ? policies.get(slot as number) : entry;
+    if (policy === undefined) throw invalid();
+    const usageLedgerPath = policy.usageLedgerPath;
     if (!ledgerPath(usageLedgerPath) || usageLedgerPath === engineBrokerRequestLedgerPathFor(usageLedgerPath) || usageLedgerPath === engineBrokerSealLedgerPathFor(usageLedgerPath)) throw invalid();
+    const streams = [usageLedgerPath, engineBrokerRequestLedgerPathFor(usageLedgerPath), engineBrokerSealLedgerPathFor(usageLedgerPath)];
+    if (v3 && streams.some((file) => ledgers.has(file))) throw invalid();
+    streams.forEach((file) => ledgers.add(file));
     let limits: EngineBrokerTurnLimits;
-    try { limits = parseEngineBrokerTurnLimits(entry.limits); } catch { throw invalid(); }
-    return { ...base, usageLedgerPath, limits, model: parseServiceModel(entry.model) };
+    try { limits = parseEngineBrokerTurnLimits(policy.limits); } catch { throw invalid(); }
+    return { ...base, usageLedgerPath, limits, model: parseServiceModel(policy.model) };
   });
-  const base = { credentialHome: value.credentialHome, turnStore: value.turnStore, registrations };
+  const base = { credentialHome: value.credentialHome, turnStore: value.turnStore, registrations,
+    ...(value.runRequestStore === undefined ? {} : { runRequestStore: value.runRequestStore as string }),
+    ...(value.maxRunRequests === undefined ? {} : { maxRunRequests: value.maxRunRequests as number }) };
   if (!Object.hasOwn(value, "inferenceLedgerPath")) return base;
   const inferenceLedgerPath = value.inferenceLedgerPath;
   if (!ledgerPath(inferenceLedgerPath)) throw invalid();

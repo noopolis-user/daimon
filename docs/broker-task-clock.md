@@ -1,5 +1,8 @@
 # Brokered Grok task clock
 
+See [parallel-broker-slots.md](parallel-broker-slots.md) for exact P6 service,
+control, clock-isolation and reset contracts.
+
 The optional clocked worker config shifts native shell children while Daimon,
 the native launcher and Grok itself retain real time. It uses the same shell
 policy inheritance, empty include/exclude filters and automatic secret-name
@@ -8,26 +11,28 @@ exclusions as direct Grok. Its `set` contains exactly four keys:
 | Key | Fixed value |
 | --- | --- |
 | `LD_PRELOAD` | `/usr/local/lib/daimon/libfaketime.so.1` |
-| `FAKETIME_TIMESTAMP_FILE` | `/run/daimon-engine-broker/task-clock/faketime` |
+| `FAKETIME_TIMESTAMP_FILE` | `/run/daimon-engine-broker/task-clock/slot-<i>/faketime` |
 | `FAKETIME_DONT_FAKE_MONOTONIC` | `1` |
 | `LC_ALL` | `C` |
 
-The two paths are exported as `GROK_BROKER_TASK_CLOCK_PRELOAD_PATH` and
-`GROK_BROKER_TASK_CLOCK_FILE_PATH`; ownership/modes live in
+The library path is `GROK_BROKER_TASK_CLOCK_PRELOAD_PATH`;
+`brokerTaskClockFileFor(i)` selects the file (`GROK_BROKER_TASK_CLOCK_FILE_PATH`
+is slot zero). Ownership/modes live in
 `GROK_BROKER_TASK_CLOCK`, also exposed in the manifest's `worker.taskClock`.
 No offset is embedded in the config. The existing renderer's default and all
 nine `worker.configSha256` pins remain byte-identical to origin/main 796b414.
-`renderGrokBrokerWorkerConfig(policy, "clocked")` selects the additional nine
-`worker.clockedConfigSha256` pins. Home attestation accepts either exact pin
+`renderGrokBrokerWorkerConfig(policy, "clocked", i)` selects the slot. The nine
+`worker.clockedConfigSha256` pins bind its slot-zero template; per-slot pins
+substitute only the canonical clock path. Home attestation accepts either exact pin
 for the declared model/effort and reports the variant; tampering refuses a turn.
 
 `start_turn.processClock` is an optional signed relative-seconds string with
 optional three-digit milliseconds, derived by `taskClockChildEnvironment`.
-It carries no path or environment map. Control protocol **v3** refuses v1/v2
+It carries no path or environment map. Control protocol **v4** refuses v1/v2/v3
 wire frames with a bounded `protocol_mismatch` diagnostic naming the received
 and expected versions before closing; both ends must upgrade together. Old
-clients may still render their generic unavailable error. Historical v1/v2 sealed turns
-still replay. The request digest includes a supplied clock, so changing it
+clients may still render their generic unavailable error. Historical v1/v2/v3 terminal formats remain readable; see the P6 migration note
+for the new slot-scoped store and turn IDs. The request digest includes a supplied clock, so changing it
 for the same wake is a conflict. A replay never rewrites the clock file.
 Native ABI **2**, native argv/environment and launcher artifact pins do not change.
 
@@ -42,7 +47,7 @@ registrations without that directory defer attestation to their turns, so a
 mis-provisioned worker does not prevent broker startup. A selected clock slot's
 attestation or reconciliation failure still prevents startup.
 The broker checks that the worker identity has emptied before resetting;
-an unreaped worker or a reset failure fences the slot until restart. If the
+an unreaped worker or a reset failure fences the slot until explicit reset or restart. If the
 turn is already sealed, its terminal response and accounting still reach the
 client with the fixed `cleanupDiagnostic` value
 `task clock reset failed; slot fenced until restart`. The client warns on a
@@ -123,15 +128,15 @@ release check **after** awaiting the turn (or catching its failure).
 
 ## Spawnfile provisioning
 
-1. Re-vendor manifest **v4**, its emitted digest, the clocked config bytes and
-   projection **v2**; build with `npm run build`, then run
+1. Re-vendor manifest **v5**, its emitted digest, the clocked config bytes and
+   projection **v3**; build with `npm run build`, then run
    `npm run verify:contract-manifest`. Training projections pass
    `workerConfigVariant: "clocked"`; production keeps the default.
 2. Install the architecture's distro libfaketime and create the root-owned
    symlink `/usr/local/lib/daimon/libfaketime.so.1` to that library. Neither the
    symlink, library nor ancestors may be worker-writable. Do not preload the
    broker, launcher or Grok process.
-3. Provision `/run/daimon-engine-broker/task-clock` as **2100:2100 0755**,
+3. Provision `/run/daimon-engine-broker/task-clock/slot-<i>` as **2100:2100 0755**,
    initially containing `faketime` with `+0\n`, **2100:2100 0644**. The broker
    verifies the directory and publishes files with those modes even with umask
    077. Every ancestor must be canonical, non-symlink and searchable by the
@@ -148,11 +153,11 @@ release check **after** awaiting the turn (or catching its failure).
    all existing profile, trust, managed-config and requirements attestations.
    Slot preflight must check the installed config against the projection's
    selected digest, as well as readability and denied writes to the clock.
-6. A clock-enabled container has **one worker registration**. The broker refuses
-   a clocked config in a multi-registration instance; otherwise a fixed path
-   would share offsets across concurrent workers. Each training slot needs
-   its own mount namespace and clock directory. Turns for one agent cannot
-   overlap. Multi-worker unclocked production instances retain their configs.
+6. A clock-enabled container may have multiple registrations, including repeated
+   agent IDs. Give each slot its own clock directory and config rendered with
+   that slot number. Mask every sibling clock directory in its pinned profile.
+   Turns in one slot cannot overlap. Unclocked production config bytes stay
+   unchanged. See the P6 contract linked above for exact provisioning and reset.
 
 ## Manual Linux release check — no model calls
 

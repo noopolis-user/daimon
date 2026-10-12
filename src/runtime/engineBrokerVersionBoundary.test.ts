@@ -9,7 +9,7 @@ import {
 import { serveEngineBrokerConnection, type EngineBrokerServiceEngine } from "./engineBrokerService.js";
 
 const V2 = "noopolis.daimon.engine-broker.v2";
-const V4 = "noopolis.daimon.engine-broker.v4";
+const V4 = "noopolis.daimon.engine-broker.v5";
 const readiness = {
   providerProxyPort: 43123, mcpFacadePort: 43124, registrations: 1,
   credentialStale: false, realmLease: true, workerIsolation: true
@@ -102,7 +102,7 @@ test("the production client refuses the legacy service and names its required ve
   const oldReady = new EngineBrokerFrameDecoder().push(await exchange(connect, V2));
   assert.equal((oldReady[0] as { kind: string }).kind, "ready", "legacy service really serves v2");
   const client = new EngineBrokerControlClient("memory", connect);
-  const required = /requires control protocol noopolis\.daimon\.engine-broker\.v3/u;
+  const required = /requires control protocol noopolis\.daimon\.engine-broker\.v4/u;
   await assert.rejects(client.ready(), required);
   await assert.rejects(client.turn("a", "w", "work", "http://127.0.0.1:1/mcp"), required);
 });
@@ -115,7 +115,7 @@ test("every production client operation surfaces both versions from a diagnostic
     })));
   });
   const client = new EngineBrokerControlClient("memory", connect);
-  const mismatch = /protocol version mismatch \(received noopolis\.daimon\.engine-broker\.v3; expected noopolis\.daimon\.engine-broker\.v4\)/u;
+  const mismatch = /protocol version mismatch \(received noopolis\.daimon\.engine-broker\.v4; expected noopolis\.daimon\.engine-broker\.v5\)/u;
   await assert.rejects(client.ready(), mismatch);
   await assert.rejects(client.turn("a", "w", "work", "http://127.0.0.1:1/mcp"), mismatch);
   await assert.rejects(client.requestInferenceGrant({

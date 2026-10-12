@@ -1,3 +1,4 @@
+import { brokerTaskClockFileFor } from "./grokBrokerSlot.js";
 import { GROK_BROKER_TASK_CLOCK, type GrokWorkerConfigVariant } from "../contracts/grokBrokerTaskClock.js";
 import { createHash } from "node:crypto";
 import path from "node:path";
@@ -8,7 +9,7 @@ import { GROK_ENGINE_BROKER } from "../contracts/runtimeContractManifest.js";
 import { grokSandboxProtectedPaths } from "./engineDispatcher.js";
 import { parseEngineBrokerServiceConfig, type EngineBrokerServiceRegistration } from "./engineBrokerServiceConfig.js";
 import { parseEngineBrokerTurnLimits, type EngineBrokerTurnLimits } from "./engineBrokerTurnAccounting.js";
-import { grokBrokerWorkerConfigSha256 } from "./grokBrokerWorkerConfig.js";
+import { grokBrokerWorkerConfigPins, grokBrokerWorkerConfigSha256 } from "./grokBrokerWorkerConfig.js";
 import type { GrokBrokerModel, GrokBrokerReasoningEffort } from "./grokBrokerModelPolicy.js";
 import { GROK_WORKER_SANDBOX_PROFILE, grokWorkerEventsPathFor, renderGrokWorkerSandboxProfile, grokWorkerSandboxProfileSha256 } from "./grokWorkerSandboxProfile.js";
 import { parseOrganizationRuntimeConfig } from "./organizationRuntime.js";
@@ -33,7 +34,7 @@ export type OrganizationGrokBrokerProjection = Readonly<{
   denyPaths: readonly string[];
   workerConfigSha256: string;
   workerConfigVariant: GrokWorkerConfigVariant;
-  taskClock?: typeof GROK_BROKER_TASK_CLOCK;
+  taskClock?: Omit<typeof GROK_BROKER_TASK_CLOCK, "directoryPath" | "timestampFilePath"> & Readonly<{ directoryPath: string; timestampFilePath: string }>;
   systemPromptSha256: string;
   grokCliVersion: string;
   grokExecutableSha256: string;
@@ -48,7 +49,7 @@ export type OrganizationGrokBrokerProjection = Readonly<{
 }>;
 
 export type OrganizationGrokBrokerProjectionOptions = Readonly<{
-  /** Clocked configs require one registration in the slot container. Defaults to the unchanged production bytes. */
+  /** Clocked configs require an isolated clock directory per slot. Defaults to the unchanged production bytes. */
   workerConfigVariant?: GrokWorkerConfigVariant;
   /** Deployment-assigned slot identity. */
   slot: number;
@@ -118,10 +119,10 @@ export function resolveOrganizationGrokBrokerProjection(config: unknown, agentId
   const profileSha256 = grokWorkerSandboxProfileSha256(denyPaths);
   if (options.profileSha256 !== undefined && options.profileSha256 !== profileSha256) throw new Error("Grok broker projection profile digest mismatch");
   const workerConfigVariant = options.workerConfigVariant ?? "unclocked";
-  const workerConfigSha256 = grokBrokerWorkerConfigSha256({ model, reasoningEffort }, workerConfigVariant);
-  const pins = workerConfigVariant === "clocked" ? GROK_ENGINE_BROKER.worker.clockedConfigSha256 : GROK_ENGINE_BROKER.worker.configSha256;
-  if (workerConfigVariant === "clocked" && denyPaths.some((denied) => [GROK_BROKER_TASK_CLOCK.timestampFilePath, GROK_BROKER_TASK_CLOCK.preloadPath].some((file) => file === denied || file.startsWith(`${denied}/`)))) throw new Error("Grok broker task clock path is denied");
-  if (workerConfigSha256 !== pins[model][reasoningEffort]) throw new Error("Grok broker projection worker config drifted from the manifest");
+  const workerConfigSha256 = grokBrokerWorkerConfigSha256({ model, reasoningEffort }, workerConfigVariant, options.slot);
+  const pin = grokBrokerWorkerConfigPins({ model, reasoningEffort }, options.slot)[workerConfigVariant];
+  if (workerConfigVariant === "clocked" && denyPaths.some((denied) => [brokerTaskClockFileFor(options.slot), GROK_BROKER_TASK_CLOCK.preloadPath].some((file) => file === denied || file.startsWith(`${denied}/`)))) throw new Error("Grok broker task clock path is denied");
+  if (workerConfigSha256 !== pin) throw new Error("Grok broker projection worker config drifted from the manifest");
   if (createHash("sha256").update(DAIMON_GROK_SYSTEM_PROMPT).digest("hex") !== GROK_ENGINE_BROKER.worker.systemPromptSha256) throw new Error("Grok broker projection system prompt drifted from the manifest");
   const artifact = GROK_ENGINE_BROKER.grokCliArtifacts[options.architecture];
   if (artifact === undefined) throw new Error("Grok broker projection requires a pinned architecture");
@@ -129,7 +130,7 @@ export function resolveOrganizationGrokBrokerProjection(config: unknown, agentId
   const projection: OrganizationGrokBrokerProjection = {
     version: GROK_BROKER_PROJECTION_VERSION, agentId, workspacePath: agent.workspacePath, runtimeHomePath: agent.runtimeHomePath,
     workerUid: options.workerUid, slot: options.slot, profilePath, profileSha256, denyPaths, workerConfigSha256, workerConfigVariant,
-    ...(workerConfigVariant === "clocked" ? { taskClock: GROK_BROKER_TASK_CLOCK } : {}),
+    ...(workerConfigVariant === "clocked" ? { taskClock: { ...GROK_BROKER_TASK_CLOCK, directoryPath: path.posix.dirname(brokerTaskClockFileFor(options.slot)), timestampFilePath: brokerTaskClockFileFor(options.slot) } } : {}),
     systemPromptSha256: GROK_ENGINE_BROKER.worker.systemPromptSha256, grokCliVersion: GROK_ENGINE_BROKER.grokCliVersion, grokExecutableSha256: artifact.sha256,
     nativeAbiVersion: GROK_ENGINE_BROKER.nativeAbiVersion, model, reasoningEffort, limits: parseEngineBrokerTurnLimits(options.limits), usageLedgerPath: options.usageLedgerPath, seccompProfileSha256: options.seccompProfileSha256,
     attestation: { platform: "linux/landlock", enforced: true, restrictNetwork: true, profileName: GROK_WORKER_SANDBOX_PROFILE, sandboxRuntime: "bubblewrap", eventsPath: grokWorkerEventsPathFor(profilePath) }
