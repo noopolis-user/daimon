@@ -76,3 +76,46 @@ test("registration paths must be canonical, matching the native launcher's regis
   assert.throws(() => parseEngineBrokerServiceConfig({ ...config("v1", [good]), turnStore: "/var/lib/turns/" }));
   assert.doesNotThrow(() => parseEngineBrokerServiceConfig(config("v1", [good])));
 });
+
+const serviceV3 = () => ({ ...config("v3", [reg("same", 0), reg("same", 1)]),
+  slotPolicies: [0, 1].map((slot) => { const { usageLedgerPath, limits, model } = v2("same", slot); return { slot, usageLedgerPath, limits, model }; }) });
+
+test("v3 accepts a persistent run budget separate from disposable slot stores", () => {
+  const service = { ...serviceV3(), maxRunRequests: 17, runRequestStore: "/run/training/request-budget" };
+  const parsed = parseEngineBrokerServiceConfig(service);
+  assert.equal(parsed.maxRunRequests, 17);
+  assert.equal(parsed.runRequestStore, service.runRequestStore);
+  for (const runRequestStore of ["relative", "/root/../budget", "/root/", null]) {
+    assert.throws(() => parseEngineBrokerServiceConfig({ ...service, runRequestStore }));
+  }
+  assert.throws(() => parseEngineBrokerServiceConfig({ ...service, maxRunRequests: undefined }));
+  for (const maxRunRequests of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
+    assert.throws(() => parseEngineBrokerServiceConfig({ ...service, maxRunRequests }));
+  }
+});
+
+test("v3 retains seven registration fields, permits repeated agents and binds policies by slot rather than array order", () => {
+  const service = serviceV3(); service.slotPolicies.reverse();
+  const parsed = parseEngineBrokerServiceConfig(service);
+  assert.deepEqual(parsed.registrations.map((entry) => [entry.agentId, entry.slot, entry.workerUid, entry.usageLedgerPath]),
+    [["same", 0, 2200, "/run/slots/0/usage/usage.jsonl"], ["same", 1, 2201, "/run/slots/1/usage/usage.jsonl"]]);
+});
+
+test("v3 refuses duplicate slots/uids, incomplete or duplicate policies, shared ledger streams and unknown members", () => {
+  const base = serviceV3(), policy = base.slotPolicies[0]!;
+  for (const value of [
+    { ...base, registrations: [reg("same", 0), reg("same", 0)] },
+    { ...base, registrations: [reg("same", 0), { ...reg("same", 1), workerUid: 2200 }] },
+    { ...base, registrations: [{ ...reg("same", 0), limits: policy.limits }, reg("same", 1)] },
+    { ...base, slotPolicies: [policy] },
+    { ...base, slotPolicies: [policy, policy] },
+    { ...base, slotPolicies: [policy, { ...base.slotPolicies[1], slot: 2 }] },
+    { ...base, slotPolicies: [policy, { ...base.slotPolicies[1], slot: -1 }] },
+    { ...base, slotPolicies: [null, base.slotPolicies[1]] },
+    { ...base, slotPolicies: [policy, { ...base.slotPolicies[1], extra: true }] },
+    { ...base, slotPolicies: [policy, { ...base.slotPolicies[1], usageLedgerPath: policy.usageLedgerPath }] },
+    { ...base, slotPolicies: [policy, { ...base.slotPolicies[1], usageLedgerPath: "/run/slots/0/usage/other.jsonl" }] },
+    { ...base, inferenceLedgerPath: "/run/slots/0/usage/turns.jsonl" },
+    { ...base, extra: true }
+  ]) assert.throws(() => parseEngineBrokerServiceConfig(value), /invalid/u);
+});

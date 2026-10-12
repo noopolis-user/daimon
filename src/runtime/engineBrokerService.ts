@@ -12,12 +12,13 @@ import { GrokInferenceGrantRefused, type GrokInferenceGrantIssued, type GrokInfe
 export interface EngineBrokerServiceEngine {
   turn(
     agentId: string, wakeId: string, prompt: string, mcpEndpoint: string,
-    signal?: AbortSignal, limits?: EngineBrokerTurnLimitOverrides, processClock?: string
+    signal?: AbortSignal, limits?: EngineBrokerTurnLimitOverrides, processClock?: string, slot?: number
   ): Promise<Readonly<{
     text: string; workerPid: number; workerUid: number; workerStartTime: string;
   }> & EngineBrokerTurnAccounting & BrokerClockObservation & EngineBrokerCleanupObservation>;
   readiness():Readonly<{providerProxyPort:number;mcpFacadePort:number;registrations:number;credentialStale:boolean;realmLease:boolean;workerIsolation:boolean}>;
   close():Promise<void>;
+  resetSlot?(slot: number): Promise<void>;
   /** Evaluator inference grants; an engine without them refuses every grant request as `unavailable`. Refusals throw {@link GrokInferenceGrantRefused}. */
   requestInferenceGrant?(request:GrokInferenceGrantRequest):GrokInferenceGrantIssued;
   releaseInferenceGrant?(grantId:string):boolean;
@@ -84,7 +85,8 @@ export function serveEngineBrokerConnection(
           });
         }
         if (request.kind === "cancel_turn") {
-          active.get(request.turnId)?.abort();
+          if (owned?.turnId !== request.turnId) throw new Error("turn not owned by connection");
+          owned.controller.abort();
           continue;
         }
         if (request.kind === "request_inference_grant" || request.kind === "release_inference_grant") {
@@ -93,17 +95,26 @@ export function serveEngineBrokerConnection(
           serveInferenceGrant(socket, broker, request);
           continue;
         }
-        if (started || active.has(request.turnId)) throw new Error();
+        if (request.kind === "reset_slot") {
+          if (started || broker.resetSlot === undefined) throw new Error();
+          started = true;
+          void broker.resetSlot(request.slot).then(() => send(socket, {
+            version: request.version, kind: "slot_reset", requestId: request.requestId, slot: request.slot
+          }), () => socket.destroy());
+          continue;
+        }
+        const key = `${request.slot ?? request.agentId}:${request.turnId}`;
+        if (started || active.has(key)) throw new Error();
         started = true;
         const controller = new AbortController();
         owned = { turnId: request.turnId, controller };
-        active.set(request.turnId, controller);
+        active.set(key, controller);
         socket.write(encodeEngineBrokerFrame({
           version: request.version, kind: "accepted", requestId: request.requestId, turnId: request.turnId
         }));
         void broker.turn(
           request.agentId, request.wakeId, request.prompt, request.mcpEndpoint,
-          controller.signal, request.limits, request.processClock
+          controller.signal, request.limits, request.processClock, request.slot
         ).then((result) => send(socket, {
           version: request.version, kind: "completed", requestId: request.requestId, turnId: request.turnId,
           text: result.text, ...brokerClockObservation(result.shellClock, result.providerClock),
@@ -111,7 +122,7 @@ export function serveEngineBrokerConnection(
           workerPid: result.workerPid, workerUid: result.workerUid, workerStartTime: result.workerStartTime,
           outcome: "completed", usage: result.usage, model: result.model, requests: result.requests, limitReason: "none"
         }), (error: unknown) => failed(socket, request, error, controller.signal.aborted)).finally(() => {
-          if (active.get(request.turnId) === controller) active.delete(request.turnId);
+          if (active.get(key) === controller) active.delete(key);
           owned = undefined;
         });
       }

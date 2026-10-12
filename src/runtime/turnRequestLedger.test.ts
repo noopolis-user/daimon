@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, open, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -8,6 +8,7 @@ import test from "node:test";
 import type { CodexRequestUsage } from "../pi/codexRolloutUsage.js";
 import {
   recordCodexTurnRequests,
+  recordLedgerLines,
   recordTurnRequests,
   renderTurnRequestLines,
   resolveTurnRequestLedgerPath,
@@ -15,7 +16,7 @@ import {
   TURN_REQUEST_LEDGER_PATH_ENV,
   TURN_REQUEST_LEDGER_VERSION
 } from "./turnRequestLedger.js";
-import { TURN_USAGE_LEDGER, TURN_USAGE_LEDGER_VERSION } from "./turnUsageLedger.js";
+import { TURN_USAGE_ROTATE_BYTES, TURN_USAGE_LEDGER, TURN_USAGE_LEDGER_VERSION } from "./turnUsageLedger.js";
 
 const FIXTURE_THREAD = "01a06f31-0000-7000-8000-000000000001";
 const fixturePath = fileURLToPath(new URL("../pi/fixtures/codex-rollout-token-usage.jsonl", import.meta.url));
@@ -125,3 +126,23 @@ test("a missing or malformed rollout writes nothing and still resolves", async (
     await assert.rejects(readFile(file), /ENOENT/u);
   });
 });
+
+for (const ledger of ["inference.jsonl", "turns.jsonl"]) {
+  test(`${ledger}: concurrent appends rotate once and preserve every complete row`, async () => {
+    await withDirectory(async (directory) => {
+      const file = path.join(directory, ledger);
+      const handle = await open(file, "w");
+      await handle.truncate(TURN_USAGE_ROTATE_BYTES);
+      await handle.close();
+      const results = await Promise.all(Array.from({ length: 64 }, (_, index) =>
+        recordLedgerLines(file, `${JSON.stringify({ index, payload: "x".repeat(8192) })}\n`)));
+      assert.ok(results.every(Boolean));
+      const rows = (await lines(file)).map((line) => JSON.parse(line));
+      assert.deepEqual(rows.map((row) => row.index), Array.from({ length: 64 }, (_, i) => i));
+      assert.ok(rows.every((row) => row.payload === "x".repeat(8192)));
+      assert.equal(await recordLedgerLines(path.join(directory, "missing", ledger), "{}\n"), false);
+      await mkdir(path.join(directory, "missing"));
+      assert.equal(await recordLedgerLines(path.join(directory, "missing", ledger), "{}\n"), true);
+    });
+  });
+}

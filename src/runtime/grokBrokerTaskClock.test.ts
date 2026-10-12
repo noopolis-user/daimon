@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import test, { type TestContext } from "node:test";
 import { GROK_BROKER_TASK_CLOCK } from "../contracts/grokBrokerTaskClock.js";
-import { assertBrokerTaskClockDirectory, assertBrokerTaskClockSlot, brokerProcessClock, prepareBrokerTaskClock, writeBrokerTaskClock } from "./grokBrokerTaskClock.js";
+import { assertBrokerTaskClockDirectory, brokerProcessClock, prepareBrokerTaskClock, writeBrokerTaskClock } from "./grokBrokerTaskClock.js";
 import { taskClockChildEnvironment } from "./taskClock.js";
 
 async function fixture(t: TestContext) {
@@ -90,15 +90,12 @@ test("publication fsyncs the file before rename and the parent after rename", as
   assert.equal(await readFile(file, "utf8"), "-1.234\n");
 });
 
-test("provisioning admits only broker ownership, worker-readable modes and one clocked registration", () => {
+test("provisioning admits only broker ownership, worker-readable modes", () => {
   assert.equal(GROK_BROKER_TASK_CLOCK.ownerUid, 2100);
   assert.equal(GROK_BROKER_TASK_CLOCK.directoryMode, 0o755);
   assert.equal(GROK_BROKER_TASK_CLOCK.fileMode, 0o644);
   assertBrokerTaskClockDirectory({ uid: 2100, mode: 0o755, isDirectory: () => true });
   assert.throws(() => assertBrokerTaskClockDirectory({ uid: 2200, mode: 0o755, isDirectory: () => true }), /unsafe/u);
-  assertBrokerTaskClockSlot("clocked", 1);
-  assert.throws(() => assertBrokerTaskClockSlot("clocked", 2), /one registration/u);
-  assertBrokerTaskClockSlot("unclocked", 32);
 });
 
 test("only a clock request on an attested unclocked config emits the gap, without clock I/O", async (t) => {

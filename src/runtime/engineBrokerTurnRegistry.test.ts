@@ -5,21 +5,21 @@ import path from "node:path";
 import test from "node:test";
 import { EngineBrokerTurnRegistry } from "./engineBrokerTurnRegistry.js";
 
-const start = (prompt = "work") => ({ version: "noopolis.daimon.engine-broker.v3", kind: "start_turn", requestId: "request-1", turnId: "turn-1", agentId: "agent-1", wakeId: "wake-1", prompt,mcpEndpoint:"http://127.0.0.1:4567/mcp" } as const);
+const start = (prompt = "work") => ({ version: "noopolis.daimon.engine-broker.v4", kind: "start_turn", requestId: "request-1", turnId: "turn-1", agentId: "agent-1", wakeId: "wake-1", prompt,mcpEndpoint:"http://127.0.0.1:4567/mcp" } as const);
 test("turn registry replays terminal results across restart and rejects conflicts", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "daimon-broker-turns-"));
   try {
     const first = new EngineBrokerTurnRegistry(root,"boot-a"); assert.equal(await first.begin(start(),"grok-4.6"), "start");
     await assert.rejects(first.begin(start(),"grok-4.6"), /already active/);
-    const response = { version: "noopolis.daimon.engine-broker.v3", kind: "completed", requestId: "request-1", turnId: "turn-1", text: "done", workerPid: 11, workerUid: 2200, workerStartTime: "123", outcome: "completed", usage: null, model: "grok-4.6", requests: 1, limitReason: "none" } as const;
+    const response = { version: "noopolis.daimon.engine-broker.v4", kind: "completed", requestId: "request-1", turnId: "turn-1", text: "done", workerPid: 11, workerUid: 2200, workerStartTime: "123", outcome: "completed", usage: null, model: "grok-4.6", requests: 1, limitReason: "none" } as const;
     await first.finish(start(), response);
     assert.deepEqual(await new EngineBrokerTurnRegistry(root,"boot-b").begin(start(),"grok-4.6"), { replay: response, ledger: { usage: null, requests: "" } });
     await assert.rejects(first.begin(start("different"),"grok-4.6"), /conflict/);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 test("turn registry fails an orphaned active turn once after broker restart",async()=>{const root=await mkdtemp(path.join(os.tmpdir(),"daimon-broker-turns-"));try{assert.equal(await new EngineBrokerTurnRegistry(root,"boot-a").begin(start(),"grok-4.6"),"start");const replay=await new EngineBrokerTurnRegistry(root,"boot-b").begin(start(),"grok-4.6");assert.equal(typeof replay,"object");if(typeof replay==="object")assert.equal(replay.replay.kind,"failed");assert.deepEqual(await new EngineBrokerTurnRegistry(root,"boot-c").begin(start(),"grok-4.6"),replay);}finally{await rm(root,{recursive:true,force:true});}});
-test("turn registry durably replays a sanitized pre-attestation failure",async()=>{const root=await mkdtemp(path.join(os.tmpdir(),"daimon-broker-turns-"));try{const registry=new EngineBrokerTurnRegistry(root,"boot-a");assert.equal(await registry.begin(start(),"grok-4.6"),"start");const response={version:"noopolis.daimon.engine-broker.v3",kind:"failed",requestId:"request-1",turnId:"turn-1",code:"engine_failed",diagnostic:{status:"worker_failed",stage:"attestation",failureClass:"profile_missing",profileApplied:false,exitCode:0,termSignal:0,workerPid:42,workerUid:2200,startTicks:"123"},outcome:"failed",usage:null,model:"grok-4.6",requests:0,limitReason:"none"} as const;await registry.finish(start(),response);assert.deepEqual(await new EngineBrokerTurnRegistry(root,"boot-b").begin(start(),"grok-4.6"),{replay:response,ledger:{usage:null,requests:""}});}finally{await rm(root,{recursive:true,force:true});}});
-test("turn registry rejects a persisted diagnostic with undeclared secret-bearing fields",async()=>{const root=await mkdtemp(path.join(os.tmpdir(),"daimon-broker-turns-"));try{const registry=new EngineBrokerTurnRegistry(root,"boot-a");assert.equal(await registry.begin(start(),"grok-4.6"),"start");const [name]=await readdir(root);const file=path.join(root,name!);const record=JSON.parse(await readFile(file,"utf8")) as Record<string,unknown>;record.state="terminal";record.response={version:"noopolis.daimon.engine-broker.v3",kind:"failed",requestId:"request-1",turnId:"turn-1",code:"engine_failed",rawOutput:"secret",outcome:"failed",usage:null,model:"grok-4.6",requests:0,limitReason:"none"};await writeFile(file,JSON.stringify(record));await assert.rejects(new EngineBrokerTurnRegistry(root,"boot-b").begin(start(),"grok-4.6"),/registry unavailable/u);}finally{await rm(root,{recursive:true,force:true});}});
+test("turn registry durably replays a sanitized pre-attestation failure",async()=>{const root=await mkdtemp(path.join(os.tmpdir(),"daimon-broker-turns-"));try{const registry=new EngineBrokerTurnRegistry(root,"boot-a");assert.equal(await registry.begin(start(),"grok-4.6"),"start");const response={version:"noopolis.daimon.engine-broker.v4",kind:"failed",requestId:"request-1",turnId:"turn-1",code:"engine_failed",diagnostic:{status:"worker_failed",stage:"attestation",failureClass:"profile_missing",profileApplied:false,exitCode:0,termSignal:0,workerPid:42,workerUid:2200,startTicks:"123"},outcome:"failed",usage:null,model:"grok-4.6",requests:0,limitReason:"none"} as const;await registry.finish(start(),response);assert.deepEqual(await new EngineBrokerTurnRegistry(root,"boot-b").begin(start(),"grok-4.6"),{replay:response,ledger:{usage:null,requests:""}});}finally{await rm(root,{recursive:true,force:true});}});
+test("turn registry rejects a persisted diagnostic with undeclared secret-bearing fields",async()=>{const root=await mkdtemp(path.join(os.tmpdir(),"daimon-broker-turns-"));try{const registry=new EngineBrokerTurnRegistry(root,"boot-a");assert.equal(await registry.begin(start(),"grok-4.6"),"start");const [name]=await readdir(root);const file=path.join(root,name!);const record=JSON.parse(await readFile(file,"utf8")) as Record<string,unknown>;record.state="terminal";record.response={version:"noopolis.daimon.engine-broker.v4",kind:"failed",requestId:"request-1",turnId:"turn-1",code:"engine_failed",rawOutput:"secret",outcome:"failed",usage:null,model:"grok-4.6",requests:0,limitReason:"none"};await writeFile(file,JSON.stringify(record));await assert.rejects(new EngineBrokerTurnRegistry(root,"boot-b").begin(start(),"grok-4.6"),/registry unavailable/u);}finally{await rm(root,{recursive:true,force:true});}});
 
 const withRoot = async (run: (root: string) => Promise<void>): Promise<void> => { const root = await mkdtemp(path.join(os.tmpdir(), "daimon-broker-turns-")); try { await run(root); } finally { await rm(root, { recursive: true, force: true }); } };
 const recordFile = async (root: string): Promise<string> => { const [name] = await readdir(root); return path.join(root, name!); };
@@ -47,7 +47,7 @@ test("a v1 record sealed before the upgrade still replays, upgraded with no usag
     const file = await recordFile(root); const record = JSON.parse(await readFile(file, "utf8")) as Record<string, unknown>;
     const v1 = { version: "noopolis.daimon.engine-broker.v1", kind: "completed", requestId: "request-1", turnId: "turn-1", text: "done", workerPid: 11, workerUid: 2200, workerStartTime: "123" };
     await writeFile(file, JSON.stringify({ version: "noopolis.daimon.engine-broker-turn.v1", digest: record.digest, state: "terminal", bootId: "boot-a", response: v1 }));
-    assert.deepEqual(await new EngineBrokerTurnRegistry(root, "boot-b").begin(start(), "grok-4.5"), { replay: { ...v1, version: "noopolis.daimon.engine-broker.v3", outcome: "completed", usage: null, model: "grok-4.5", requests: 0, limitReason: "none" }, ledger: { usage: null, requests: "" } });
+    assert.deepEqual(await new EngineBrokerTurnRegistry(root, "boot-b").begin(start(), "grok-4.5"), { replay: { ...v1, version: "noopolis.daimon.engine-broker.v4", outcome: "completed", usage: null, model: "grok-4.5", requests: 0, limitReason: "none" }, ledger: { usage: null, requests: "" } });
   });
 });
 
@@ -55,7 +55,7 @@ test("the v2 record parser is strict: an unknown member or a v1 frame inside a v
   await withRoot(async (root) => {
     const registry = new EngineBrokerTurnRegistry(root, "boot-a");
     assert.equal(await registry.begin(start(), "grok-4.6"), "start");
-    const response = { version: "noopolis.daimon.engine-broker.v3", kind: "completed", requestId: "request-1", turnId: "turn-1", text: "done", workerPid: 11, workerUid: 2200, workerStartTime: "123", outcome: "completed", usage: null, model: "grok-4.6", requests: 0, limitReason: "none" } as const;
+    const response = { version: "noopolis.daimon.engine-broker.v4", kind: "completed", requestId: "request-1", turnId: "turn-1", text: "done", workerPid: 11, workerUid: 2200, workerStartTime: "123", outcome: "completed", usage: null, model: "grok-4.6", requests: 0, limitReason: "none" } as const;
     await registry.finish(start(), response);
     const file = await recordFile(root); const record = JSON.parse(await readFile(file, "utf8")) as Record<string, unknown>;
     assert.equal(record.version, "noopolis.daimon.engine-broker-turn.v2");
@@ -75,7 +75,7 @@ test("sealed ledger bytes must be this turn's own rows and agree with the sealed
     assert.equal(await registry.begin(start(), "grok-4.6"), "start");
     const turnId = "turn-1";
     const usage = { input: 3, cacheRead: 2, cacheWrite: 0, output: 1, total: 6 };
-    const response = { version: "noopolis.daimon.engine-broker.v3", kind: "completed", requestId: "request-1", turnId, text: "done", workerPid: 11, workerUid: 2200, workerStartTime: "123", outcome: "completed", usage, model: "grok-4.6", requests: 1, limitReason: "none" } as const;
+    const response = { version: "noopolis.daimon.engine-broker.v4", kind: "completed", requestId: "request-1", turnId, text: "done", workerPid: 11, workerUid: 2200, workerStartTime: "123", outcome: "completed", usage, model: "grok-4.6", requests: 1, limitReason: "none" } as const;
     const line = (turn: string) => `${JSON.stringify({ v: "noopolis.daimon.turn-usage.v1", turn, total: 6 })}\n`;
     await registry.finish(start(), response, { usage: line(turnId), requests: "" });
     assert.deepEqual(await new EngineBrokerTurnRegistry(root, "boot-b").begin(start(), "grok-4.6"), { replay: response, ledger: { usage: line(turnId), requests: "" } });
@@ -84,4 +84,26 @@ test("sealed ledger bytes must be this turn's own rows and agree with the sealed
       await assert.rejects(new EngineBrokerTurnRegistry(root, "boot-c").begin(start(), "grok-4.6"), /registry unavailable/u, JSON.stringify(ledger));
     }
   });
+});
+
+test("a stored v3 terminal remains readable under v4 without accepting v3 on the wire", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "daimon-broker-v3-record-"));
+  try {
+    const registry = new EngineBrokerTurnRegistry(root, "boot-a");
+    const request = start();
+    const response = { version: request.version, kind: "completed", requestId: request.requestId, turnId: request.turnId,
+      text: "legacy answer", workerPid: 42, workerUid: 2200, workerStartTime: "1", shellClock: "task",
+      outcome: "completed", usage: null, model: "grok-4.6", requests: 0, limitReason: "none" } as const;
+    await registry.begin(request, "grok-4.6"); await registry.finish(request, response);
+    const file = path.join(root, (await readdir(root))[0]!);
+    const record = JSON.parse(await readFile(file, "utf8"));
+    record.response.version = "noopolis.daimon.engine-broker.v3";
+    await writeFile(file, JSON.stringify(record));
+    assert.deepEqual(await new EngineBrokerTurnRegistry(root, "boot-b").begin(request, "grok-4.6"), {
+      replay: response, ledger: { usage: null, requests: "" }
+    });
+    record.response.secret = "refused";
+    await writeFile(file, JSON.stringify(record));
+    await assert.rejects(new EngineBrokerTurnRegistry(root).begin(request, "grok-4.6"), /unavailable/u);
+  } finally { await rm(root, { recursive: true, force: true }); }
 });

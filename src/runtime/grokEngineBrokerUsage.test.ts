@@ -20,7 +20,7 @@ import { WakeFuse } from "./wakeFuse.js";
 const lean = ["run_terminal_command", "read_file", "list_dir", "grep", "search_tool", "use_tool"].map((name) => ({ type: "function", function: { name } }));
 const leanBody = JSON.stringify({ model: "grok-4.6", reasoning_effort: "low", stream: true, messages: [], tools: lean });
 const upstreamUsage = { prompt_tokens: 2_696, completion_tokens: 79, total_tokens: 2_775, prompt_tokens_details: { cached_tokens: 128 } };
-const turnIdFor = (agentId: string, wakeId: string): string => createHash("sha256").update(`${agentId}\0${wakeId}`).digest("hex");
+const turnIdFor = (agentId: string, wakeId: string): string => createHash("sha256").update(`0\0${agentId}\0${wakeId}`).digest("hex");
 
 const assistant = (id: string, usage: Record<string, number>, content: unknown[], stop: string) => ({ type: "assistant", message: { id, type: "message", role: "assistant", model: "daimon-broker-grok", content, stop_reason: stop, usage }, parent_tool_use_id: null, session_id: "01a0ad21-a90f-7f71-8054-93fdb4334d6a" });
 const first = { input_tokens: 2_568, output_tokens: 79, cache_read_input_tokens: 128, cache_creation_input_tokens: 0 };
