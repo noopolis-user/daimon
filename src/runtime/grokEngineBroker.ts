@@ -70,7 +70,7 @@ const brokerDependencies: GrokEngineBrokerDependencies = {
 export async function startGrokEngineBroker(
   options: Readonly<{
     grokCommand: string; nativeClient: string; credentialHome: string; turnStore: string;
-    registrations: readonly GrokEngineBrokerRegistration[]; inferenceLedgerPath?: string; maxRunRequests?: number;
+    registrations: readonly GrokEngineBrokerRegistration[]; inferenceLedgerPath?: string; maxRunRequests?: number; runRequestStore?: string;
   }>,
   dependencies: GrokEngineBrokerDependencies = brokerDependencies
 ) {
@@ -87,6 +87,7 @@ export async function startGrokEngineBroker(
   const authority = dependencies.createAuthority(options.grokCommand, options.credentialHome);
   let proxy: Awaited<ReturnType<GrokEngineBrokerDependencies["startProxy"]>> | undefined;
   let mcp: Awaited<ReturnType<GrokEngineBrokerDependencies["startMcp"]>> | undefined;
+  let runBudget: GrokBrokerRunBudget | undefined;
   const clockedSlots = new Set<number>();
   try {
     // Reconcile before accepting traffic. A prior broker may have died after
@@ -104,13 +105,14 @@ export async function startGrokEngineBroker(
       clockedSlots.add(registration.slot);
     }
     await authority.initialize();
-    const runBudget = options.maxRunRequests === undefined ? undefined :
-      await GrokBrokerRunBudget.open(options.maxRunRequests, path.join(options.turnStore, "run-requests.json"));
+    runBudget = options.maxRunRequests === undefined ? undefined :
+      await GrokBrokerRunBudget.open(options.maxRunRequests, path.join(options.runRequestStore ?? options.turnStore, "run-requests.json"));
     proxy = await dependencies.startProxy(authority, undefined, undefined, undefined, grants, runBudget);
     mcp = await dependencies.startMcp();
   } catch (error) {
-    await Promise.allSettled([mcp?.close(), proxy?.close(), lease.close()]);
     grants?.close();
+    await Promise.allSettled([mcp?.close(), proxy?.close(), runBudget?.close()]);
+    await Promise.allSettled([lease.close()]);
     throw error;
   }
   const slotStore = (slot: number) => path.join(options.turnStore, `slot-${slot}`);
@@ -185,7 +187,8 @@ export async function startGrokEngineBroker(
       const running = [...active.values()];
       for (const entry of running) entry.controller.abort();
       await Promise.allSettled([...running.map((entry) => entry.done), ...resets.values()]);
-      const results = await Promise.allSettled([facade.close(), provider.close(), lease.close()]);
+      const results = await Promise.allSettled([facade.close(), provider.close(), runBudget?.close()]);
+      results.push(...await Promise.allSettled([lease.close()]));
       const failures = results.flatMap((entry) => entry.status === "rejected" ? [entry.reason] : []);
       if (failures.length) throw new AggregateError(failures, "engine broker shutdown failed");
     },

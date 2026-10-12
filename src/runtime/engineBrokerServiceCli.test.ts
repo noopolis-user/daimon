@@ -80,6 +80,20 @@ test("registration paths must be canonical, matching the native launcher's regis
 const serviceV3 = () => ({ ...config("v3", [reg("same", 0), reg("same", 1)]),
   slotPolicies: [0, 1].map((slot) => { const { usageLedgerPath, limits, model } = v2("same", slot); return { slot, usageLedgerPath, limits, model }; }) });
 
+test("v3 accepts a persistent run budget separate from disposable slot stores", () => {
+  const service = { ...serviceV3(), maxRunRequests: 17, runRequestStore: "/run/training/request-budget" };
+  const parsed = parseEngineBrokerServiceConfig(service);
+  assert.equal(parsed.maxRunRequests, 17);
+  assert.equal(parsed.runRequestStore, service.runRequestStore);
+  for (const runRequestStore of ["relative", "/root/../budget", "/root/", null]) {
+    assert.throws(() => parseEngineBrokerServiceConfig({ ...service, runRequestStore }));
+  }
+  assert.throws(() => parseEngineBrokerServiceConfig({ ...service, maxRunRequests: undefined }));
+  for (const maxRunRequests of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
+    assert.throws(() => parseEngineBrokerServiceConfig({ ...service, maxRunRequests }));
+  }
+});
+
 test("v3 retains seven registration fields, permits repeated agents and binds policies by slot rather than array order", () => {
   const service = serviceV3(); service.slotPolicies.reverse();
   const parsed = parseEngineBrokerServiceConfig(service);

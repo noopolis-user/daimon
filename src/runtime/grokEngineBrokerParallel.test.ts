@@ -7,6 +7,9 @@ import path from "node:path";
 import test from "node:test";
 import { createGrokBrokerProxyHandler, type GrokBrokerUpstream } from "./grokBrokerProxy.js";
 import { startGrokEngineBroker, type GrokEngineBrokerDependencies } from "./grokEngineBroker.js";
+import { GrokBrokerRunBudget } from "./grokBrokerRunBudget.js";
+import { GrokBrokerTurnMeter } from "./grokBrokerTurnMeter.js";
+import { GrokInferenceGrants } from "./grokInferenceGrants.js";
 
 const deferred = () => {
   let resolve!: () => void;
@@ -75,7 +78,8 @@ test("four concurrent fake trials retain slot state and share one subject/judge/
     }
   };
   const options = { grokCommand: "unused", nativeClient: "unused", credentialHome: root,
-    turnStore: path.join(root, "turns"), registrations, inferenceLedgerPath: path.join(root, "inference.jsonl"), maxRunRequests: 6 };
+    turnStore: path.join(root, "turns"), runRequestStore: path.join(root, "persistent-budget"),
+    registrations, inferenceLedgerPath: path.join(root, "inference.jsonl"), maxRunRequests: 6 };
   let broker = await startGrokEngineBroker(options, deps);
   t.after(async () => { gate.resolve(); await broker.close(); await rm(root, { recursive: true, force: true }); });
   const trials = registrations.map(r => broker.turn("agent", "same-wake", "work", "http://127.0.0.1:1/mcp", undefined, undefined, undefined, r.slot));
@@ -86,15 +90,45 @@ test("four concurrent fake trials retain slot state and share one subject/judge/
   assert.equal((await post(proxy, judge.token, "over-cap", false)).status, 429);
   gate.resolve();
   assert.deepEqual((await Promise.all(trials)).map(r => r.text), ["slot-0", "slot-1", "slot-2", "slot-3"]);
+  const turnIds = new Set<string>();
   for (const r of registrations) {
     const rows = (await readFile(r.usageLedgerPath, "utf8")).trim().split("\n").map(line => JSON.parse(line));
-    assert.equal(rows.length, 1); assert.equal(rows[0].requests, 1);
+    assert.equal(rows.length, 1); assert.equal(rows[0].calls, 1);
+    turnIds.add(rows[0].turn);
+    const requests = (await readFile(path.join(path.dirname(r.usageLedgerPath), "requests.jsonl"), "utf8"))
+      .trim().split("\n").map(line => JSON.parse(line));
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0].turn, rows[0].turn);
   }
+  assert.equal(turnIds.size, 4);
   await broker.resetSlot(0);
-  assert.equal(JSON.parse(await readFile(path.join(root, "turns/run-requests.json"), "utf8")).used, 6);
+  assert.equal(JSON.parse(await readFile(path.join(options.runRequestStore, "run-requests.json"), "utf8")).used, 6);
   await broker.close();
+  // Container replacement discards the slot tmpfs but retains the run budget volume.
+  await rm(options.turnStore, { recursive: true, force: true });
   broker = await startGrokEngineBroker(options, deps);
   const resumed = broker.requestInferenceGrant({ model: "grok-4.6", reasoningEffort: "low", purpose: "judge" });
   assert.equal((await post(proxy, resumed.token, "restart-over-cap", false)).status, 429);
   assert.equal(forwarded.length, 6);
+});
+
+for (const subject of [true, false]) test(`the shared cap charges credential retries and refuses later requests (subject=${subject})`, async t => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "parallel-budget-retry-"));
+  const budget = await GrokBrokerRunBudget.open(1, path.join(root, "budget.json"));
+  const grants = new GrokInferenceGrants();
+  t.after(async () => { grants.close(); await rm(root, { recursive: true, force: true }); });
+  let forwarded = 0;
+  const proxy = createGrokBrokerProxyHandler({ accessToken: async () => "fake", markRejected: async () => {} },
+    async () => { forwarded++; return { status: 401, headers: {}, body: Buffer.from("{}") }; }, undefined, grants, budget);
+  proxy.registerIsolationGuard("turn", async () => {});
+  proxy.registerTurn("turn", { policy: { model: "grok-4.6", reasoningEffort: "low" },
+    meter: new GrokBrokerTurnMeter({ maxRequests: 8, maxTokens: 100_000, timeoutMs: 10_000 }) });
+  const token = subject ? proxy.capabilities.issue("agent", "turn")
+    : grants.issue({ model: "grok-4.6", reasoningEffort: "low", purpose: "judge" }).token;
+  for (let i = 0; i < 2; i++) {
+    const reply = await post(proxy, token, "retry", subject);
+    assert.deepEqual(reply, { status: 429, content: '{"error":"run_request_limit"}' });
+  }
+  assert.equal(forwarded, 1);
+  assert.equal(JSON.parse(await readFile(path.join(root, "budget.json"), "utf8")).used, 1);
 });

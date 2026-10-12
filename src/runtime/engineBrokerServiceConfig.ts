@@ -25,7 +25,7 @@ export type EngineBrokerServiceRegistration = Readonly<{
  * registration's usage ledger or its `requests.jsonl`, and not the container
  * ledger the wake fuse sums.
  */
-export type EngineBrokerServiceConfig = Readonly<{ credentialHome: string; turnStore: string; registrations: readonly EngineBrokerServiceRegistration[]; inferenceLedgerPath?: string; maxRunRequests?: number }>;
+export type EngineBrokerServiceConfig = Readonly<{ credentialHome: string; turnStore: string; registrations: readonly EngineBrokerServiceRegistration[]; inferenceLedgerPath?: string; maxRunRequests?: number; runRequestStore?: string }>;
 
 const V1_REGISTRATION = ["agentId", "slot", "workerUid", "workspace", "profilePath", "eventsPath", "profileSha256"] as const;
 const V2_REGISTRATION = [...V1_REGISTRATION, "usageLedgerPath", "limits", "model"] as const;
@@ -70,6 +70,10 @@ export function parseEngineBrokerServiceConfig(value: unknown): EngineBrokerServ
     if (!Number.isSafeInteger(value.maxRunRequests) || (value.maxRunRequests as number) < 1) throw invalid();
     top.push("maxRunRequests");
   }
+  if (v3 && Object.hasOwn(value, "runRequestStore")) {
+    if (!absolute(value.runRequestStore) || value.maxRunRequests === undefined) throw invalid();
+    top.push("runRequestStore");
+  }
   exact(value, v2 && Object.hasOwn(value, "inferenceLedgerPath") ? [...top, "inferenceLedgerPath"] : top);
   if (!absolute(value.credentialHome) || !absolute(value.turnStore) || !Array.isArray(value.registrations) || value.registrations.length === 0) throw invalid();
   const policies = new Map<number, Record<string, unknown>>();
@@ -104,6 +108,7 @@ export function parseEngineBrokerServiceConfig(value: unknown): EngineBrokerServ
     return { ...base, usageLedgerPath, limits, model: parseServiceModel(policy.model) };
   });
   const base = { credentialHome: value.credentialHome, turnStore: value.turnStore, registrations,
+    ...(value.runRequestStore === undefined ? {} : { runRequestStore: value.runRequestStore as string }),
     ...(value.maxRunRequests === undefined ? {} : { maxRunRequests: value.maxRunRequests as number }) };
   if (!Object.hasOwn(value, "inferenceLedgerPath")) return base;
   const inferenceLedgerPath = value.inferenceLedgerPath;
