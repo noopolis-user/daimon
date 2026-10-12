@@ -1,3 +1,4 @@
+import { brokerTaskClockFileFor } from "./grokBrokerSlot.js";
 import { randomUUID } from "node:crypto";
 import { constants, type Stats } from "node:fs";
 import { lstat, open, rename, unlink } from "node:fs/promises";
@@ -40,16 +41,10 @@ export function brokerProcessClock(): string | undefined {
   return taskClockChildEnvironment({}, clock, { LD_PRELOAD: GROK_BROKER_TASK_CLOCK.preloadPath }).FAKETIME;
 }
 
-export function assertBrokerTaskClockSlot(variant: GrokWorkerConfigVariant, registrations: number): void {
-  if (variant === "clocked" && registrations !== GROK_BROKER_TASK_CLOCK.maxRegistrations) {
-    throw new Error("Grok broker task clock requires one registration per container slot");
-  }
-}
-
 /** Discovery only; selected slots still require full attestation before reconciliation. */
 export async function needsBrokerTaskClockReconciliation(
   profilePath: string, pins: GrokWorkerConfigPins,
-  file: string = GROK_BROKER_TASK_CLOCK.timestampFilePath
+  file: string = brokerTaskClockFileFor(0)
 ): Promise<boolean> {
   try {
     // Even an unsafe directory entry must reach the fail-closed reconciliation.
@@ -86,7 +81,7 @@ export function assertBrokerTaskClockDirectory(entry: Pick<Stats, "uid" | "mode"
  */
 export async function writeBrokerTaskClock(
   value: string | undefined,
-  file: string = GROK_BROKER_TASK_CLOCK.timestampFilePath,
+  file: string = brokerTaskClockFileFor(0),
   brokerUid: number = GROK_BROKER_TASK_CLOCK.ownerUid,
   fs: BrokerTaskClockFs = clockFs
 ): Promise<void> {

@@ -10,7 +10,7 @@ import { parseEngineBrokerRequest, parseEngineBrokerResponse } from "./engineBro
 import { startEngineBrokerServiceWithIdentity, type EngineBrokerServiceEngine } from "./engineBrokerService.js";
 import { GrokInferenceGrantRefused, GrokInferenceGrants } from "./grokInferenceGrants.js";
 
-const V = "noopolis.daimon.engine-broker.v3";
+const V = "noopolis.daimon.engine-broker.v4";
 const baseEngine = (): EngineBrokerServiceEngine => ({ turn: async () => { throw new Error("no turns"); }, readiness: () => ({ providerProxyPort: 43123, mcpFacadePort: 43124, registrations: 1, credentialStale: false, realmLease: true, workerIsolation: true }), close: async () => undefined });
 
 async function withService(engine: EngineBrokerServiceEngine, run: (client: EngineBrokerControlClient) => Promise<void>): Promise<void> {

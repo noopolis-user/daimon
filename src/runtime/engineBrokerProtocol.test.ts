@@ -6,7 +6,7 @@ import {
 } from "./engineBrokerProtocol.js";
 
 const accounting = { outcome: "completed", usage: { input: 20, cacheRead: 0, cacheWrite: 0, output: 10, total: 30 }, model: "grok-4.6", requests: 2, limitReason: "none" } as const;
-const start = { version: "noopolis.daimon.engine-broker.v3", kind: "start_turn", requestId: "request-1", turnId: "turn-1", agentId: "agent-1", wakeId: "wake-1", prompt: "work",mcpEndpoint:"http://127.0.0.1:4567/mcp" } as const;
+const start = { version: "noopolis.daimon.engine-broker.v4", kind: "start_turn", requestId: "request-1", turnId: "turn-1", agentId: "agent-1", wakeId: "wake-1", prompt: "work",mcpEndpoint:"http://127.0.0.1:4567/mcp" } as const;
 
 test("cleanup diagnostics are one fixed operational message on v3 terminal frames only", () => {
   const common = { version: start.version, requestId: "r", turnId: "t", ...accounting };
@@ -88,7 +88,7 @@ test("start_turn limits are an optional closed subset inside their bounds", () =
   }
 });
 
-test("v3 process clocks round-trip as bounded relative seconds; malformed and old frames refuse", () => {
+test("v4 process clocks round-trip as bounded relative seconds; malformed and old frames refuse", () => {
   for (const processClock of [undefined, "+0", "-0.001", "+123", "-843385600.250"]) {
     const request = { ...start, ...(processClock === undefined ? {} : { processClock }) };
     const decoder = new EngineBrokerFrameDecoder();
@@ -98,7 +98,7 @@ test("v3 process clocks round-trip as bounded relative seconds; malformed and ol
   for (const processClock of [null, 1, {}, "", "1", "@2001-01-01", "+1s", "+1x", "+1.25", "+01", "+1\n", "+1\n+2", "+10000000000000", "-1,234"]) {
     assert.throws(() => parseEngineBrokerRequest({ ...start, processClock }), /invalid broker frame/u, JSON.stringify(processClock));
   }
-  for (const version of ["noopolis.daimon.engine-broker.v1", "noopolis.daimon.engine-broker.v2", "noopolis.daimon.engine-broker.v4"]) {
+  for (const version of ["noopolis.daimon.engine-broker.v1", "noopolis.daimon.engine-broker.v2", "noopolis.daimon.engine-broker.v3", "noopolis.daimon.engine-broker.v5"]) {
     assert.throws(() => parseEngineBrokerRequest({ ...start, version }), /protocol version mismatch/u);
   }
   const terminal = { version: start.version, kind: "completed", requestId: "r", turnId: "t", text: "done", workerPid: 1, workerUid: 2200, workerStartTime: "1", ...accounting };

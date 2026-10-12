@@ -1,3 +1,4 @@
+export { brokerTaskClockFileFor } from "./grokBrokerSlot.js";
 export { GROK_BROKER_TASK_CLOCK, GROK_BROKER_TASK_CLOCK_PRELOAD_PATH, GROK_BROKER_TASK_CLOCK_FILE_PATH, type GrokWorkerConfigVariant } from "../contracts/grokBrokerTaskClock.js";
 export * from "./organizationRuntime.js";
 export * from "./contractManifest.js";
@@ -18,7 +19,7 @@ export { GROK_INFERENCE_AUTH_STALE_BODY } from "./grokInferenceProxy.js";
 export { assertGrokWorkerDenyPathPlacement, assertGrokWorkerDenyPathShape, assertGrokWorkerDenyPathsPlaceable, GROK_WORKER_BASE_PROFILE_GRANTS, grokWorkerCanSearch, grokWorkerDenyPathChain, GrokWorkerDenyPlacementError, readGrokWorkerDenyPathChain } from "./grokWorkerDenyPlacement.js";
 export type { GrokWorkerDenyPathEntry, GrokWorkerDenyPathStep, GrokWorkerDenyPathWorker } from "./grokWorkerDenyPlacement.js";
 export { grokWorkerSandboxProfileSha256, renderGrokWorkerSandboxProfile } from "./grokWorkerSandboxProfile.js";
-export { engineBrokerRequestLedgerPathFor, engineBrokerSealLedgerPathFor, parseEngineBrokerServiceConfig, type EngineBrokerServiceConfig, type EngineBrokerServiceRegistration } from "./engineBrokerServiceConfig.js";
+export { ENGINE_BROKER_SERVICE_V3, engineBrokerRequestLedgerPathFor, engineBrokerSealLedgerPathFor, parseEngineBrokerServiceConfig, type EngineBrokerServiceConfig, type EngineBrokerServiceRegistration } from "./engineBrokerServiceConfig.js";
 export { TURN_SEAL_LEDGER, TURN_SEAL_LEDGER_VERSION } from "./engineBrokerSealLedger.js";
 export { DEFAULT_GROK_BROKER_TURN_LIMITS, ENGINE_BROKER_LIMIT_REASONS, type EngineBrokerLimitReason, type EngineBrokerTurnAccounting,
   type EngineBrokerTurnLimits, type EngineBrokerTurnUsage } from "./engineBrokerTurnAccounting.js";

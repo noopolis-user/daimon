@@ -4,7 +4,7 @@
   "worker_uid": 2200,
   "generation": 3,
   "nonce": "5f0e2a1c9b8d7e6f5a4b3c2d1e0f9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c4d3e2f",
-  "projection_sha256": "e901d9c26e101c05aad57dde8120ac9704b667fd97d206d36e01802c131bb337",
+  "projection_sha256": "542d5feed20765ce8eff4122a109a499cf85249829a40368b32e5a805a7156f0",
   "sandbox_profile_sha256": "2a1dcab471092eab77565838b17a5cf138489e3daa1349612ebcedcdb69e23c4",
   "seccomp_profile_sha256": "7777777777777777777777777777777777777777777777777777777777777777",
   "sandbox_runtime": "bubblewrap",

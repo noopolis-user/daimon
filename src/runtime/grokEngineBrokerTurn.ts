@@ -1,3 +1,4 @@
+import { brokerTaskClockFileFor } from "./grokBrokerSlot.js";
 import type { GrokWorkerConfigVariant } from "../contracts/grokBrokerTaskClock.js";
 import {
   brokerClockObservation, parseBrokerProcessClock, prepareBrokerTaskClock,
@@ -82,10 +83,11 @@ const usageOf = (usage: Readonly<{ input: number; cacheRead: number; cacheWrite:
  */
 export async function runGrokEngineBrokerTurn(deps: GrokEngineBrokerTurnDependencies, registration: EngineBrokerServiceRegistration, wakeId: string, prompt: string, mcpEndpoint: string, signal?: AbortSignal, overrides?: EngineBrokerTurnLimitOverrides, processClock?: string): Promise<GrokEngineBrokerTurnResult> {
   const { agentId } = registration, declared = registration.model.model;
+  const writeClock = deps.writeTaskClock ?? ((value: string | undefined) => writeBrokerTaskClock(value, brokerTaskClockFileFor(registration.slot)));
   let limits;
   try { limits = lowerEngineBrokerTurnLimits(registration.limits, overrides); if (processClock !== undefined) parseBrokerProcessClock(processClock); } catch { throw new EngineBrokerTurnFailure("invalid_request", undefined, { outcome: "failed", usage: null, model: declared, requests: 0, limitReason: "none" }); }
-  const turnId = createHash("sha256").update(`${agentId}\0${wakeId}`).digest("hex");
-  const request = { version: ENGINE_BROKER_VERSION, kind: "start_turn", requestId: randomUUID(), turnId, agentId, wakeId, prompt, mcpEndpoint, ...(overrides === undefined ? {} : { limits: overrides }), ...(processClock === undefined ? {} : { processClock }) } as const;
+  const turnId = createHash("sha256").update(`${registration.slot}\0${agentId}\0${wakeId}`).digest("hex");
+  const request = { version: ENGINE_BROKER_VERSION, kind: "start_turn", requestId: randomUUID(), turnId, slot: registration.slot, agentId, wakeId, prompt, mcpEndpoint, ...(overrides === undefined ? {} : { limits: overrides }), ...(processClock === undefined ? {} : { processClock }) } as const;
   const begun = await deps.turns.begin(request, declared);
   const metering: BrokerTurnMetering = { usageLedgerPath: registration.usageLedgerPath, requestLedgerPath: engineBrokerRequestLedgerPathFor(registration.usageLedgerPath), sealLedgerPath: engineBrokerSealLedgerPathFor(registration.usageLedgerPath), agentId, wakeId };
   if (begun !== "start") { await ensureBrokerTurnLedgered(begun.ledger, turnId, metering); return replay(begun.replay); }
@@ -121,7 +123,7 @@ export async function runGrokEngineBrokerTurn(deps: GrokEngineBrokerTurnDependen
     isolationGuard = isolation.guard;
     // Publication may throw after rename. Claim cleanup before attempting it.
     resetClock ||= isolation.configVariant === "clocked";
-    const coverage = await prepareBrokerTaskClock(isolation.configVariant, processClock, deps.writeTaskClock);
+    const coverage = await prepareBrokerTaskClock(isolation.configVariant, processClock, writeClock);
     if (isolation.configVariant === "clocked" || processClock !== undefined) shellClock = coverage;
     deps.proxy.registerIsolationGuard(turnId, isolationGuard);
     deps.proxy.registerTurn(turnId, { policy: registration.model, meter, clock });
@@ -232,7 +234,7 @@ export async function runGrokEngineBrokerTurn(deps: GrokEngineBrokerTurnDependen
             );
             if (!workerReaped) throw new Error("Grok broker task clock worker did not terminate");
           }
-          await (deps.writeTaskClock ?? writeBrokerTaskClock)(undefined);
+          await writeClock(undefined);
         } catch (error) {
           deps.taskClockFailed?.();
           // Cleanup cannot replace a published outcome. Report the live fence

@@ -20,7 +20,7 @@ const usage = { prompt_tokens: 2_696, completion_tokens: 79, total_tokens: 2_775
 const sse = (chunks: readonly unknown[]): string => chunks.map((chunk) => `data: ${JSON.stringify(chunk)}\n\n`).join("") + "data: [DONE]\n\n";
 const toolCall = sse([{ choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: "call-0", type: "function", function: { name: "use_tool", arguments: "{}" } }] } }] }, { choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }], usage }]);
 const finalReply = (text: string): string => sse([{ choices: [{ index: 0, delta: { content: text.slice(0, 3) } }] }, { choices: [{ index: 0, delta: { content: text.slice(3) } }] }, { choices: [{ index: 0, delta: {}, finish_reason: "stop" }], usage }]);
-const turnIdFor = (agentId: string, wakeId: string): string => createHash("sha256").update(`${agentId}\0${wakeId}`).digest("hex");
+const turnIdFor = (agentId: string, wakeId: string): string => createHash("sha256").update(`0\0${agentId}\0${wakeId}`).digest("hex");
 const untilAborted = (signal: AbortSignal): Promise<never> => new Promise((_resolve, reject) => { const fail = () => reject(new Error("engine broker turn failed")); if (signal.aborted) fail(); else signal.addEventListener("abort", fail, { once: true }); });
 
 function post(port: number, token: string): Promise<number> {
