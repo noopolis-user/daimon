@@ -1,3 +1,4 @@
+import { WakeExecutionClaimLostError, readExpectedClaim, waitForClaimTransitionLock } from "./wakeAcceptanceClaimDiagnostics.js";
 import { sameNamespace, currentProcessIdentity, processIsAlive, WakeTransitionLockBlockedError, type TransitionLock } from "./wakeAcceptanceProcessIdentity.js";
 import { constants } from "node:fs";
 import { link, lstat, open, readFile, readdir, realpath, rename, stat, unlink } from "node:fs/promises";
@@ -24,14 +25,15 @@ export type WakeExecutionClaim = Readonly<{ acceptance_id: string; owner_id: str
 export type WakeExecutionClaimResult = Readonly<{ state: "acquired"; claim: WakeExecutionClaim }> | Readonly<{ state: "held"; retry_at: string }> | Readonly<{ state: "terminal" }>;
 type DirectoryIdentity = Readonly<{ dev: number; ino: number; uid: number; mode: number }>;
 export type WakeAcceptanceStoreTestOptions = Readonly<{ claimTtlMs?: number; afterFinalLockAssertion?: () => Promise<void>; nowForTest?: () => number; ownerLiveness?: (lock: TransitionLock) => Promise<boolean>; processIdentity?: () => Promise<Omit<TransitionLock, "owner_id" | "generation">> }>;
-/** Deliberately absent from the public option type; adjacent tests synchronize only this race. */
-type InternalTestHooks = Readonly<{ afterInitialLeaseCheckForTest?: () => Promise<void>; onRecordReadForTest?: (file: string) => void }>;
+/** Deliberately absent from the public option type; adjacent tests control races and timing. */
+type InternalTestHooks = Readonly<{ afterInitialLeaseCheckForTest?: () => Promise<void>; onRecordReadForTest?: (file: string) => void; claimTransitionLockTimingForTest?: Parameters<typeof waitForClaimTransitionLock>[5] }>;
 const DEFAULT_CLAIM_TTL_MS = 240_000;
 /** Durable, private idempotency authority; callers must pre-create its 0700 root. */
 export class WakeAcceptanceStore {
   private mutations: Promise<void> = Promise.resolve();
   private readonly index: WakeAcceptanceIndex;
   private onRecordRead?: (file: string) => void;
+  private claimTransitionLockTiming?: Parameters<typeof waitForClaimTransitionLock>[5];
   private constructor(private readonly root: string, private readonly directory: Awaited<ReturnType<typeof open>>, private readonly identity: DirectoryIdentity, private readonly registration: StoreHostRegistration, private readonly claimTtlMs: number, private readonly now: () => number, private readonly owner: Omit<TransitionLock, "owner_id" | "generation">, private readonly ownerLiveness: (lock: TransitionLock) => Promise<boolean>, private readonly afterFinalLockAssertion?: () => Promise<void>) {
     this.index = new WakeAcceptanceIndex(root, { directoryStat: async () => await this.directory.stat({ bigint: true }), files: async () => await this.files(), readId: async (file) => (await this.read(file)).acceptance_id, fileStat: async (file) => await lstat(file, { bigint: true }).catch((error: NodeJS.ErrnoException) => { if (error.code === "ENOENT") return undefined; throw error; }) }, () => BigInt(this.now()) * 1_000_000n);
   }
@@ -53,6 +55,7 @@ export class WakeAcceptanceStore {
       const registration = await acquireHostRegistration(real, directory, owner);
       await pruneDeadHostRegistrations(real, directory, registration, options.ownerLiveness ?? processIsAlive);
       const store = new WakeAcceptanceStore(real, directory, identity(before), registration, claimTtlMs, options.nowForTest ?? Date.now, owner, options.ownerLiveness ?? processIsAlive, options.afterFinalLockAssertion);
+      store.claimTransitionLockTiming = (options as WakeAcceptanceStoreTestOptions & InternalTestHooks).claimTransitionLockTimingForTest;
       store.onRecordRead = (options as WakeAcceptanceStoreTestOptions & InternalTestHooks).onRecordReadForTest; return store;
     } catch (error) {
       await directory.close().catch(() => undefined);
@@ -175,11 +178,9 @@ export class WakeAcceptanceStore {
     return this.serialize(async () => {
       const record = await this.findByAcceptanceId(acceptanceId);
       if (record === undefined) throw new Error("wake acceptance receipt is unavailable");
-      const lock = await this.acquireTransitionLock(record, claim.owner_id);
-      if (lock === undefined) throw new WakeExecutionClaimLostError();
+      const lock = await waitForClaimTransitionLock(() => this.acquireTransitionLock(record, claim.owner_id), () => this.readLockOptional(this.lockFor(record)), acceptanceId, claim, "renew", this.claimTransitionLockTiming);
       try {
-        const current = await this.readClaim(this.claimFor(record));
-        if (!(current.acceptance_id === acceptanceId || current.acceptance_ids?.includes(acceptanceId)) || current.acceptance_id !== claim.acceptance_id || current.owner_id !== claim.owner_id || current.generation !== claim.generation || current.expires_at !== claim.expires_at || expired(current, this.now())) throw new WakeExecutionClaimLostError();
+        const current = await readExpectedClaim(() => this.readClaim(this.claimFor(record)), acceptanceId, claim, "renew", this.now, lock);
         const renewed: WakeExecutionClaim = { ...current, expires_at: new Date(this.now() + this.claimTtlMs).toISOString() };
         await this.replaceValue(this.claimFor(record), renewed);
         return renewed;
@@ -192,19 +193,18 @@ export class WakeAcceptanceStore {
       if (completedText !== undefined && state !== "completed" && state !== "failed") throw new Error("wake text requires completed or failed state");
       const initial = await this.findByAcceptanceId(acceptanceId);
       if (initial === undefined) throw new Error("wake acceptance receipt is unavailable");
-      const lock = await this.acquireTransitionLock(initial, claim.owner_id);
-      if (lock === undefined) throw new WakeExecutionClaimLostError();
+      const lock = await waitForClaimTransitionLock(() => this.acquireTransitionLock(initial, claim.owner_id), () => this.readLockOptional(this.lockFor(initial)), acceptanceId, claim, `transition:${state}`, this.claimTransitionLockTiming);
       try {
-        let record = await this.transitionNowClaimed(acceptanceId, claim);
+        let record = await this.transitionNowClaimed(acceptanceId, claim, `transition:${state}:initial`, lock);
         if (isTerminal(record.state)) return record;
-        if (state !== "running" && record.claim_generation !== claim.generation) throw new WakeExecutionClaimLostError();
-        await this.assertTransitionLock(record, lock);
-        record = await this.transitionNowClaimed(acceptanceId, claim);
+        if (state !== "running" && record.claim_generation !== claim.generation) throw new WakeExecutionClaimLostError({ step: `transition:${state}`, assertion: "record_claim_generation", acceptance_id: acceptanceId, expected: claim.generation, current: record.claim_generation ?? null, lock });
+        await this.assertTransitionLock(record, lock, `transition:${state}`);
+        record = await this.transitionNowClaimed(acceptanceId, claim, `transition:${state}:final`, lock);
         if (isTerminal(record.state)) return record;
-        if (state !== "running" && record.claim_generation !== claim.generation) throw new WakeExecutionClaimLostError();
-        await this.assertTransitionLock(record, lock);
+        if (state !== "running" && record.claim_generation !== claim.generation) throw new WakeExecutionClaimLostError({ step: `transition:${state}`, assertion: "record_claim_generation", acceptance_id: acceptanceId, expected: claim.generation, current: record.claim_generation ?? null, lock });
+        await this.assertTransitionLock(record, lock, `transition:${state}`);
         await this.afterFinalLockAssertion?.();
-        await this.assertTransitionLock(record, lock);
+        await this.assertTransitionLock(record, lock, `transition:${state}:before_write`);
         const target = this.fileFor(record.agent_id, record.delivery_id);
         // The code explains the transition that produced the CURRENT state, so a
         // transition that names none clears it. While codes existed only on terminal
@@ -225,12 +225,11 @@ export class WakeAcceptanceStore {
   releaseClaim(claim: WakeExecutionClaim): Promise<void> {
     return this.serialize(async () => {
       const record = await this.findByAcceptanceId(claim.acceptance_id);
-      if (!record) throw new WakeExecutionClaimLostError();
-      const lock = await this.acquireTransitionLock(record, claim.owner_id);
-      if (!lock) throw new WakeExecutionClaimLostError();
+      if (!record) throw new WakeExecutionClaimLostError({ step: "release", assertion: "record_missing", acceptance_id: claim.acceptance_id, expected: claim, current: null });
+      const lock = await waitForClaimTransitionLock(() => this.acquireTransitionLock(record, claim.owner_id), () => this.readLockOptional(this.lockFor(record)), claim.acceptance_id, claim, "release", this.claimTransitionLockTiming);
       try {
         const current = await this.readClaimOptional(this.claimFor(record));
-        if (current?.generation !== claim.generation || current.owner_id !== claim.owner_id) throw new WakeExecutionClaimLostError();
+        if (current?.generation !== claim.generation || current.owner_id !== claim.owner_id) throw new WakeExecutionClaimLostError({ step: "release", assertion: "claim_identity", acceptance_id: claim.acceptance_id, expected: claim, current: current ?? null, lock });
         await unlink(this.claimFor(record)); await this.directory.sync();
       } finally { await this.releaseTransitionLock(record, lock); }
     });
@@ -273,7 +272,7 @@ export class WakeAcceptanceStore {
   private async acquireTransitionLock(record: Stored, ownerId: string): Promise<TransitionLock | undefined> {
     const target = this.lockFor(record);
     const current = await this.readLockOptional(target);
-    if (current !== undefined && !sameNamespace(current, this.owner)) throw new WakeTransitionLockBlockedError();
+    if (current !== undefined && !sameNamespace(current, this.owner)) throw new WakeTransitionLockBlockedError({ step: "acquire_transition_lock", acceptance_id: record.acceptance_id, expected: this.owner, current });
     if (current !== undefined && await this.ownerLiveness(current)) return undefined;
     if (current !== undefined) { await unlink(target); await this.directory.sync(); }
     const lock: TransitionLock = { owner_id: ownerId, generation: randomUUID(), ...this.owner };
@@ -285,9 +284,9 @@ export class WakeAcceptanceStore {
       return lock;
     } finally { await unlink(temporary).catch(() => undefined); }
   }
-  private async assertTransitionLock(record: Stored, lock: TransitionLock): Promise<void> {
-    const current = await this.readLock(this.lockFor(record)).catch(() => { throw new WakeExecutionClaimLostError(); });
-    if (current.owner_id !== lock.owner_id || current.generation !== lock.generation || current.pid !== lock.pid || current.process_start !== lock.process_start || current.boot_id !== lock.boot_id || !sameNamespace(current, lock)) throw new WakeExecutionClaimLostError();
+  private async assertTransitionLock(record: Stored, lock: TransitionLock, step: string): Promise<void> {
+    const current = await this.readLock(this.lockFor(record)).catch((cause: unknown) => { throw new WakeExecutionClaimLostError({ step, assertion: "transition_lock_read", acceptance_id: record.acceptance_id, expected: lock, current: null }, cause); });
+    if (current.owner_id !== lock.owner_id || current.generation !== lock.generation || current.pid !== lock.pid || current.process_start !== lock.process_start || current.boot_id !== lock.boot_id || !sameNamespace(current, lock)) throw new WakeExecutionClaimLostError({ step, assertion: "transition_lock_identity", acceptance_id: record.acceptance_id, expected: lock, current });
   }
   private async releaseTransitionLock(record: Stored, lock: TransitionLock): Promise<void> {
     const target = this.lockFor(record);
@@ -341,11 +340,10 @@ export class WakeAcceptanceStore {
     if (!uuid(result.owner_id) || !uuid(result.generation) || result.pid < 1 || !result.process_start || !result.boot_id || result.pid_namespace_dev < 1 || result.pid_namespace_ino < 1) throw new Error("wake transition lock is invalid");
     return result;
   }
-  private async transitionNowClaimed(acceptanceId: string, claim: WakeExecutionClaim): Promise<Stored> {
+  private async transitionNowClaimed(acceptanceId: string, claim: WakeExecutionClaim, step: string, lock: TransitionLock): Promise<Stored> {
     const record = await this.findByAcceptanceId(acceptanceId);
     if (record === undefined) throw new Error("wake acceptance receipt is unavailable");
-    const current = await this.readClaim(this.claimFor(record));
-    if (!(current.acceptance_id === acceptanceId || current.acceptance_ids?.includes(acceptanceId)) || current.acceptance_id !== claim.acceptance_id || current.owner_id !== claim.owner_id || current.generation !== claim.generation || current.expires_at !== claim.expires_at || expired(current, this.now())) throw new WakeExecutionClaimLostError();
+    await readExpectedClaim(() => this.readClaim(this.claimFor(record)), acceptanceId, claim, step, this.now, lock);
     return record;
   }
   private async compactTerminalRecords(): Promise<void> {
@@ -379,7 +377,7 @@ export class WakeAcceptanceStore {
 }
 export class WakeInboxFullError extends Error { constructor(message = "wake acceptance store has no capacity without deleting active work") { super(message); } }
 export class WakeAcceptanceConflictError extends Error { constructor() { super("delivery id is already bound to a different request"); } }
-export class WakeExecutionClaimLostError extends Error { constructor() { super("wake execution claim was lost"); } }
+export { WakeExecutionClaimLostError, WakeTransitionLockContentionError } from "./wakeAcceptanceClaimDiagnostics.js";
 /** A container boundary requires deployment-authorized offline reconciliation. */
 export { WakeTransitionLockBlockedError } from "./wakeAcceptanceProcessIdentity.js";
 export { publicAcceptance } from "./wakeAcceptanceRecord.js";

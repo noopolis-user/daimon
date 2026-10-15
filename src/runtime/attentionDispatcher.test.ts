@@ -30,12 +30,12 @@ class Core implements OrganizationRuntimeHost {
   async activity() { return { version: "noopolis.daimon.organization-runtime-activity.v1" as const, items: [] }; }
   async stop() { this.stops++; this.releases.forEach((release, index) => release({ version: "noopolis.daimon.wake-result.v1", status: "stopped", agentId: this.wakes[index]!.agentId, wakeId: this.wakes[index]!.event.id, code: "active_wake_aborted" })); return { version: "noopolis.daimon.organization-runtime-stop.v1" as const, state: "stopped" as const }; }
 }
-async function fixture(limit = 20, maxWakes = 100, claimTtlMs = 240000, engine: "codex" | "grok" = "codex") {
+async function fixture(limit = 20, maxWakes = 100, claimTtlMs = 240000, engine: "codex" | "grok" = "codex", nowForTest?: () => number) {
   const root = await mkdtemp(path.join(os.tmpdir(), "daimon-attention-")); await chmod(root, 0o700);
   const usage = await mkdtemp(path.join(os.tmpdir(), "daimon-attention-usage-")); await writeFile(path.join(usage, "usage.jsonl"), "");
   const registry: AttentionRegistry = new Map();
   const core = new Core();
-  const options = { acceptanceStorePath: root, controlToken: token, storeOptions: { ...storeOptions, claimTtlMs }, attentionRegistryForTest: registry, fuseEnvironment: { DAIMON_WAKE_FUSE_DIRECTORY: usage, DAIMON_WAKE_FUSE_EPOCH: "attention", DAIMON_WAKE_FUSE_MAX_WAKES: String(maxWakes), DAIMON_WAKE_FUSE_MAX_TOKENS: "10000", DAIMON_TURN_USAGE_LEDGER_PATH: path.join(usage, "usage.jsonl") } };
+  const options = { acceptanceStorePath: root, controlToken: token, storeOptions: { ...storeOptions, claimTtlMs, ...(nowForTest === undefined ? {} : { nowForTest }) }, attentionRegistryForTest: registry, fuseEnvironment: { DAIMON_WAKE_FUSE_DIRECTORY: usage, DAIMON_WAKE_FUSE_EPOCH: "attention", DAIMON_WAKE_FUSE_MAX_WAKES: String(maxWakes), DAIMON_WAKE_FUSE_MAX_TOKENS: "10000", DAIMON_TURN_USAGE_LEDGER_PATH: path.join(usage, "usage.jsonl") } };
   const control = createOrganizationRuntimeControlHostWithCoreForTest(config(limit, engine), core, options); await control.start();
   return { root, usage, registry, core, options, control, cleanup: async () => { await control.stop(); await rm(root, { recursive: true, force: true }); await rm(usage, { recursive: true, force: true }); } };
 }
@@ -201,6 +201,56 @@ test("claim-renewal failure revokes execution authority, stops cognition, and la
     const accepted = await f.control.accept(request("after-fence")); assert.equal(accepted.state, "stopped"); assert.equal(accepted.blocked!.reason, "ledger_unavailable");
   } finally { WakeAcceptanceStore.prototype.renewClaim = original; await f.cleanup(); }
 });
+
+for (const disposition of ["defer", "complete"] as const) {
+  test(`a revisited batch keeps its claim after its head is disposed ${disposition}`, async (t) => {
+    let now = Date.now();
+    const ttl = 240_000;
+    const f = await fixture(20, 100, ttl, "codex", () => now);
+    t.mock.timers.enable({ apis: ["setInterval"] });
+    const renew = WakeAcceptanceStore.prototype.renewClaim;
+    const renewals: string[] = [];
+    t.mock.method(WakeAcceptanceStore.prototype, "renewClaim", async function (this: WakeAcceptanceStore, ...args: Parameters<typeof renew>) {
+      const claim = await renew.apply(this, args); renewals.push(claim.expires_at); return claim;
+    });
+    try {
+      await f.control.accept(request("D1")); await until(() => f.core.wakes.length === 1);
+      await f.registry.get("alpha")!.disposition("D1", "defer");
+      f.core.complete(0); await until(() => !f.registry.has("alpha"));
+      // The live answer arrived after the first execution's original lease expired.
+      now += 254_000; t.mock.timers.tick(254_000);
+      await f.control.accept(request("D2")); await until(() => f.core.wakes.length === 2);
+      const turn = f.registry.get("alpha")!;
+      assert.deepEqual(turn.messages.map((message) => message.delivery_id), ["D1", "D2"]);
+      assert.notEqual(turn.executionId, f.core.wakes[0]!.event.id);
+      await turn.disposition("D1", disposition);
+      // Cross the ORIGINAL lease boundary while cognition stays in flight.
+      for (let n = 1; n <= 4; n++) {
+        now += ttl / 3; t.mock.timers.tick(ttl / 3);
+        await until(() => renewals.length === n || f.core.stops > 0);
+        assert.equal(f.core.stops, 0);
+        // A disposition queues behind the heartbeat's writes, proving they settled.
+        await turn.disposition("D1", disposition);
+        const rows = (await f.control.activityV2(token))!;
+        const head = rows.items.find((row) => row.delivery_id === "D1")!;
+        assert.equal(head.state, disposition === "defer" ? "accepted" : "completed");
+        assert.equal(head.deferred, disposition === "defer");
+        assert.equal(rows.items.find((row) => row.delivery_id === "D2")!.state, "running");
+        assert.equal(rows.executions!.length, 1);
+        assert.equal(rows.executions![0]!.execution_id, turn.executionId);
+      }
+      await turn.disposition("D2", "complete");
+      // Keep renewing even when all members are disposed, until the turn ends.
+      now += ttl / 3; t.mock.timers.tick(ttl / 3);
+      await until(() => renewals.length === 5 || f.core.stops > 0);
+      assert.equal(f.core.stops, 0);
+      await turn.disposition("D2", "complete");
+      f.core.complete(1); await until(() => !f.registry.has("alpha"));
+      assert.equal(f.core.wakes.length, 2);
+      assert.equal((await f.control.availability(token))!.state, "running");
+    } finally { t.mock.timers.reset(); await f.cleanup(); }
+  });
+}
 
 test("an inbox turn leads with each delivery's own text and keeps the accounting after the work", async () => {
   const f = await fixture();

@@ -1,6 +1,10 @@
 import { readFile, stat } from "node:fs/promises";
 export type TransitionLock = Readonly<{ owner_id: string; generation: string; pid: number; process_start: string; boot_id: string; pid_namespace_dev: number; pid_namespace_ino: number }>;
-export class WakeTransitionLockBlockedError extends Error { readonly code = "offline_reconciliation_required" as const; constructor() { super("wake transition lock requires offline reconciliation"); } }
+type BlockedLockDetail = Readonly<{ step: string; acceptance_id: string; expected: Omit<TransitionLock, "owner_id" | "generation">; current: TransitionLock }>;
+export class WakeTransitionLockBlockedError extends Error {
+  readonly code = "offline_reconciliation_required" as const;
+  constructor(readonly detail?: BlockedLockDetail) { super(`wake transition lock requires offline reconciliation${detail === undefined ? "" : `: step=${detail.step} assertion=transition_lock_namespace ${JSON.stringify(detail)}`}`); }
+}
 export function sameNamespace(left: Pick<TransitionLock, "pid_namespace_dev" | "pid_namespace_ino">, right: Pick<TransitionLock, "pid_namespace_dev" | "pid_namespace_ino">): boolean { return left.pid_namespace_dev === right.pid_namespace_dev && left.pid_namespace_ino === right.pid_namespace_ino; }
 export async function currentProcessIdentity(): Promise<Omit<TransitionLock, "owner_id" | "generation">> {
   if (process.platform !== "linux") throw new Error("wake transition locks require Linux process identity");
