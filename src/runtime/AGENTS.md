@@ -13,6 +13,15 @@ coordinate wakes.
 Every source file stays below 400 lines. Keep tests beside the contract they
 cover.
 
+`relocateRuntimeConfig` is a pure public helper for one memory-backed agent.
+It validates input and output with the config parser, rebases whole path prefixes
+throughout config values, and preserves `instructions` verbatim. Workspace,
+home and memory destinations are explicit; the control-token mapping declares
+both `from` and `to` because config has no token-file field. Paths must be
+canonical absolute POSIX paths other than root; the longest source prefix wins.
+`parseTaskClock` and `TASK_CLOCK_VERSION` are public runtime exports of the
+existing clock contract, with no alternate schema or behavior.
+
 `grokBrokerProxyRequest.ts` preserves the worker CLI's `x-grok-client-version`
 and supplies its `grok-shell` client identity when rebuilding provider headers.
 Dropping the version makes the subscription provider reject an otherwise valid
