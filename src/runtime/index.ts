@@ -1,6 +1,8 @@
 export { brokerTaskClockFileFor } from "./grokBrokerSlot.js";
 export { GROK_BROKER_TASK_CLOCK, GROK_BROKER_TASK_CLOCK_PRELOAD_PATH, GROK_BROKER_TASK_CLOCK_FILE_PATH, type GrokWorkerConfigVariant } from "../contracts/grokBrokerTaskClock.js";
 export * from "./organizationRuntime.js";
+export { relocateRuntimeConfig, type RuntimeConfigLocation } from "./relocateRuntimeConfig.js";
+export { parseTaskClock, TASK_CLOCK_VERSION } from "./taskClock.js";
 export * from "./contractManifest.js";
 export * from "./agySubscriptionRealm.js";
 export { createOrganizationRuntimeHost } from "./organizationRuntimeHost.js";
