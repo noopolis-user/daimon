@@ -17,6 +17,13 @@ export type EngineBrokerServiceRegistration = Readonly<{
   usageLedgerPath: string;
   limits: EngineBrokerTurnLimits;
   model: GrokBrokerModelPolicy;
+  /**
+   * Digest of the skills root provisioning rendered into `$GROK_HOME/skills`
+   * (`grokWorkerSkillsSha256`), attested before every turn. Optional in v2
+   * registrations and v3 slot policies; absent means the slot has no skills and
+   * the directory must not exist.
+   */
+  skillsSha256?: string;
 }>;
 /**
  * `inferenceLedgerPath` (v2, optional) is where evaluator inference grants
@@ -55,8 +62,9 @@ export const engineBrokerSealLedgerPathFor = (usageLedgerPath: string): string =
  * v3 retains seven-field registrations and binds slotPolicies by slot; agent IDs
  * may repeat, while worker UIDs, slots and ledger streams must be distinct.
  * v2 requires every registration to declare its usage ledger, limits and model
- * (`model.id`/`model.reasoningEffort` from the closed lists); unknown keys at
- * any level are refused. v1 is still accepted and receives today's defaults:
+ * (`model.id`/`model.reasoningEffort` from the closed lists) and may declare
+ * `skillsSha256` (v3: on its slot policy); unknown keys at any level are
+ * refused. v1 is still accepted and receives today's defaults:
  * the container ledger, {@link DEFAULT_GROK_BROKER_TURN_LIMITS}, and
  * `grok-4.6`/`low`.
  */
@@ -81,7 +89,7 @@ export function parseEngineBrokerServiceConfig(value: unknown): EngineBrokerServ
     if (!Array.isArray(value.slotPolicies) || value.slotPolicies.length !== value.registrations.length) throw invalid();
     for (const policy of value.slotPolicies) {
       if (!plain(policy)) throw invalid();
-      exact(policy, ["slot", "usageLedgerPath", "limits", "model"]);
+      exact(policy, ["slot", "usageLedgerPath", "limits", "model", ...withSkills(policy)]);
       if (!Number.isSafeInteger(policy.slot) || (policy.slot as number) < 0 || policies.has(policy.slot as number)) throw invalid();
       policies.set(policy.slot as number, policy);
     }
@@ -90,7 +98,7 @@ export function parseEngineBrokerServiceConfig(value: unknown): EngineBrokerServ
   const ledgers = new Set<string>();
   const registrations = value.registrations.map((entry: unknown): EngineBrokerServiceRegistration => {
     if (!plain(entry)) throw invalid();
-    exact(entry, v2 && !v3 ? V2_REGISTRATION : V1_REGISTRATION);
+    exact(entry, v2 && !v3 ? [...V2_REGISTRATION, ...withSkills(entry)] : V1_REGISTRATION);
     const { agentId, slot, workerUid, workspace, profilePath, eventsPath, profileSha256 } = entry;
     if (typeof agentId !== "string" || !agentId.trim() || (!v3 && seen.has(agentId)) || !Number.isSafeInteger(slot) || (slot as number) < 0 || slots.has(slot as number) || !Number.isSafeInteger(workerUid) || (workerUid as number) < 2200 || workers.has(workerUid as number) || !absolute(workspace) || !absolute(profilePath) || !absolute(eventsPath) || typeof profileSha256 !== "string" || !/^[a-f0-9]{64}$/u.test(profileSha256) || eventsPath !== grokWorkerEventsPathFor(profilePath) || !profilePath.endsWith("/sandbox.toml")) throw invalid();
     seen.add(agentId); slots.add(slot as number); workers.add(workerUid as number);
@@ -105,7 +113,8 @@ export function parseEngineBrokerServiceConfig(value: unknown): EngineBrokerServ
     streams.forEach((file) => ledgers.add(file));
     let limits: EngineBrokerTurnLimits;
     try { limits = parseEngineBrokerTurnLimits(policy.limits); } catch { throw invalid(); }
-    return { ...base, usageLedgerPath, limits, model: parseServiceModel(policy.model) };
+    if (Object.hasOwn(policy, "skillsSha256") && (typeof policy.skillsSha256 !== "string" || !/^[a-f0-9]{64}$/u.test(policy.skillsSha256))) throw invalid();
+    return { ...base, usageLedgerPath, limits, model: parseServiceModel(policy.model), ...(Object.hasOwn(policy, "skillsSha256") ? { skillsSha256: policy.skillsSha256 as string } : {}) };
   });
   const base = { credentialHome: value.credentialHome, turnStore: value.turnStore, registrations,
     ...(value.runRequestStore === undefined ? {} : { runRequestStore: value.runRequestStore as string }),
@@ -118,6 +127,7 @@ export function parseEngineBrokerServiceConfig(value: unknown): EngineBrokerServ
   return { ...base, inferenceLedgerPath };
 }
 
+const withSkills = (value: Record<string, unknown>): readonly string[] => Object.hasOwn(value, "skillsSha256") ? ["skillsSha256"] : [];
 const ledgerPath = (item: unknown): item is string => absolute(item) && item.endsWith(".jsonl") && path.posix.normalize(item) === item;
 
 function parseServiceModel(value: unknown): GrokBrokerModelPolicy {
