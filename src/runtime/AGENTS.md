@@ -484,6 +484,28 @@ every profile inside bubblewrap, where a non-empty `deny` list is enforced;
 `grokWorkerSandboxProfile.ts` renders those profile bytes. A worker-uid process
 can neither write, rename, nor unlink any of the root-owned files.
 
+Declared skills reach a brokered Grok worker through the same input Codex
+reads: the compiled workspace's `.agents/skills/<name>/SKILL.md` tree
+(`readAgentSkillsDirectory`, `AGENT_SKILLS_WORKSPACE_DIRECTORY`). The workspace
+stays untrusted, so root provisioning renders that tree into
+`$GROK_HOME/skills` (`renderGrokWorkerSkillsTree`: directories `root:root
+0555`, files `root:root 0444`, single link), which Grok loads as user-scoped
+skills — announced to the model with their absolute `SKILL.md` path, read with
+`read_file` under the strict profile, which reads `$GROK_HOME`. Verified with a
+loopback stub model on 1.0.52 and 1.0.60 (the worker's config and argv,
+`--system-prompt-override` included: user skill listed, workspace skill and
+bundled skills absent) and against the 1.0.34 binary's own documentation of
+`~/.grok/skills/`; not yet run live on the pinned Linux 1.0.34.
+`grokWorkerSkillsSha256` digests the tree; the projection carries it as
+`skillsSha256` and the v2 registration / v3 slot policy as `skillsSha256`, and
+`verifyGrokWorkerSkills` re-reads the directory before every turn. Without a
+declared digest `skills/` must be absent (or an empty root-owned read-only
+directory), which also stops a worker planting a skill in its worker-writable
+`$GROK_HOME` for its next turn. No skills leaves the projection, its digest and
+the registration byte-identical to before. Grok also loads `$HOME/.agents`,
+`$HOME/.claude` and `$HOME/.cursor` user skills; those stay the deployment's to
+keep out of a worker-writable `$HOME`.
+
 Deny-path placement (`grokWorkerDenyPlacement.ts`). Grok 1.0.34 materializes
 every `deny` entry inside bubblewrap **as the worker uid**, bind-mounting
 `$GROK_HOME/sandbox-blocked-{file,dir}` over the target, so an entry is
