@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
-import { chmod, link, lstat, mkdir, mkdtemp, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, link, lstat, mkdir, mkdtemp, open, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import test, { type TestContext } from "node:test";
+import test, { mock, type TestContext } from "node:test";
 
 import { readAgentSkillsDirectory } from "./agentSkillsDirectory.js";
 import { AGENT_SKILLS_WORKSPACE_DIRECTORY, grokWorkerSkillsSha256, renderGrokWorkerSkillsTree } from "./grokWorkerSkills.js";
@@ -69,11 +69,38 @@ test("refuses links, special entries, foreign owners, writable entries and non-U
     await assert.rejects(readAgentSkillsDirectory(skills), /invalid agent skills/u, label);
   }
   const skills = await compiledWorkspace(await scratch(t));
-  await assert.rejects(readAgentSkillsDirectory(skills, { ownerUid: process.getuid!() + 1 }), /unexpected owner/u);
-  await assert.rejects(readAgentSkillsDirectory(skills, { ownerUid: process.getuid!(), readOnly: true }), /writable or linked/u);
+  await assert.rejects(readAgentSkillsDirectory(skills, { ownerUid: process.getuid!() + 1 }), /unexpected owner of "\."/u);
+  await assert.rejects(readAgentSkillsDirectory(skills, { ownerUid: process.getuid!(), readOnly: true }), /writable or linked entry "\."/u);
   const linked = await compiledWorkspace(await scratch(t));
   await link(path.join(linked, "moltnet", "SKILL.md"), path.join(linked, "..", "hardlink.md"));
   for (const directory of ["", "editor", "editor/references", "moltnet"]) await chmod(path.join(linked, directory), 0o555);
   for (const file of ["editor/SKILL.md", "editor/references/style.md", "moltnet/SKILL.md"]) await chmod(path.join(linked, file), 0o444);
-  await assert.rejects(readAgentSkillsDirectory(linked, { ownerUid: process.getuid!(), readOnly: true }), /writable or linked/u);
+  await assert.rejects(readAgentSkillsDirectory(linked, { ownerUid: process.getuid!(), readOnly: true }), /writable or linked entry "moltnet\/SKILL\.md"/u);
+});
+
+test("refusals name the offending path relative to the skills root", async (t) => {
+  const cases: Record<string, [(skills: string) => Promise<void>, RegExp]> = {
+    "symlinked file": [async (skills) => { await symlink("/etc/hosts", path.join(skills, "editor", "hosts.md")); }, /plain file at "editor\/hosts\.md"/u],
+    "symlinked skill": [async (skills) => { await symlink(path.join(skills, "editor"), path.join(skills, "alias")); }, /plain directory at "alias"/u],
+    "non-UTF-8 content": [async (skills) => { await writeFile(path.join(skills, "editor", "references", "blob.md"), Buffer.from([0xff, 0xfe])); }, /not UTF-8 "editor\/references\/blob\.md"/u]
+  };
+  for (const [label, [mutate, message]] of Object.entries(cases)) {
+    const skills = await compiledWorkspace(await scratch(t));
+    await mutate(skills);
+    await assert.rejects(readAgentSkillsDirectory(skills), message, label);
+  }
+});
+
+test("refuses a skill file whose opened inode is not the one lstat saw", async (t) => {
+  const skills = await compiledWorkspace(await scratch(t));
+  const probe = await open(path.join(skills, "editor", "SKILL.md"), "r");
+  const prototype = Object.getPrototypeOf(probe) as { stat: (...args: unknown[]) => Promise<{ ino: number }> };
+  await probe.close();
+  const original = prototype.stat;
+  const swapped = mock.method(prototype, "stat", async function (this: unknown, ...args: unknown[]) {
+    const real = await original.apply(this, args);
+    return Object.assign(Object.create(Object.getPrototypeOf(real)), real, { ino: Number(real.ino) + 1 });
+  });
+  try { await assert.rejects(readAgentSkillsDirectory(skills), /file changed while read "editor\/SKILL\.md"/u); } finally { swapped.mock.restore(); }
+  assert.equal((await readAgentSkillsDirectory(skills))?.length, 2);
 });
