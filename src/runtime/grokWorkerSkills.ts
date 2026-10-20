@@ -57,7 +57,7 @@ export function parseAgentSkills(value: unknown): readonly AgentSkill[] {
       total += bytes;
       if (paths.has(file.path)) throw invalid(`duplicate path ${entry.name}/${file.path}`);
       paths.add(file.path);
-      canonicalJson(file.content);
+      try { canonicalJson(file.content); } catch { throw invalid(`content of ${entry.name}/${file.path} is not Unicode text`); }
       return Object.freeze({ path: file.path, content: file.content });
     });
     // A file may not also be the directory of another file.

@@ -231,3 +231,18 @@ test("reset refuses a worker identity that remains alive and preserves its clock
   assert.equal(await readFile(f.fileFor(0), "utf8"), "+987\n");
   await assert.rejects(broker.turn("same-agent", "w", "work", endpoint, undefined, undefined, undefined, 0), { code: "unavailable" });
 });
+
+test("every turn attests the registration's own declared skills digest", async (t) => {
+  const f = await fixture(t);
+  const seen: (string | undefined)[] = [];
+  const skillsSha256 = "c".repeat(64);
+  const broker = await f.start({
+    needsTaskClockReconciliation: async () => false,
+    prepareAttestation: async (input) => { seen.push(input.skillsSha256); return { dev: 1, ino: 1, size: 0, configVariant: "unclocked", denyPaths: [] }; },
+    writeTaskClock: async () => {}
+  }, [{ ...f.registrations[0]!, skillsSha256 }, f.registrations[1]!]);
+  f.gates.forEach((gate) => gate.resolve());
+  await broker.turn("same-agent", "with-skills", "work", endpoint, undefined, undefined, undefined, 0);
+  await broker.turn("same-agent", "without-skills", "work", endpoint, undefined, undefined, undefined, 1);
+  assert.deepEqual(seen, [skillsSha256, undefined]);
+});

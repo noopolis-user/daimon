@@ -84,7 +84,8 @@ export async function prepareGrokWorkerAttestation(input:Readonly<{profilePath:s
   const workers=[{profilePath:input.profilePath,workerUid:input.workerUid},...(input.registeredWorkers??[])].map((worker)=>({home:grokWorkerHomeForProfile(worker.profilePath),uid:worker.workerUid}));
   if(workers.some((worker)=>worker.home===undefined))throw new Error("Grok worker isolation attestation unavailable");
   await verifyGrokWorkerTmp(workers as readonly GrokWorkerTmpWorker[],profileOwner.tmp);
-  const configVariant=await verifyGrokWorkerHome(path.dirname(input.profilePath),input.configSha256,undefined,input.skillsSha256);
+  // The home's read-only files share the profile's owner (root in production: `sandbox.toml` is one of them).
+  const configVariant=await verifyGrokWorkerHome(path.dirname(input.profilePath),input.configSha256,profileOwner.uid,input.skillsSha256);
   const events=await secureOpen(input.eventsPath,input.workerUid,input.brokerGid,0o640,16*1024*1024);try{const stat=await events.stat();return{dev:Number(stat.dev),ino:Number(stat.ino),size:Number(stat.size),denyPaths,configVariant};}finally{await events.close();}
 }
 /** The per-turn attestation input for one registration, carrying every registered worker so sibling temp is attested too. */
