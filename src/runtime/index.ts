@@ -21,6 +21,9 @@ export { GROK_INFERENCE_AUTH_STALE_BODY } from "./grokInferenceProxy.js";
 export { assertGrokWorkerDenyPathPlacement, assertGrokWorkerDenyPathShape, assertGrokWorkerDenyPathsPlaceable, GROK_WORKER_BASE_PROFILE_GRANTS, grokWorkerCanSearch, grokWorkerDenyPathChain, GrokWorkerDenyPlacementError, readGrokWorkerDenyPathChain } from "./grokWorkerDenyPlacement.js";
 export type { GrokWorkerDenyPathEntry, GrokWorkerDenyPathStep, GrokWorkerDenyPathWorker } from "./grokWorkerDenyPlacement.js";
 export { grokWorkerSandboxProfileSha256, renderGrokWorkerSandboxProfile } from "./grokWorkerSandboxProfile.js";
+export { AGENT_SKILLS_BOUNDS, AGENT_SKILLS_WORKSPACE_DIRECTORY, GROK_WORKER_SKILLS_LAYOUT, GROK_WORKER_SKILLS_VERSION, grokWorkerSkillsSha256, parseAgentSkills, renderGrokWorkerSkillsTree, type AgentSkill, type AgentSkillFile, type GrokWorkerSkillsEntry } from "./grokWorkerSkills.js";
+export { readAgentSkillsDirectory, type AgentSkillsTreePolicy } from "./agentSkillsDirectory.js";
+export { GROK_WORKER_FOREIGN_SKILL_ROOTS, verifyGrokWorkerForeignSkillRoots, verifyGrokWorkerSkills } from "./grokWorkerHomeAttestation.js";
 export { ENGINE_BROKER_SERVICE_V3, engineBrokerRequestLedgerPathFor, engineBrokerSealLedgerPathFor, parseEngineBrokerServiceConfig, type EngineBrokerServiceConfig, type EngineBrokerServiceRegistration } from "./engineBrokerServiceConfig.js";
 export { TURN_SEAL_LEDGER, TURN_SEAL_LEDGER_VERSION } from "./engineBrokerSealLedger.js";
 export { DEFAULT_GROK_BROKER_TURN_LIMITS, ENGINE_BROKER_LIMIT_REASONS, type EngineBrokerLimitReason, type EngineBrokerTurnAccounting,

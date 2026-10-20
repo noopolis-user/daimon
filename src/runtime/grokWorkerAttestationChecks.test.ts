@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { appendFile, chmod, link, mkdir, mkdtemp, open, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { appendFile, chmod, link, lstat, mkdir, mkdtemp, open, readdir, realpath, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test, { mock } from "node:test";
@@ -12,6 +12,8 @@ import {
   verifyGrokWorkerAttestation,
   type GrokWorkerAttestationSnapshot
 } from "./grokWorkerAttestation.js";
+import { grokBrokerWorkerConfigSha256, renderGrokBrokerWorkerConfig } from "./grokBrokerWorkerConfig.js";
+import { grokWorkerSkillsSha256, renderGrokWorkerSkillsTree } from "./grokWorkerSkills.js";
 
 const workspace = "/var/lib/daimon-workers/2200/workspace";
 const self = { uid: process.getuid?.() ?? 0, gid: process.getgid?.() ?? 0 };
@@ -153,4 +155,40 @@ test("prepare refuses a deny entry bubblewrap could not materialize, before any 
     prepareGrokWorkerAttestation(await withDeny(path.join(root, "state")), owner),
     (error: Error) => !/is not placeable/u.test(error.message)
   );
+});
+
+test("prepare attests the declared skills digest against the worker's skills directory", async (t) => {
+  const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "daimon-guard-skills-")));
+  const grokHome = path.join(root, ".grok");
+  const unlock = async (directory: string): Promise<void> => {
+    if (!(await lstat(directory).catch(() => undefined))?.isDirectory()) return;
+    await chmod(directory, 0o755);
+    for (const child of await readdir(directory)) await unlock(path.join(directory, child));
+  };
+  t.after(async () => { await unlock(root); await rm(root, { recursive: true, force: true }); });
+  await mkdir(path.join(grokHome, "sessions"), { recursive: true });
+  await mkdir(path.join(root, "tmp"), { mode: 0o700 });
+  await mkdir(path.join(root, "shared"), { mode: 0o700 });
+  const profileText = '[profiles.daimon-strict]\nextends = "strict"\nrestrict_network = true\ndeny = []\n';
+  const policy = { model: "grok-4.6", reasoningEffort: "low" } as const;
+  for (const [name, text] of [["sandbox.toml", profileText], ["config.toml", renderGrokBrokerWorkerConfig(policy)], ["trusted_folders.toml", ""], ["managed_config.toml", ""], ["requirements.toml", ""]] as const) {
+    await writeFile(path.join(grokHome, name), text, { mode: 0o444 });
+  }
+  const events = path.join(grokHome, "sessions", "sandbox-events.jsonl");
+  await writeFile(events, ""); await chmod(events, 0o640);
+  // New files take their directory's group on BSD-derived systems, so the broker group is whatever the events file got.
+  const eventsGid = Number((await stat(events)).gid);
+  const skills = [{ name: "editor", files: [{ path: "SKILL.md", content: "---\nname: editor\ndescription: Edits.\n---\n" }] }];
+  for (const item of renderGrokWorkerSkillsTree(skills)) {
+    if (item.kind === "directory") await mkdir(path.join(grokHome, item.path));
+    else await writeFile(path.join(grokHome, item.path), item.content!, { mode: item.mode });
+  }
+  await chmod(path.join(grokHome, "skills", "editor"), 0o555); await chmod(path.join(grokHome, "skills"), 0o555);
+  const owner = { uid: self.uid, gid: Number((await stat(path.join(grokHome, "sandbox.toml"))).gid), tmp: { sharedRoots: [path.join(root, "shared")], sharedOwnerUid: self.uid, firstWorkerUid: self.uid } };
+  const registration = { profilePath: path.join(grokHome, "sandbox.toml"), eventsPath: events, profileSha256: createHash("sha256").update(profileText).digest("hex"), workerUid: self.uid, workspace: "/w" };
+  const input = (skillsSha256?: string) => ({ ...grokBrokerAttestationInput({ ...registration, ...(skillsSha256 === undefined ? {} : { skillsSha256 }) }, [registration], grokBrokerWorkerConfigSha256(policy)), brokerGid: eventsGid });
+  assert.equal((await prepareGrokWorkerAttestation(input(grokWorkerSkillsSha256(skills)), owner)).configVariant, "unclocked");
+  // Mutation guard: dropping the digest on the way to the home leg makes the rendered skills undeclared.
+  await assert.rejects(prepareGrokWorkerAttestation(input(), owner), /attestation unavailable/u);
+  await assert.rejects(prepareGrokWorkerAttestation(input(grokWorkerSkillsSha256([])), owner), /attestation unavailable/u);
 });

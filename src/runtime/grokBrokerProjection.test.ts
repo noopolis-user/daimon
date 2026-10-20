@@ -6,6 +6,7 @@ import { parseEngineBrokerServiceConfig } from "./engineBrokerServiceConfig.js";
 import { grokBrokerProjectionSha256, grokBrokerServiceRegistrationFor, resolveOrganizationGrokBrokerProjection, verifyGrokBrokerRegistrationMatchesProjection } from "./grokBrokerProjection.js";
 import { grokBrokerWorkerConfigSha256 } from "./grokBrokerWorkerConfig.js";
 import { grokWorkerSandboxProfileSha256 } from "./grokWorkerSandboxProfile.js";
+import { grokWorkerSkillsSha256 } from "./grokWorkerSkills.js";
 
 const agent = (id: string, engine: Record<string, unknown>) => ({ id, name: id, instructions: "Unused", workspacePath: `/var/lib/spawnfile/instance/workspace/agents/${id}`, runtimeHomePath: `/var/lib/spawnfile/instance/homes/${id}`, schedule: { kind: "disabled" }, engine });
 const config = { version: "noopolis.daimon.organization-runtime.v2", host: { bindHost: "127.0.0.1", port: 19700, controlTokenEnv: "UNIT_CONTROL_TOKEN" },
@@ -79,4 +80,36 @@ test("the acceptance store mask may be the directory that covers the store", () 
   assert.notEqual(grokBrokerProjectionSha256(leaf), grokBrokerProjectionSha256(lifted));
   assert.throws(() => resolveOrganizationGrokBrokerProjection(config, "foreman", { ...options, acceptanceStorePath: "/var" }),
     /base profile grant/u);
+});
+
+const skills = [{ name: "editor", files: [{ path: "SKILL.md", content: "---\nname: editor\ndescription: Edits.\n---\n\nEdit.\n" }] }];
+
+test("no declared skills leaves the projection and its digest byte-identical", () => {
+  const before = resolveOrganizationGrokBrokerProjection(config, "foreman", options);
+  for (const none of [{ ...options, skills: [] }, { ...options, skills: undefined }]) {
+    const projection = resolveOrganizationGrokBrokerProjection(config, "foreman", none);
+    assert.equal(Object.hasOwn(projection, "skillsSha256"), false);
+    assert.equal(grokBrokerProjectionSha256(projection), grokBrokerProjectionSha256(before));
+    assert.equal(Object.hasOwn(grokBrokerServiceRegistrationFor(projection), "skillsSha256"), false);
+  }
+});
+
+test("declared skills bind their digest into the projection and the registration it implies", () => {
+  const plain = resolveOrganizationGrokBrokerProjection(config, "foreman", options);
+  const projection = resolveOrganizationGrokBrokerProjection(config, "foreman", { ...options, skills });
+  assert.equal(projection.skillsSha256, grokWorkerSkillsSha256(skills));
+  assert.notEqual(grokBrokerProjectionSha256(projection), grokBrokerProjectionSha256(plain));
+  // Mutation check: one changed byte of one skill changes the digest a preflight receipt binds.
+  const edited = [{ ...skills[0]!, files: [{ path: "SKILL.md", content: skills[0]!.files[0]!.content.replace("Edit.", "Edit!") }] }];
+  assert.notEqual(grokBrokerProjectionSha256(resolveOrganizationGrokBrokerProjection(config, "foreman", { ...options, skills: edited })), grokBrokerProjectionSha256(projection));
+  const parse = (registration: Record<string, unknown>) => parseEngineBrokerServiceConfig({ version: "noopolis.daimon.engine-broker-service.v2", credentialHome: "/c", turnStore: "/t", registrations: [registration] }).registrations[0]!;
+  const registration = grokBrokerServiceRegistrationFor(projection);
+  assert.equal(registration.skillsSha256, projection.skillsSha256);
+  verifyGrokBrokerRegistrationMatchesProjection(parse(registration), projection);
+  const { skillsSha256: _dropped, ...withoutSkills } = registration;
+  for (const drift of [withoutSkills, { ...registration, skillsSha256: grokWorkerSkillsSha256(edited) }]) {
+    assert.throws(() => verifyGrokBrokerRegistrationMatchesProjection(parse(drift), projection), /does not match/u);
+  }
+  assert.throws(() => verifyGrokBrokerRegistrationMatchesProjection(parse(registration), plain), /does not match/u);
+  assert.throws(() => resolveOrganizationGrokBrokerProjection(config, "foreman", { ...options, skills: [{ name: "../escape", files: skills[0]!.files }] }), /invalid agent skills/u);
 });
