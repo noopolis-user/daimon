@@ -502,9 +502,18 @@ bundled skills absent) and against the 1.0.34 binary's own documentation of
 declared digest `skills/` must be absent (or an empty root-owned read-only
 directory), which also stops a worker planting a skill in its worker-writable
 `$GROK_HOME` for its next turn. No skills leaves the projection, its digest and
-the registration byte-identical to before. Grok also loads `$HOME/.agents`,
-`$HOME/.claude` and `$HOME/.cursor` user skills; those stay the deployment's to
-keep out of a worker-writable `$HOME`.
+the registration byte-identical to before. Every other user skill root Grok
+discovers must be absent, or an empty root-owned read-only directory
+(`GROK_WORKER_FOREIGN_SKILL_ROOTS`, `verifyGrokWorkerForeignSkillRoots`, run by
+`verifyGrokWorkerHome`): `$GROK_HOME/{commands,bundled/skills,plugins}` and,
+under the worker-owned `$HOME` the launcher exports,
+`.agents/{skills,commands}`, `.claude/{skills,commands}` and
+`.cursor/{skills,commands}`. The set comes from `grok inspect` with planted
+skills and commands under scratch `HOME`/`GROK_HOME` on 1.0.60 and from the
+1.0.34 binary's skills table. The layout constant
+(`GROK_WORKER_SKILLS_LAYOUT`) stays out of `RUNTIME_CONTRACT_MANIFEST`, as
+`TURN_USAGE_LEDGER` does: only Daimon reads it, and a new manifest key would
+rotate the Spawnfile-pinned digest.
 
 Deny-path placement (`grokWorkerDenyPlacement.ts`). Grok 1.0.34 materializes
 every `deny` entry inside bubblewrap **as the worker uid**, bind-mounting

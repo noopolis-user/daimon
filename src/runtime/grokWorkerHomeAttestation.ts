@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { constants, type Stats } from "node:fs";
-import { lstat, open } from "node:fs/promises";
+import { lstat, open, readdir } from "node:fs/promises";
 import path from "node:path";
 
 import { GROK_ENGINE_BROKER } from "../contracts/runtimeContractManifest.js";
@@ -67,9 +67,59 @@ export async function verifyGrokWorkerSkills(grokHome: string, skillsSha256: str
 }
 
 /**
+ * Every other skill root Grok discovers at user scope, which the worker could
+ * plant into: under `$GROK_HOME` (root-owned but worker-group writable and
+ * sticky, so the worker can create new entries) and under the worker's own
+ * `$HOME` (the launcher exports `HOME=<home>` and `GROK_HOME=<home>/.grok`;
+ * `<home>` is worker-owned). Only `$GROK_HOME/skills` may carry skills, and only
+ * the declared ones; each root here must be absent, or an empty root-owned
+ * directory with no write bit.
+ *
+ * Set from `grok inspect` with scratch `HOME`/`GROK_HOME` and no network
+ * (1.0.60: every root below listed a planted skill or command; `.codex/skills`,
+ * `.ai/skills`, `$HOME/.config/*` and `$HOME/.agents/plugins` did not) and from
+ * the pinned 1.0.34 binary's own skills table (`~/.grok/{skills,commands}`,
+ * `~/.claude/{skills,commands}`, `~/.cursor/skills`, `.agents/{skills,commands}`
+ * at each tier). `bundled/skills` is the bundled-skill cache: never created on
+ * 1.0.34 (P0 container evidence), but a skill planted there loads with a name
+ * `[skills] disabled` does not cover. `plugins/` folders load their skills and
+ * commands as trusted user plugins.
+ */
+export const GROK_WORKER_FOREIGN_SKILL_ROOTS = Object.freeze({
+  grokHome: Object.freeze(["commands", "bundled/skills", "plugins"] as const),
+  home: Object.freeze([".agents/skills", ".agents/commands", ".claude/skills", ".claude/commands", ".cursor/skills", ".cursor/commands"] as const)
+});
+
+/**
+ * Refuses a foreign skill root (`GROK_WORKER_FOREIGN_SKILL_ROOTS`) that exists
+ * and is not an empty root-owned read-only directory. A deployment that never
+ * creates them passes unchanged. `grokHome` must be `<home>/.grok`, the
+ * launcher's layout, so `<home>` is its parent.
+ */
+export async function verifyGrokWorkerForeignSkillRoots(grokHome: string, rootUid: number = HOME.directory.uid): Promise<void> {
+  if (path.basename(grokHome) !== ".grok") throw unavailable();
+  const home = path.dirname(grokHome);
+  const roots = [...GROK_WORKER_FOREIGN_SKILL_ROOTS.grokHome.map((root) => path.join(grokHome, root)), ...GROK_WORKER_FOREIGN_SKILL_ROOTS.home.map((root) => path.join(home, root))];
+  for (const root of roots) {
+    let entry: Stats;
+    try { entry = await lstat(root); } catch (error) {
+      // Absent, or a parent that is not a directory: Grok finds nothing there either.
+      if (["ENOENT", "ENOTDIR"].includes((error as NodeJS.ErrnoException).code ?? "")) continue;
+      throw unavailable();
+    }
+    if (entry.isSymbolicLink() || !entry.isDirectory() || entry.uid !== rootUid || (Number(entry.mode) & 0o7222) !== 0) throw unavailable();
+    let children: string[];
+    try { children = await readdir(root); } catch { throw unavailable(); }
+    if (children.length !== 0) throw unavailable();
+  }
+}
+
+/**
  * Attests the worker home layout, that `config.toml` is exactly the
- * renderer's bytes for the declared model policy (`configSha256`), and that
- * `skills/` is exactly the declared skills (`skillsSha256`, absent for none).
+ * renderer's bytes for the declared model policy (`configSha256`), that
+ * `skills/` is exactly the declared skills (`skillsSha256`, absent for none),
+ * and that no other user skill root holds anything
+ * (`verifyGrokWorkerForeignSkillRoots`).
  */
 export async function verifyGrokWorkerHome(grokHome: string, configSha256: GrokWorkerConfigPins, rootUid: number = HOME.directory.uid, skillsSha256?: string): Promise<GrokWorkerConfigVariant> {
   const entries: Record<string, Entry | undefined> = {};
@@ -86,6 +136,7 @@ export async function verifyGrokWorkerHome(grokHome: string, configSha256: GrokW
     if (!opened.isFile() || opened.size > 65_536 || opened.dev !== before.dev || opened.ino !== before.ino || opened.uid !== before.uid || opened.mode !== before.mode || opened.nlink !== 1) throw unavailable();
     const variant = assertGrokWorkerConfigBytes(await handle.readFile(), configSha256);
     await verifyGrokWorkerSkills(grokHome, skillsSha256, rootUid);
+    await verifyGrokWorkerForeignSkillRoots(grokHome, rootUid);
     return variant;
   } catch { throw unavailable(); } finally { await handle?.close().catch(() => undefined); }
 }
