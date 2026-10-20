@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { GROK_ENGINE_BROKER } from "../contracts/runtimeContractManifest.js";
-import { grokWorkerSkillsSha256, parseAgentSkills, renderGrokWorkerSkillsTree, AGENT_SKILLS_BOUNDS } from "./grokWorkerSkills.js";
+import { GROK_WORKER_SKILLS_LAYOUT, grokWorkerSkillsSha256, parseAgentSkills, renderGrokWorkerSkillsTree, AGENT_SKILLS_BOUNDS } from "./grokWorkerSkills.js";
 
 const skillMd = (name: string, body = "Do the thing.") => `---\nname: ${name}\ndescription: ${name} skill\n---\n\n${body}\n`;
 const skills = () => [
@@ -50,7 +50,7 @@ test("refuses names, paths and shapes Grok or a filesystem would reinterpret", (
 });
 
 test("renders root-owned read-only directories before the files they hold, and nothing for no skills", () => {
-  const layout = GROK_ENGINE_BROKER.worker.home.skillsDirectory;
+  const layout = GROK_WORKER_SKILLS_LAYOUT;
   assert.deepEqual(layout, { relativePath: "skills", uid: 0, gid: 0, directoryMode: 0o555, fileMode: 0o444, digestVersion: "noopolis.daimon.grok-worker-skills.v1" });
   const tree = renderGrokWorkerSkillsTree(skills());
   assert.deepEqual(tree.map((entry) => [entry.kind, entry.path, entry.uid, entry.gid, entry.mode.toString(8)]), [
@@ -68,4 +68,17 @@ test("renders root-owned read-only directories before the files they hold, and n
     if (parent !== "") assert.ok(tree.findIndex((other) => other.path === parent) < tree.indexOf(entry), entry.path);
   }
   assert.deepEqual(renderGrokWorkerSkillsTree([]), []);
+});
+
+test("the skills layout stays out of the digest-pinned runtime contract manifest", () => {
+  assert.equal(Object.hasOwn(GROK_ENGINE_BROKER.worker.home, "skillsDirectory"), false);
+  assert.equal(JSON.stringify(GROK_ENGINE_BROKER).includes("grok-worker-skills"), false);
+});
+
+test("refusals name the offending skill-relative path", () => {
+  const md = { path: "SKILL.md", content: "x" };
+  assert.throws(() => parseAgentSkills([{ name: "editor", files: [md, { path: "references/../escape.md", content: "" }] }]), /path "editor\/references\/\.\.\/escape\.md"/u);
+  assert.throws(() => parseAgentSkills([{ name: "editor", files: [md, { path: ".env", content: "" }] }]), /"editor\/\.env"/u);
+  assert.throws(() => parseAgentSkills([{ name: "../up", files: [md] }]), /skill name "\.\.\/up"/u);
+  assert.throws(() => parseAgentSkills([{ name: "editor", files: [md, { path: "a.md", content: 1 }] }]), /file "editor\/a\.md"/u);
 });

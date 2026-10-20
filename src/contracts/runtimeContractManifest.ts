@@ -86,12 +86,6 @@ export const GROK_ENGINE_BROKER = {
       sessionsDirectory: { relativePath: "sessions", uid: 0, group: "worker", mode: 0o1771 },
       readOnlyFiles: { names: ["config.toml", "managed_config.toml", "requirements.toml", "sandbox.toml", "trusted_folders.toml"], uid: 0, gid: 0, mode: 0o444 },
       sandboxEvents: { relativePath: "sessions/sandbox-events.jsonl", owner: "worker", group: "broker", mode: 0o640 },
-      // The agent's declared skills, rendered by root provisioning from the same
-      // compiled `.agents/skills` tree Codex reads. Grok discovers `$GROK_HOME/skills`
-      // as user-scoped skills even in an untrusted workspace. Absent when the
-      // registration declares no `skillsSha256`; otherwise every entry is root-owned
-      // with no write bit and the tree must hash to the declared digest.
-      skillsDirectory: { relativePath: "skills", uid: 0, gid: 0, directoryMode: 0o555, fileMode: 0o444, digestVersion: "noopolis.daimon.grok-worker-skills.v1" },
       // The launcher exports TMPDIR=<worker home>/tmp; Grok's strict profile grants TMPDIR read-write.
       privateTmp: { relativeToWorkerHome: "tmp", owner: "worker", mode: 0o700 },
       // Strict also grants shared /tmp and /var/tmp read-write and refuses to start if either is

@@ -1,9 +1,24 @@
 import { createHash } from "node:crypto";
 
 import { canonicalJson } from "../contracts/canonicalJson.js";
-import { GROK_ENGINE_BROKER } from "../contracts/runtimeContractManifest.js";
 
-const LAYOUT = GROK_ENGINE_BROKER.worker.home.skillsDirectory;
+/**
+ * Where root provisioning renders the agent's declared skills inside the worker
+ * home (`$GROK_HOME/skills`), and what every entry must be: root-owned, no
+ * write bit. Grok discovers that directory as user-scoped skills even in an
+ * untrusted workspace. Absent when the registration declares no `skillsSha256`.
+ *
+ * Deliberately *not* folded into `RUNTIME_CONTRACT_MANIFEST`, as with
+ * `TURN_USAGE_LEDGER`: the manifest's canonical bytes are digest-pinned by
+ * Spawnfile and attested against the selected runtime image, so a new key
+ * there makes every pinned image fail to attest. Only Daimon reads this layout
+ * (the renderer below and the broker's pre-turn attestation); Spawnfile
+ * consumes it through `renderGrokWorkerSkillsTree`.
+ */
+export const GROK_WORKER_SKILLS_LAYOUT = Object.freeze({
+  relativePath: "skills", uid: 0, gid: 0, directoryMode: 0o555, fileMode: 0o444, digestVersion: "noopolis.daimon.grok-worker-skills.v1"
+} as const);
+const LAYOUT = GROK_WORKER_SKILLS_LAYOUT;
 
 /**
  * One file of a declared agent skill, relative to the skill's own directory.
@@ -43,15 +58,15 @@ export function parseAgentSkills(value: unknown): readonly AgentSkill[] {
   let total = 0;
   const names = new Set<string>();
   const skills = value.map((entry: unknown): AgentSkill => {
-    if (!plain(entry) || !exact(entry, ["name", "files"]) || typeof entry.name !== "string" || !COMPONENT.test(entry.name)) throw invalid("skill name");
+    if (!plain(entry) || !exact(entry, ["name", "files"]) || typeof entry.name !== "string" || !COMPONENT.test(entry.name)) throw invalid(`skill name ${plain(entry) && typeof entry.name === "string" ? JSON.stringify(entry.name) : "(missing)"}`);
     if (names.has(entry.name)) throw invalid(`duplicate skill ${entry.name}`);
     names.add(entry.name);
     if (!Array.isArray(entry.files) || entry.files.length === 0 || entry.files.length > AGENT_SKILLS_BOUNDS.filesPerSkill) throw invalid(`files of ${entry.name}`);
     const paths = new Set<string>();
     const files = entry.files.map((file: unknown): AgentSkillFile => {
-      if (!plain(file) || !exact(file, ["path", "content"]) || typeof file.path !== "string" || typeof file.content !== "string") throw invalid(`file of ${entry.name}`);
+      if (!plain(file) || !exact(file, ["path", "content"]) || typeof file.path !== "string" || typeof file.content !== "string") throw invalid(`file ${plain(file) && typeof file.path === "string" ? JSON.stringify(`${entry.name}/${file.path}`) : `of ${entry.name}`}`);
       const parts = file.path.split("/");
-      if (parts.length > AGENT_SKILLS_BOUNDS.depth || parts.some((part) => !COMPONENT.test(part))) throw invalid(`path ${JSON.stringify(file.path)}`);
+      if (parts.length > AGENT_SKILLS_BOUNDS.depth || parts.some((part) => !COMPONENT.test(part))) throw invalid(`path ${JSON.stringify(`${entry.name}/${file.path}`)}`);
       const bytes = byteLength(file.content);
       if (bytes > AGENT_SKILLS_BOUNDS.fileBytes) throw invalid(`size of ${entry.name}/${file.path}`);
       total += bytes;

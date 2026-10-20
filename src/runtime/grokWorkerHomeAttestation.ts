@@ -6,7 +6,7 @@ import path from "node:path";
 import { GROK_ENGINE_BROKER } from "../contracts/runtimeContractManifest.js";
 import type { GrokWorkerConfigVariant } from "../contracts/grokBrokerTaskClock.js";
 import { readAgentSkillsDirectory } from "./agentSkillsDirectory.js";
-import { grokWorkerSkillsSha256 } from "./grokWorkerSkills.js";
+import { GROK_WORKER_SKILLS_LAYOUT, grokWorkerSkillsSha256 } from "./grokWorkerSkills.js";
 
 export type GrokWorkerConfigPins = string | Readonly<Record<GrokWorkerConfigVariant, string>>;
 
@@ -62,7 +62,7 @@ export function assertGrokWorkerConfigBytes(bytes: Uint8Array, pins: GrokWorkerC
 export async function verifyGrokWorkerSkills(grokHome: string, skillsSha256: string | undefined, rootUid: number = HOME.directory.uid): Promise<void> {
   if (skillsSha256 !== undefined && !/^[0-9a-f]{64}$/u.test(skillsSha256)) throw unavailable();
   let skills;
-  try { skills = await readAgentSkillsDirectory(path.join(grokHome, HOME.skillsDirectory.relativePath), { ownerUid: rootUid, readOnly: true }); } catch { throw unavailable(); }
+  try { skills = await readAgentSkillsDirectory(path.join(grokHome, GROK_WORKER_SKILLS_LAYOUT.relativePath), { ownerUid: rootUid, readOnly: true }); } catch { throw unavailable(); }
   if (grokWorkerSkillsSha256(skills ?? []) !== (skillsSha256 ?? grokWorkerSkillsSha256([]))) throw unavailable();
 }
 
