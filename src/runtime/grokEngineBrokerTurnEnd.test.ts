@@ -31,7 +31,7 @@ function post(port: number, token: string): Promise<number> {
 }
 
 type Worker = (send: () => Promise<number>, signal: AbortSignal) => Promise<string>;
-type Extra = Readonly<{ observe?: (uid: number) => Promise<{ pid: number; startTicks: string } | undefined>; signal?: AbortSignal; mcpInFlight?: () => number; identityEmpty?: (uid: number) => Promise<boolean>; maxRequests?: number }>;
+type Extra = Readonly<{ observe?: (uid: number) => Promise<{ pid: number; startTicks: string } | undefined>; signal?: AbortSignal; mcpInFlight?: () => number; identityEmpty?: (uid: number) => Promise<boolean>; maxRequests?: number; toolProcess?: (uid: number) => Promise<boolean> }>;
 type Harness = Readonly<{ turn(wakeId: string, worker: Worker, timeoutMs?: number, extra?: Extra): ReturnType<typeof runGrokEngineBrokerTurn>; rows(): Promise<Record<string, unknown>[]>; endedStreams(): number }>;
 
 /** The real proxy, meter, registry and ledgers; the launcher is a scripted worker that answers the upstream bodies in order. */
@@ -50,6 +50,7 @@ async function withBroker(bodies: readonly string[], run: (harness: Harness) => 
           workerIdentityEmpty: extra.identityEmpty ?? (async () => true), workerReapWaitMs: 2_000,
           prepareIsolation: async () => ({ guard: async () => undefined, configVariant: "unclocked" }),
           observeWorker: extra.observe ?? (async (uid) => uid === 2_200 ? { pid: 5_151, startTicks: "777" } : undefined),
+          observeToolProcess: extra.toolProcess ?? (async () => false),
           turnEnd,
           runNative: async (input: NativeBrokerTurn, signal: AbortSignal): Promise<NativeBrokerTurnResult> => {
             const text = await worker(() => post(proxy.port, input.providerCapability), signal);
@@ -144,6 +145,44 @@ test("a worker that goes idle without ever answering is ended by the idle watchd
     // Mutation guard: without the idle bound this waits for the 30 s wall clock.
     assert.ok(Date.now() - started < 5_000);
     assert.deepEqual((await rows()).map((row) => [row.outcome, row.reason]), [["failed", "wake_timeout"]]);
+  });
+});
+
+test("a shell command the worker runs past the idle bound is work, not a stall: the turn goes on to its final reply", async () => {
+  await withBroker([toolCall, finalReply("AFTER-LONG-COMMAND")], async ({ turn }) => {
+    // Grok runs run_terminal_command as its own child with a model-chosen timeout of up to ten hours;
+    // neither the proxy nor the MCP facade sees it. Here it runs for three idle bounds.
+    let commandRunning = false;
+    const result = await turn("wake-long-command", async (send, signal) => {
+      assert.equal(await send(), 200);
+      commandRunning = true; await new Promise((resolve) => setTimeout(resolve, 1_200)); commandRunning = false;
+      assert.equal(await send(), 200);
+      return untilAborted(signal);
+    }, 30_000, { toolProcess: async (uid) => uid === 2_200 && commandRunning });
+    // Mutation guard: without the tool-process signal the idle watchdog ends this turn as a timeout at 400 ms.
+    assert.equal(result.outcome, "completed");
+    assert.equal(result.text, "AFTER-LONG-COMMAND");
+  });
+});
+
+test("once the worker's last tool process ends, the idle bound counts from when it was last seen", async () => {
+  await withBroker([toolCall], async ({ turn }) => {
+    const started = Date.now();
+    let commandRunning = true; setTimeout(() => { commandRunning = false; }, 900);
+    await assert.rejects(turn("wake-command-then-stall", async (send, signal) => { await send(); return untilAborted(signal); }, 30_000, { toolProcess: async () => commandRunning }), (error: unknown) => error instanceof EngineBrokerTurnFailure && error.accounting?.limitReason === "timeout");
+    const elapsed = Date.now() - started;
+    // Not at 400 ms (the command was work), not at the 30 s wall clock (a stall after it is still a stall).
+    assert.ok(elapsed >= 1_250 && elapsed < 5_000, `ended after ${elapsed} ms`);
+  });
+});
+
+test("a final reply is still ended on its grace even while a stray worker child stays alive", async () => {
+  await withBroker([toolCall, finalReply("FILED")], async ({ turn }) => {
+    const started = Date.now();
+    const result = await turn("wake-final-with-child", async (send, signal) => { await send(); await send(); return untilAborted(signal); }, 30_000, { toolProcess: async () => true });
+    // Mutation guard: letting the tool process hold the final-reply grace keeps a finished worker to the wall clock.
+    assert.equal(result.text, "FILED");
+    assert.ok(Date.now() - started < 5_000, `ended after ${Date.now() - started} ms`);
   });
 });
 

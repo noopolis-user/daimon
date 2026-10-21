@@ -26,6 +26,7 @@ import { GrokBrokerTurnMeter, type GrokBrokerTurnMeterSnapshot } from "./grokBro
 import { awaitGrokWorkerIdentityEmpty, findGrokWorkerProcess, GROK_WORKER_REAP_WAIT_MS, grokWorkerIdentityEmpty, watchGrokBrokerTurnEnd, type GrokBrokerTurnEndReason, type GrokBrokerTurnEndTiming, type GrokWorkerProcess } from "./grokEngineBrokerTurnEnd.js";
 import type { EngineBrokerMcpActivity } from "./engineBrokerMcpCallLog.js";
 import { GrokWorkerAttestationFailure } from "./grokWorkerAttestation.js";
+import { grokWorkerToolProcessLive, grokWorkerToolProcessSampler } from "./grokWorkerToolProcess.js";
 
 export type GrokEngineBrokerTurnResult = Readonly<{
   text: string; workerPid: number; workerUid: number; workerStartTime: string;
@@ -57,6 +58,8 @@ export type GrokEngineBrokerTurnDependencies = Readonly<{
   runNative(input: NativeBrokerTurn, signal: AbortSignal): Promise<Readonly<NativeBrokerTurnResult>>;
   /** The worker the launcher started for this identity (`/proc` by default); only read when the broker ends a turn itself. */
   observeWorker?(workerUid: number): Promise<GrokWorkerProcess | undefined>;
+  /** Whether the worker identity has a live local tool process (default: `grokWorkerToolProcessLive` over `/proc`). */
+  observeToolProcess?(workerUid: number): Promise<boolean>;
   /** Overrides the turn-end grace and idle bounds (tests). */
   turnEnd?: GrokBrokerTurnEndTiming;
   /** Whether no live process holds the worker identity (`/proc` by default); polled, bounded, before an aborted turn is sealed. */
@@ -129,12 +132,14 @@ export async function runGrokEngineBrokerTurn(deps: GrokEngineBrokerTurnDependen
     deps.proxy.registerTurn(turnId, { policy: registration.model, meter, clock });
     const capabilityTtlMs = engineBrokerCapabilityTtlMs(limits.timeoutMs);
     const providerCapability = deps.proxy.capabilities.issue(agentId, turnId, capabilityTtlMs), mcpCapability = deps.mcp.register(agentId, turnId, mcpEndpoint, capabilityTtlMs);
+    // A shell command Grok runs itself is work the proxy and facade never see.
+    const toolProcess = grokWorkerToolProcessSampler(() => (deps.observeToolProcess ?? grokWorkerToolProcessLive)(registration.workerUid));
     watchdog = watchGrokBrokerTurnEnd({
-      meter, activity: () => deps.mcp.activity?.(turnId), signal: controller.signal, ...(deps.turnEnd === undefined ? {} : { timing: deps.turnEnd }),
+      meter, activity: () => deps.mcp.activity?.(turnId), toolProcess: toolProcess.live, signal: controller.signal, ...(deps.turnEnd === undefined ? {} : { timing: deps.turnEnd }),
       // The worker is read once, as soon as it has made a request — long before
       // anything can end the turn and reap it — so a final reply is never left
       // without the worker that gave it.
-      onPoll: () => { if (worker === undefined && meter.snapshot().requests > 0) worker = (deps.observeWorker ?? findGrokWorkerProcess)(registration.workerUid).catch(() => undefined); },
+      onPoll: () => { toolProcess.poll(); if (worker === undefined && meter.snapshot().requests > 0) worker = (deps.observeWorker ?? findGrokWorkerProcess)(registration.workerUid).catch(() => undefined); },
       onFinalReply: () => { worker ??= (deps.observeWorker ?? findGrokWorkerProcess)(registration.workerUid).catch(() => undefined); },
       // An idle stall is a deadline of its own: it trips the meter as a timeout, so it seals like one.
       onEnd: (reason) => { endedBy = reason; if (reason === "idle") meter.trip("timeout"); else controller.abort(); }
