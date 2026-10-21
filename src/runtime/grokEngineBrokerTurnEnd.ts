@@ -34,8 +34,12 @@ import type { GrokBrokerTurnMeter } from "./grokBrokerTurnMeter.js";
  * so a model that keeps going is never cut off. Independently, a turn with no
  * model request and no tool call in flight and no activity of either kind for
  * `idleMs` ends as `onEnd("idle")` — the backstop for a worker that stalls
- * without ever answering. Shell tools Grok runs itself are invisible here, so
- * the idle bound is minutes, not seconds.
+ * without ever answering. Shell tools Grok runs itself never reach the proxy
+ * or the facade, and Grok lets the model give one a timeout of up to ten
+ * hours, so a worker with a live tool process (`toolProcess`,
+ * `grokWorkerToolProcess.ts`) is working too: it is never idle while one runs,
+ * and the quiet clock restarts from the last poll that saw one. The idle bound
+ * stays minutes, not seconds, because that observation is a poll.
  */
 export type GrokBrokerTurnEndTiming = Readonly<{ finalGraceMs: number; idleMs: number; pollMs: number }>;
 export const GROK_BROKER_TURN_END: GrokBrokerTurnEndTiming = Object.freeze({ finalGraceMs: 15_000, idleMs: 10 * 60_000, pollMs: 1_000 });
@@ -46,6 +50,8 @@ export type GrokBrokerTurnEndReason = "final_reply" | "idle";
 export function watchGrokBrokerTurnEnd(input: Readonly<{
   meter: Pick<GrokBrokerTurnMeter, "finalReply" | "busy" | "lastActivityAt">;
   activity: () => EngineBrokerMcpActivity | undefined;
+  /** Whether the worker has a local tool process alive, as last observed; absent means never observed. */
+  toolProcess?: () => boolean;
   onFinalReply: () => void;
   /** Every poll, before any decision: the broker records the worker while it is certainly alive. */
   onPoll?: () => void;
@@ -56,7 +62,7 @@ export function watchGrokBrokerTurnEnd(input: Readonly<{
   signal?: AbortSignal;
 }>): Readonly<{ stop(): void }> {
   const timing = input.timing ?? GROK_BROKER_TURN_END, now = input.now ?? Date.now;
-  let notified: number | undefined, done = false;
+  let notified: number | undefined, done = false, toolSeenAt = 0;
   const check = (): void => {
     if (done) return;
     if (input.signal?.aborted === true) { stop(); return; }
@@ -68,10 +74,15 @@ export function watchGrokBrokerTurnEnd(input: Readonly<{
     }
     let activity: EngineBrokerMcpActivity | undefined;
     try { activity = input.activity(); } catch { activity = undefined; }
+    let tool = false;
+    try { tool = input.toolProcess?.() === true; } catch { tool = false; }
+    if (tool) toolSeenAt = now();
     if (input.meter.busy() || (activity?.inFlight ?? 0) > 0) return;
     const quietSince = Math.max(input.meter.lastActivityAt(), activity?.lastActivityAt ?? 0);
+    // A tool process defers only the idle verdict. A final reply called no tool, so a child still
+    // alive beside it is not the model's work and must not hold a finished worker open.
     const reason: GrokBrokerTurnEndReason | undefined = final !== undefined && now() - Math.max(final.at, quietSince) >= timing.finalGraceMs ? "final_reply"
-      : now() - quietSince >= timing.idleMs ? "idle" : undefined;
+      : now() - Math.max(quietSince, toolSeenAt) >= timing.idleMs ? "idle" : undefined;
     if (reason === undefined) return;
     stop();
     input.onEnd(reason);

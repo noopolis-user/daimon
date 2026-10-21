@@ -207,8 +207,17 @@ identity-wide reap would kill it. The reply is
 bounded at `GROK_FINAL_REPLY_MAX_BYTES` (64 KiB) with a marker naming what was
 cut. A worker with no model request, no tool call in flight and no activity of
 either for `idleMs` (10 min) trips the meter's `timeout` and seals as one —
-the backstop for a stall that never answers; Grok's own shell tools are
-invisible to the broker, hence minutes. The open MCP GET tunnel every hung turn
+the backstop for a stall that never answers. Grok's own shell tools never
+reach the proxy or the facade, and Grok 1.0.34 lets the model give
+`run_terminal_command` a timeout of up to ten hours (default two minutes), so a
+command past the idle bound used to be sealed as a stall with its work in
+progress. The watchdog therefore also polls `/proc` for a live tool process of
+the worker (`grokWorkerToolProcess.ts`: a non-zombie process of the worker uid
+whose parent carries the compiled `--output-format streaming-messages-json`
+argv — the bubblewrap wrapper or Grok inside it — and is not one itself); while
+one is alive the turn is not idle, and the idle bound counts from the last poll
+that saw one. It defers only the idle verdict, never the final-reply grace, and
+an unreadable `/proc` reads as no tool. Hence minutes. The open MCP GET tunnel every hung turn
 showed is a symptom: against the real binary, Grok exits ~55 ms after `result`
 with the tunnel open, closed, refused or absent, and reopens a closed tunnel
 within milliseconds, so closing it is not a way to end a worker.
