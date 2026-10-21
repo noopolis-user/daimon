@@ -72,8 +72,11 @@ export class GrokBrokerTurnMeter {
     this.activityAt = this.startedAt;
   }
 
-  /** Returns the request index and its upstream abort signal when admitted, the limit that refused it, or `busy` while another request is in flight. */
-  admit(): Readonly<{ index: number; signal: AbortSignal } | { refused: Exclude<EngineBrokerLimitReason, "none"> } | { busy: true }> {
+  /**
+   * Returns the request index and its upstream abort signal when admitted, the limit that refused it, or `busy` while another request is in flight.
+   * `keepFinal` admits a request that cannot replace the answer (a compaction summary), so a final reply already recorded survives it.
+   */
+  admit(options: Readonly<{ keepFinal?: boolean }> = {}): Readonly<{ index: number; signal: AbortSignal } | { refused: Exclude<EngineBrokerLimitReason, "none"> } | { busy: true }> {
     if (this.reason === "none") {
       if (this.now() - this.startedAt >= this.limits.timeoutMs) this.trip("timeout");
       else if (this.timings.length >= this.limits.maxRequests) this.trip("requests");
@@ -82,8 +85,9 @@ export class GrokBrokerTurnMeter {
     if (this.reason !== "none") return { refused: this.reason };
     if (this.inFlight !== undefined) return { busy: true };
     this.timings.push({ startedAt: new Date(this.now()).toISOString() });
-    // A new request means the previous answer was not the last one.
-    this.final = undefined; this.activityAt = this.now();
+    // A new sampling request means the previous answer was not the last one.
+    if (options.keepFinal !== true) this.final = undefined;
+    this.activityAt = this.now();
     const controller = new AbortController();
     this.inFlight = { index: this.timings.length - 1, controller };
     return { index: this.inFlight.index, signal: controller.signal };

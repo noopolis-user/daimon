@@ -7,7 +7,8 @@ import { CLI_ENGINE_MAX_DIAGNOSTIC_BYTES } from "../pi/cliChildOutput.js";
 import { EngineBrokerCapabilities } from "./engineBrokerCapabilities.js";
 import { ENGINE_BROKER_AUTH_STALE } from "./engineBrokerProtocol.js";
 import { DEFAULT_GROK_BROKER_MODEL_POLICY, parseGrokBrokerModelPolicy, type GrokBrokerModelPolicy } from "./grokBrokerModelPolicy.js";
-import { authorizeGrokBrokerProxyRequest } from "./grokBrokerProxyRequest.js";
+import { authorizeGrokBrokerProxyRequest, GrokBrokerProxyRequestRejection } from "./grokBrokerProxyRequest.js";
+import { formatGrokBrokerProxyBodyShape, grokBrokerProxyBodyShape } from "./grokBrokerProxyBodyShape.js";
 import { GROK_SESSION_TITLE_SINK_KEY } from "./grokBrokerWorkerConfig.js";
 import { parseGrokFinalReply, parseGrokResponseToolNames, parseGrokUpstreamUsage, type GrokBrokerTurnMeter } from "./grokBrokerTurnMeter.js";
 import { GROK_ENGINE_BROKER } from "../contracts/runtimeContractManifest.js";
@@ -100,7 +101,12 @@ export function createGrokBrokerProxyHandler(
  * reason, and only genuinely transient faults keep 503.
  */
 export class GrokBrokerProxyRefusal extends Error {
-  constructor(readonly reason: string) { super(`grok broker proxy refused: ${reason}`); }
+  /**
+   * `check` names which body-gate check failed and `detail` is the refused
+   * body's content-free shape ({@link grokBrokerProxyBodyShape}); both are for
+   * the broker's stderr line, and `check` also rides the 400 body.
+   */
+  constructor(readonly reason: string, readonly check?: string, readonly detail?: string) { super(`grok broker proxy refused: ${reason}`); }
 }
 
 async function serve(request: IncomingMessage, response: ServerResponse, authority: GrokBrokerCredentialAuthority, upstream: GrokBrokerUpstream, capabilities: EngineBrokerCapabilities,guards:Map<string,()=>Promise<void>>,turns:Map<string,GrokBrokerProxyTurn>,fallback:GrokBrokerModelPolicy,grants?:GrokInferenceGrants): Promise<void> {
@@ -134,7 +140,7 @@ async function serve(request: IncomingMessage, response: ServerResponse, authori
     let token = await authority.accessToken(false);secrets.push(token);const rejectedDigest=createHash("sha256").update(token).digest("hex"); let prepared = authorizeRequestOrRefuse({ method: request.method ?? "", pathname: new URL(request.url ?? "/", "http://127.0.0.1").pathname, headers, body }, capabilities, token, turn.policy ?? fallback); token = "";
     // The spend gate runs after the body is proven a real lean worker request
     // (a refused session-title body never counts) and before any upstream call.
-    const admission=turn.meter.admit();
+    const admission=turn.meter.admit({ keepFinal: prepared.compaction === true });
     if("refused" in admission){response.writeHead(429,{"content-type":"application/json","cache-control":"no-store"});response.end(JSON.stringify({error:"turn limit reached",limit:admission.refused}));return;}
     if("busy" in admission){response.writeHead(429,{"content-type":"application/json","cache-control":"no-store"});response.end('{"error":"turn request in flight"}');return;}
     settle=(usage,toolCalls,finalReply)=>{turn.meter.settle(admission.index,usage,body.byteLength,toolCalls,finalReply);settle=undefined;};
@@ -147,8 +153,9 @@ async function serve(request: IncomingMessage, response: ServerResponse, authori
     // A successful answer that called nothing and stopped is the turn's final
     // reply: the broker ends a worker that finished but did not exit on it
     // (`grokEngineBrokerTurnEnd.ts`), and reports it when the launcher refused
-    // the worker's stdout. Observation only, exactly like the tool names.
-    settle?.(usageOrEstimate(result.body,result.headers["content-type"]),toolCallsOrNothing(result.body,result.headers["content-type"]),result.status===200?finalReplyOrNothing(result.body,result.headers["content-type"]):undefined);
+    // the worker's stdout. Observation only, exactly like the tool names. A
+    // compaction summary also calls nothing and stops, and is never the reply.
+    settle?.(usageOrEstimate(result.body,result.headers["content-type"]),toolCallsOrNothing(result.body,result.headers["content-type"]),result.status===200&&prepared.compaction!==true?finalReplyOrNothing(result.body,result.headers["content-type"]):undefined);
     response.writeHead(result.status, { "content-type": result.headers["content-type"] ?? "application/json", "cache-control": "no-store" }); response.end(result.body);
   } catch (error) {
     settle?.(undefined);
@@ -169,7 +176,8 @@ async function serve(request: IncomingMessage, response: ServerResponse, authori
     // A named refusal is its own account; anything else used to reach the log as
     // the bare word `broker_unavailable`, which names nothing — so it carries the
     // fault's own class and message, and nothing else, beside it.
-    const named = refused ? refusal : `${refusal} (${brokerFaultCause(error, secrets)})`;
+    const named = !refused ? `${refusal} (${brokerFaultCause(error, secrets)})`
+      : error instanceof GrokBrokerProxyRefusal && error.check !== undefined ? `${refusal} check=${error.check}${error.detail === undefined ? "" : ` ${error.detail}`}` : refusal;
     if (!titleSink && !expectedWorkerProbe(request)) process.stderr.write(`[grok-proxy] refused: ${named}\n`);
     // Grok's own session-title call is refused by design, and keeps the transient
     // 503 shape it has always had. Forcing 400 and 503 on it were both observed
@@ -183,7 +191,7 @@ async function serve(request: IncomingMessage, response: ServerResponse, authori
     }
     if (refused) {
       response.writeHead(400, { "content-type": "application/json", "cache-control": "no-store" });
-      response.end(JSON.stringify({ error: "broker refused this request", reason: refusal }));
+      response.end(JSON.stringify({ error: "broker refused this request", reason: refusal, ...(error instanceof GrokBrokerProxyRefusal && error.check !== undefined ? { check: error.check } : {}) }));
       return;
     }
     response.writeHead(503, { "content-type": "application/json", "cache-control": "no-store" });
@@ -270,10 +278,18 @@ const finalReplyOrNothing = (body: Uint8Array, contentType: string | undefined):
   try { return parseGrokFinalReply(body, contentType); } catch { return undefined; }
 };
 
-/** The body gate, refused non-retryably: a rejected body is a policy miss, never a transient fault. */
+/**
+ * The body gate, refused non-retryably: a rejected body is a policy miss, never
+ * a transient fault. The refusal names the failed check and the body's
+ * content-free shape, because a bare `request_body_rejected` sent a live
+ * training pilot to a stub harness to learn which of a dozen checks fired.
+ */
 function authorizeRequestOrRefuse(...args: Parameters<typeof authorizeGrokBrokerProxyRequest>): ReturnType<typeof authorizeGrokBrokerProxyRequest> {
   try { return authorizeGrokBrokerProxyRequest(...args); }
-  catch { throw new GrokBrokerProxyRefusal("request_body_rejected"); }
+  catch (error) {
+    const check = error instanceof GrokBrokerProxyRequestRejection ? error.check : "credential";
+    throw new GrokBrokerProxyRefusal("request_body_rejected", check, formatGrokBrokerProxyBodyShape(grokBrokerProxyBodyShape(args[0].body)));
+  }
 }
 async function readBody(request: IncomingMessage): Promise<Buffer> { const chunks: Buffer[] = []; let bytes = 0; for await (const chunk of request) { const value = Buffer.from(chunk); bytes += value.length; if (bytes > 2 * 1024 * 1024) throw new Error("too large"); chunks.push(value); } return Buffer.concat(chunks); }
 const defaultUpstream: GrokBrokerUpstream = async (request, signal) => { const result = await fetch(request.url, { method: "POST", headers: request.headers, body: Buffer.from(request.body), ...(signal === undefined ? {} : { signal }) }); return { status: result.status, headers: { "content-type": result.headers.get("content-type") ?? "application/json" }, body: new Uint8Array(await result.arrayBuffer()) }; };

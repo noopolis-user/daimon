@@ -37,6 +37,35 @@ tool), and any body whose `model`/`reasoning_effort` differ from the declared
 `grokBrokerModelPolicy.ts` policy (closed lists; default `grok-4.6`/`low`). The
 model override header follows that declaration.
 
+One other body is admitted, by normalizing it into that lean shape: Grok
+1.0.34's auto-compaction summary request (`normalizeGrokCompactionRequest`).
+When a session nears the worker model's `context_window` (131072, threshold
+85%), Grok asks the same model for a summary — one request, or two for its
+"two-pass" mode — with the lean tools, `temperature: 1`, `tool_choice: "auto"`
+and *no* `reasoning_effort` (live stub capture against the pinned binary in the
+training image). The gate used to refuse it as `request_body_rejected`; Grok
+then gave up on compaction (`auto_compact_failed`, retried on later turns) and
+carried the whole history forward, which is the seven-refusal burst a Grok
+training pilot logged. Only that exact member set with exactly those two values
+is admitted: both are the provider defaults and are dropped, the declared
+effort is set, and model, tools and stream options then pass the ordinary
+checks, so the forwarded body is an ordinary lean request and the spend
+envelope is unchanged. A forced `tool_choice`, another temperature, or any
+other member is still refused. The request is metered like any other, and its
+answer is never recorded as the turn's final reply (the proxy marks it
+`compaction`), because a summary also calls nothing and stops. Disabling
+compaction instead would leave a long session to overflow its window.
+
+Every body-gate refusal names its failed check (`GrokBrokerProxyRejectionCheck`:
+`route`, `body_size`, `bearer`, `scope`, `client_version`, `json`, `envelope`,
+`model`, `reasoning_effort`, `tools`, `members`, `stream_options`, or
+`credential`) on the broker's stderr and in the 400 body's `check`, and the
+stderr line carries the body's content-free shape
+(`grokBrokerProxyBodyShape.ts`): byte length, sorted top-level member names,
+tool names, message count, role runs and `tool_choice`. Every name is
+admitted only as a plain short identifier (else `<invalid>`) and every list is
+bounded; never a message, schema, value, header or token.
+
 The proxy is the per-turn limit gate too. Every broker turn registers a
 `grokBrokerTurnMeter.ts` meter with its registration's model policy, and the
 proxy forwards nothing for a turn without one. After a body is proven a lean

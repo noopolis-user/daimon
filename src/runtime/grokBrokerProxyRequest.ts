@@ -4,8 +4,21 @@ import type { EngineBrokerCapabilities } from "./engineBrokerCapabilities.js";
 import { DEFAULT_GROK_BROKER_MODEL_POLICY, parseGrokBrokerModelPolicy, type GrokBrokerModelPolicy } from "./grokBrokerModelPolicy.js";
 
 const MAX_BODY = 2 * 1024 * 1024;
+
+/**
+ * Which body-gate check refused a request: a closed, content-free code, so a
+ * refusal on the broker's stderr names its cause without a stub harness.
+ */
+export type GrokBrokerProxyRejectionCheck = "route" | "body_size" | "bearer" | "scope" | "client_version" | "json" | "envelope" | "model" | "reasoning_effort" | "tools" | "members" | "stream_options";
+
+/** A body-gate refusal. The message is the historic one; `check` names the failed check. */
+export class GrokBrokerProxyRequestRejection extends Error {
+  constructor(readonly check: GrokBrokerProxyRejectionCheck) { super("broker proxy request rejected"); }
+}
+function reject(check: GrokBrokerProxyRejectionCheck): never { throw new GrokBrokerProxyRequestRejection(check); }
 export type GrokBrokerProxyInput = Readonly<{ method: string; pathname: string; headers: Readonly<Record<string, string | undefined>>; body: Uint8Array; agentId?: string; turnId?: string }>;
-export type GrokBrokerUpstreamRequest = Readonly<{ url: "https://cli-chat-proxy.grok.com/v1/chat/completions"; headers: Readonly<Record<string, string>>; body: Uint8Array }>;
+/** `compaction` marks a normalized auto-compaction summary request: its answer is a summary, never the turn's final reply. */
+export type GrokBrokerUpstreamRequest = Readonly<{ url: "https://cli-chat-proxy.grok.com/v1/chat/completions"; headers: Readonly<Record<string, string>>; body: Uint8Array; compaction?: true }>;
 
 /**
  * Authorizes one worker request and rebuilds it for the provider.
@@ -18,17 +31,21 @@ export type GrokBrokerUpstreamRequest = Readonly<{ url: "https://cli-chat-proxy.
  * - the offered tool names are exactly the lean visible set. Grok 1.0.34 turns
  *   an unmappable `--tools` entry into its full 19-tool set, and its per-turn
  *   `session_title` request carries a single forced tool; both are refused.
+ *
+ * One other shape is admitted, and only by normalizing it into the lean one:
+ * Grok 1.0.34's auto-compaction summary request ({@link normalizeGrokCompactionRequest}).
  */
 export function authorizeGrokBrokerProxyRequest(input: GrokBrokerProxyInput, capabilities: EngineBrokerCapabilities, bearer: string, policy: GrokBrokerModelPolicy = DEFAULT_GROK_BROKER_MODEL_POLICY): GrokBrokerUpstreamRequest {
   const declared = parseGrokBrokerModelPolicy(policy);
-  if (input.method !== "POST" || input.pathname !== "/v1/chat/completions" || input.body.byteLength < 2 || input.body.byteLength > MAX_BODY) throw new Error("broker proxy request rejected");
+  if (input.method !== "POST" || input.pathname !== "/v1/chat/completions") reject("route");
+  if (input.body.byteLength < 2 || input.body.byteLength > MAX_BODY) reject("body_size");
   const authorization = input.headers.authorization; const match = authorization?.match(/^Bearer ([A-Za-z0-9_-]{40,})$/u);
-  if (match === null || match === undefined) throw new Error("broker proxy request rejected");
+  if (match === null || match === undefined) return reject("bearer");
   const scope = capabilities.authorizeToken(match[1]!);
-  if (scope === undefined || (input.agentId !== undefined && scope.agentId !== input.agentId) || (input.turnId !== undefined && scope.turnId !== input.turnId)) throw new Error("broker proxy request rejected");
+  if (scope === undefined || (input.agentId !== undefined && scope.agentId !== input.agentId) || (input.turnId !== undefined && scope.turnId !== input.turnId)) reject("scope");
   if (!bearer || /[\r\n]/u.test(bearer)) throw new Error("broker credential authority unavailable");
   const clientVersion = input.headers["x-grok-client-version"];
-  if (clientVersion !== GROK_ENGINE_BROKER.grokCliVersion) throw new Error("broker proxy request rejected");
+  if (clientVersion !== GROK_ENGINE_BROKER.grokCliVersion) reject("client_version");
   let parsed: Record<string, unknown>;
   // `__proto__` is refused at any depth: JSON.parse makes it an ordinary own
   // member, but an upstream JavaScript parser may treat it as a prototype.
@@ -37,11 +54,14 @@ export function authorizeGrokBrokerProxyRequest(input: GrokBrokerProxyInput, cap
       if (key === "__proto__") throw new Error("broker proxy request rejected");
       return value;
     }) as Record<string, unknown>;
-  } catch { throw new Error("broker proxy request rejected"); }
-  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed) || parsed.stream !== true || !Array.isArray(parsed.messages)) throw new Error("broker proxy request rejected");
-  if (parsed.model !== declared.model || parsed.reasoning_effort !== declared.reasoningEffort) throw new Error("broker proxy request rejected");
-  if (!exactLeanTools(parsed.tools)) throw new Error("broker proxy request rejected");
-  if (Object.keys(parsed).some((key) => !LEAN_BODY_MEMBERS.has(key)) || !validStreamOptions(parsed.stream_options)) throw new Error("broker proxy request rejected");
+  } catch { return reject("json"); }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed) || parsed.stream !== true || !Array.isArray(parsed.messages)) reject("envelope");
+  const compaction = normalizeGrokCompactionRequest(parsed, declared.reasoningEffort);
+  if (parsed.model !== declared.model) reject("model");
+  if (parsed.reasoning_effort !== declared.reasoningEffort) reject("reasoning_effort");
+  if (!exactLeanTools(parsed.tools)) reject("tools");
+  if (Object.keys(parsed).some((key) => !LEAN_BODY_MEMBERS.has(key))) reject("members");
+  if (!validStreamOptions(parsed.stream_options)) reject("stream_options");
   // Keep origin/main's production handling: UTF-8 replacement decoding, then
   // serialize the validated object (including last-member-wins duplicates).
   // Only a clocked turn takes the stricter date rewrite before this gate.
@@ -52,8 +72,43 @@ export function authorizeGrokBrokerProxyRequest(input: GrokBrokerProxyInput, cap
       "x-xai-token-auth": "xai-grok-cli", "x-grok-model-override": declared.model,
       "x-grok-client-version": clientVersion, "x-grok-client-identifier": "grok-shell"
     },
-    body: Buffer.from(JSON.stringify(parsed))
+    body: Buffer.from(JSON.stringify(parsed)),
+    ...(compaction ? { compaction: true as const } : {})
   };
+}
+
+/**
+ * Top-level members of Grok 1.0.34's auto-compaction summary request (live stub
+ * capture against the pinned binary in the training image, 2026-10-21). When a
+ * session nears the model's `context_window`, Grok asks the same model for a
+ * summary — single-pass, or a second "two-pass" request — and sends it with
+ * the lean tool set, `tool_choice: "auto"` and `temperature: 1`, and *without*
+ * `reasoning_effort`. Refusing it does not stop the session: Grok gives up on
+ * compaction and carries the whole history forward, so every refusal was a
+ * wasted round trip and the context kept growing.
+ */
+const COMPACTION_BODY_MEMBERS: ReadonlySet<string> = new Set(["messages", "model", "stream", "stream_options", "temperature", "tool_choice", "tools"]);
+
+/**
+ * Rewrites, in place, exactly the captured compaction shape into the lean
+ * worker shape, and reports whether it did. The two extra members are each
+ * the provider's default value (`tool_choice: "auto"` with tools offered,
+ * `temperature: 1`), so removing them changes nothing the model is asked; the
+ * missing effort is set to the declared one, so the request cannot fall back
+ * to a provider default effort. Every other check — model, tools, stream
+ * options — then runs on the result exactly as for any worker request, and
+ * the forwarded body is indistinguishable from an ordinary lean request: the
+ * spend envelope is unchanged. Any other value of either member (a forced
+ * `tool_choice`, another temperature) or any other member set is left as is,
+ * and refused by the ordinary checks.
+ */
+export function normalizeGrokCompactionRequest(parsed: Record<string, unknown>, reasoningEffort: string): boolean {
+  const keys = Object.keys(parsed);
+  if (keys.length !== COMPACTION_BODY_MEMBERS.size || keys.some((key) => !COMPACTION_BODY_MEMBERS.has(key))) return false;
+  if (parsed.temperature !== 1 || parsed.tool_choice !== "auto") return false;
+  delete parsed.temperature; delete parsed.tool_choice;
+  parsed.reasoning_effort = reasoningEffort;
+  return true;
 }
 
 /** Top-level members of a Grok 1.0.34 lean worker chat-completions body (live stub capture). */
