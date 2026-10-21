@@ -82,3 +82,29 @@ test("a compaction summary is metered like any request and is never recorded as 
     assert.equal(meter.finalReply()?.text, "done", "an ordinary stopped answer still is");
   } finally { await proxy.close(); }
 });
+
+test("a compaction after the final reply keeps that reply", async () => {
+  const sse = (content: string) => Buffer.from([
+    `data: ${JSON.stringify({ choices: [{ index: 0, delta: { role: "assistant", content }, finish_reason: null }] })}`,
+    `data: ${JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: "stop" }], usage: { prompt_tokens: 1000, completion_tokens: 10, total_tokens: 1010 } })}`,
+    "data: [DONE]", ""
+  ].join("\n\n"));
+  let calls = 0;
+  const proxy = await startGrokBrokerProxy({ accessToken: async () => "provider-token", markRejected: async () => undefined }, async () => {
+    calls += 1;
+    return { status: 200, headers: { "content-type": "text/event-stream" }, body: sse(calls === 1 ? "done" : "summary of the session") };
+  }, undefined, 0);
+  try {
+    const token = proxy.capabilities.issue("agent", "turn");
+    const meter = new GrokBrokerTurnMeter({ maxRequests: 32, maxTokens: 300_000, timeoutMs: 240_000 });
+    proxy.registerIsolationGuard("turn", async () => undefined);
+    proxy.registerTurn("turn", { policy: { model: "grok-4.6", reasoningEffort: "low" }, meter });
+    const post = (body: unknown) => fetch(`http://127.0.0.1:${proxy.port}/v1/chat/completions`, { method: "POST", headers: { authorization: `Bearer ${token}`, "x-grok-client-version": "1.0.34" }, body: JSON.stringify(body) });
+    const final = await post({ model: "grok-4.6", reasoning_effort: "low", stream: true, messages: history, tools: lean }); await final.arrayBuffer();
+    assert.equal(meter.finalReply()?.text, "done");
+    const compaction = await post(compactionBody()); await compaction.arrayBuffer();
+    assert.equal(compaction.status, 200);
+    assert.equal(meter.snapshot().requests, 2);
+    assert.equal(meter.finalReply()?.text, "done", "a compaction summary never erases the reply before it");
+  } finally { await proxy.close(); }
+});

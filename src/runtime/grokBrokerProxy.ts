@@ -140,7 +140,7 @@ async function serve(request: IncomingMessage, response: ServerResponse, authori
     let token = await authority.accessToken(false);secrets.push(token);const rejectedDigest=createHash("sha256").update(token).digest("hex"); let prepared = authorizeRequestOrRefuse({ method: request.method ?? "", pathname: new URL(request.url ?? "/", "http://127.0.0.1").pathname, headers, body }, capabilities, token, turn.policy ?? fallback); token = "";
     // The spend gate runs after the body is proven a real lean worker request
     // (a refused session-title body never counts) and before any upstream call.
-    const admission=turn.meter.admit();
+    const admission=turn.meter.admit({ keepFinal: prepared.compaction === true });
     if("refused" in admission){response.writeHead(429,{"content-type":"application/json","cache-control":"no-store"});response.end(JSON.stringify({error:"turn limit reached",limit:admission.refused}));return;}
     if("busy" in admission){response.writeHead(429,{"content-type":"application/json","cache-control":"no-store"});response.end('{"error":"turn request in flight"}');return;}
     settle=(usage,toolCalls,finalReply)=>{turn.meter.settle(admission.index,usage,body.byteLength,toolCalls,finalReply);settle=undefined;};
