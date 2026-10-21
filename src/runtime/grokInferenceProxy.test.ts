@@ -127,12 +127,14 @@ test("a grant's request ceiling and one-in-flight rule hold on the wire", async 
     const { token } = grants.issue({ model: "grok-4.6", reasoningEffort: "low", purpose: "judge" });
     const first = post(port, token, judgeBody());
     while (calls === 0) await new Promise((resolve) => setTimeout(resolve, 5));
-    const busy = await post(port, token, judgeBody()); assert.equal(busy.status, 429); assert.match(busy.text, /in flight/u);
-    release(); assert.equal((await first).status, 200);
+    // An overlapping request waits its turn on the grant's single lane instead of a 429.
+    const second = post(port, token, judgeBody());
+    await new Promise((resolve) => setTimeout(resolve, 50)); assert.equal(calls, 1);
+    release(); assert.equal((await first).status, 200); assert.equal((await second).status, 200);
     const grant = grants.authorize(token)!;
-    for (let index = 1; index < 64; index++) { const admission = grant.meter.admit(); assert.ok("index" in admission); grants.settle(grant, admission.index, { input: 1, cacheRead: 0, cacheWrite: 0, output: 1, total: 2 }, 10); }
+    for (let index = 2; index < 64; index++) { const admission = grant.meter.admit(); assert.ok("index" in admission); grants.settle(grant, admission.index, { input: 1, cacheRead: 0, cacheWrite: 0, output: 1, total: 2 }, 10); }
     const over = await post(port, token, judgeBody()); assert.equal(over.status, 429); assert.match(over.text, /requests/u);
-    assert.equal(calls, 1); assert.equal(rows.length, 64);
+    assert.equal(calls, 2); assert.equal(rows.length, 64);
   }, { upstream: async () => { calls++; await gate; return { status: 200, headers: { "content-type": "text/event-stream" }, body: usageStream(50) }; } });
 });
 

@@ -117,7 +117,7 @@ test("upstream usage parsing takes the last usage block and never zero-fills", (
   assert.equal(parseGrokUpstreamUsage(twoBlocks, "text/event-stream"), undefined);
 });
 
-test("at most one upstream request is in flight per turn: an overlapping request is refused, uncounted", async () => {
+test("at most one upstream request is in flight per turn: an overlapping request waits, then is admitted on the settled total", async () => {
   // Mutation guard: without the in-flight gate both overlapping requests pass on
   // the same pre-settle token total and the one-request overshoot bound is gone.
   const meter = new GrokBrokerTurnMeter({ maxRequests: 32, maxTokens: 100, timeoutMs: 60_000 });
@@ -125,26 +125,30 @@ test("at most one upstream request is in flight per turn: an overlapping request
   assert.ok("index" in first);
   assert.deepEqual(meter.admit(), { busy: true });
   assert.equal(meter.snapshot().requests, 1);
+  let woke = false; const idle = meter.whenIdle().then(() => { woke = true; });
+  await Promise.resolve(); assert.equal(woke, false, "nothing wakes while the first request is unsettled");
   meter.settle(first.index, { input: 60, cacheRead: 0, cacheWrite: 0, output: 60, total: 120 }, 0);
+  await idle;
   assert.deepEqual(meter.admit(), { refused: "tokens" }, "once settled, the next request sees the reported total");
 
-  let release!: () => void; let calls = 0;
+  let release!: () => void; let calls = 0, open = 0, peak = 0;
   const gate = new Promise<void>((resolve) => { release = resolve; });
   const live = new GrokBrokerTurnMeter({ maxRequests: 32, maxTokens: 1_000_000, timeoutMs: 60_000 });
-  const proxy = await startGrokBrokerProxy({ accessToken: async () => "provider-token", markRejected: async () => undefined }, async () => { calls++; await gate; return { status: 200, headers: { "content-type": "text/event-stream" }, body: sse({ prompt_tokens: 1, completion_tokens: 1 }) }; }, undefined, 0);
+  const proxy = await startGrokBrokerProxy({ accessToken: async () => "provider-token", markRejected: async () => undefined }, async () => { calls++; open++; peak = Math.max(peak, open); await gate; open--; return { status: 200, headers: { "content-type": "text/event-stream" }, body: sse({ prompt_tokens: 1, completion_tokens: 1 }) }; }, undefined, 0);
   try {
     const token = proxy.capabilities.issue("agent", "turn");
     proxy.registerIsolationGuard("turn", async () => undefined);
     proxy.registerTurn("turn", { policy: { model: "grok-4.6", reasoningEffort: "low" }, meter: live });
     const pending = post(proxy.port, token);
     while (calls === 0) await new Promise((resolve) => setTimeout(resolve, 5));
-    const overlapping = await post(proxy.port, token);
-    assert.deepEqual([overlapping.status, JSON.parse(overlapping.text)], [429, { error: "turn request in flight" }]);
-    assert.equal(calls, 1);
+    const overlapping = post(proxy.port, token);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.equal(calls, 1, "the overlapping request is held, not forwarded beside the first");
     release();
     assert.equal((await pending).status, 200);
+    assert.equal((await overlapping).status, 200);
     assert.equal((await post(proxy.port, token)).status, 200);
-    assert.deepEqual([calls, live.snapshot().requests, live.snapshot().limitReason], [2, 2, "none"]);
+    assert.deepEqual([calls, peak, live.snapshot().requests, live.snapshot().limitReason], [3, 1, 3, "none"]);
   } finally { release(); await proxy.close(); }
 });
 
