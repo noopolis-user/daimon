@@ -16,6 +16,7 @@ import { GROK_ENGINE_BROKER } from "../contracts/runtimeContractManifest.js";
 import { serveGrokInferenceGrant } from "./grokInferenceProxy.js";
 import type { GrokInferenceGrants } from "./grokInferenceGrants.js";
 import { GrokBrokerProviderClockRefusal, type GrokBrokerProviderClock } from "./grokBrokerProviderClock.js";
+import { isGrokUpstreamTransportFault } from "./grokBrokerUpstreamFault.js";
 
 /** One running turn as the proxy sees it: its declared model/effort and its spend gate. */
 export type GrokBrokerProxyTurn = Readonly<{
@@ -110,9 +111,18 @@ export class GrokBrokerProxyRefusal extends Error {
   constructor(readonly reason: string, readonly check?: string, readonly detail?: string) { super(`grok broker proxy refused: ${reason}`); }
 }
 
+/** A transport retry's fresh admission that did not admit: its client left, or a limit refused it. */
+class GrokBrokerRetryNotAdmitted extends Error {
+  constructor(readonly outcome: "gone" | Readonly<{ refused: string }>) { super("grok broker proxy retry not admitted"); }
+}
+
 async function serve(request: IncomingMessage, response: ServerResponse, authority: GrokBrokerCredentialAuthority, upstream: GrokBrokerUpstream, capabilities: EngineBrokerCapabilities,guards:Map<string,()=>Promise<void>>,turns:Map<string,GrokBrokerProxyTurn>,fallback:GrokBrokerModelPolicy,grants?:GrokInferenceGrants): Promise<void> {
   let settle:((usage:ReturnType<typeof parseGrokUpstreamUsage>,toolCalls?:readonly string[],finalReply?:string)=>void)|undefined;
   let titleSink = false;
+  // The turn this request belongs to, once known: every error response it is
+  // answered with is noted on that turn's meter, because the worker runs with
+  // `max_retries = 0` and that response ends its turn (`grokEngineBrokerTurnEnd.ts`).
+  let owner: GrokBrokerProxyTurn | undefined;
   // Every credential this request holds, kept only for this request and only so
   // that a fault's own words can be redacted against them exactly as the CLI
   // child and launcher diagnostics are. Nothing reads them but {@link brokerFaultCause}.
@@ -125,6 +135,7 @@ async function serve(request: IncomingMessage, response: ServerResponse, authori
     if(match)secrets.push(match[1]!);
     if(match&&match[1]!.startsWith(GROK_ENGINE_BROKER.inferenceGrants.tokenPrefix)){if(!grants)throw new GrokBrokerProxyRefusal("inference_grants_unavailable");return await serveGrokInferenceGrant({method:request.method??"",pathname:new URL(request.url??"/","http://127.0.0.1").pathname,headers,body,token:match[1]!},response,grants,authority,upstream);}
     const scope=match?capabilities.inspectToken(match[1]!):undefined;if(!scope)throw new GrokBrokerProxyRefusal("unknown_capability");const guard=guards.get(scope.turnId),turn=turns.get(scope.turnId);if(!guard||!turn)throw new GrokBrokerProxyRefusal("no_active_turn");
+    owner = turn;
     try { await guard(); } catch (error) { throw new GrokBrokerProxyRefusal("worker_isolation_unverified"); }
     // Neutralize engine context before the existing body gate or bearer read.
     // The clock belongs to this turn, never to the slot's installed variant.
@@ -146,10 +157,33 @@ async function serve(request: IncomingMessage, response: ServerResponse, authori
     const admission=await admitWhenIdle(turn.meter,response,{ keepFinal: prepared.compaction === true },()=>turns.get(scope.turnId)===turn&&guards.has(scope.turnId));
     if(admission==="gone")return;
     if(admission==="revoked")throw new GrokBrokerProxyRefusal("no_active_turn");
-    if("refused" in admission){response.writeHead(429,{"content-type":"application/json","cache-control":"no-store"});response.end(JSON.stringify({error:"turn limit reached",limit:admission.refused}));return;}
-    settle=(usage,toolCalls,finalReply)=>{turn.meter.settle(admission.index,usage,body.byteLength,toolCalls,finalReply);settle=undefined;};
-    let result = await upstream(prepared,admission.signal);
-    if (result.status === 401) { token = authority.refreshAfterRejection?await authority.refreshAfterRejection(rejectedDigest):await authority.accessToken(true);secrets.push(token);const refreshedDigest=createHash("sha256").update(token).digest("hex"); prepared = { ...prepared, headers: { ...prepared.headers, authorization: `Bearer ${token}` } }; token = ""; result = await upstream(prepared,admission.signal);if(result.status===401)await authority.markRejected(refreshedDigest); }
+    if("refused" in admission)throw new GrokBrokerRetryNotAdmitted(admission);
+    let current = admission;
+    const meterAttempt=()=>{settle=(usage,toolCalls,finalReply)=>{turn.meter.settle(current.index,usage,body.byteLength,toolCalls,finalReply);settle=undefined;};};
+    meterAttempt();
+    // A connection upstream dropped before its response was complete is retried
+    // once, as a freshly admitted request: the failed attempt is settled (charged
+    // the missing-usage estimate) and the retry re-checks every limit, the run
+    // budget and the one-in-flight lane. An HTTP status, an abort or a refusal is
+    // never retried (`grokBrokerUpstreamFault.ts`).
+    let retried = false;
+    const forward = async (outgoing: typeof prepared) => {
+      try { return await upstream(outgoing, current.signal); }
+      catch (error) {
+        if (retried || !isGrokUpstreamTransportFault(error, current.signal)) throw error;
+        retried = true;
+        process.stderr.write(`[grok-proxy] retrying once: upstream_transport (${brokerFaultCause(error, secrets)})\n`);
+        settle?.(undefined);
+        const again = await admitWhenIdle(turn.meter, response, { keepFinal: prepared.compaction === true }, () => turns.get(scope.turnId) === turn && guards.has(scope.turnId));
+        if (again === "gone") throw new GrokBrokerRetryNotAdmitted("gone");
+        if (again === "revoked") throw new GrokBrokerProxyRefusal("no_active_turn");
+        if ("refused" in again) throw new GrokBrokerRetryNotAdmitted(again);
+        current = again; meterAttempt();
+        return upstream(outgoing, current.signal);
+      }
+    };
+    let result = await forward(prepared);
+    if (result.status === 401) { token = authority.refreshAfterRejection?await authority.refreshAfterRejection(rejectedDigest):await authority.accessToken(true);secrets.push(token);const refreshedDigest=createHash("sha256").update(token).digest("hex"); prepared = { ...prepared, headers: { ...prepared.headers, authorization: `Bearer ${token}` } }; token = ""; result = await forward(prepared);if(result.status===401)await authority.markRejected(refreshedDigest); }
     // Names only, bounded, and never a reason to fail the request: the response
     // is already buffered here for its usage block, so what the model tried to
     // call is in hand. A decoder fault records no attempt rather than a false
@@ -160,9 +194,20 @@ async function serve(request: IncomingMessage, response: ServerResponse, authori
     // the worker's stdout. Observation only, exactly like the tool names. A
     // compaction summary also calls nothing and stops, and is never the reply.
     settle?.(usageOrEstimate(result.body,result.headers["content-type"]),toolCallsOrNothing(result.body,result.headers["content-type"]),result.status===200&&prepared.compaction!==true?finalReplyOrNothing(result.body,result.headers["content-type"]):undefined);
+    if (result.status >= 400) owner.meter.noteFailedResponse("upstream_failed");
     response.writeHead(result.status, { "content-type": result.headers["content-type"] ?? "application/json", "cache-control": "no-store" }); response.end(result.body);
   } catch (error) {
     settle?.(undefined);
+    if (error instanceof GrokBrokerRetryNotAdmitted) {
+      if (error.outcome === "gone") return;
+      owner?.meter.noteFailedResponse("broker_refused");
+      response.writeHead(429, { "content-type": "application/json", "cache-control": "no-store" });
+      response.end(JSON.stringify({ error: "turn limit reached", limit: error.outcome.refused }));
+      return;
+    }
+    // Every answer below is an error the worker cannot retry, so it ends the
+    // worker's turn unless the worker asks again; the broker ends it promptly.
+    owner?.meter.noteFailedResponse(isGrokUpstreamTransportFault(error) ? "upstream_failed" : "broker_refused");
     if (error instanceof GrokBrokerRunLimit) {
       response.writeHead(429, { "content-type": "application/json", "cache-control": "no-store" });
       response.end('{"error":"run_request_limit"}');
