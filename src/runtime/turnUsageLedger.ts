@@ -90,6 +90,10 @@ export const TURN_USAGE_OUTCOMES = ["completed", "failed"] as const;
  * - `output_limit` — the retained-output bound was exceeded.
  * - `engine_exit` — the child exited non-zero (or died) after reporting usage.
  * - `turn_rejected` — usage was reported but the decoded turn was not publishable.
+ * - `upstream_failed` — the Grok broker's provider answered an error status or
+ *   its connection failed (after one retry), and the worker's turn ended on it.
+ * - `broker_refused` — the Grok broker refused or could not serve the worker's
+ *   model request, and the worker's turn ended on it.
  * - `unknown` — any other failure (verification, cleanup, spawn).
  */
 export const TURN_USAGE_FAILURE_REASONS = [
@@ -99,6 +103,8 @@ export const TURN_USAGE_FAILURE_REASONS = [
   "output_limit",
   "engine_exit",
   "turn_rejected",
+  "upstream_failed",
+  "broker_refused",
   "unknown"
 ] as const;
 

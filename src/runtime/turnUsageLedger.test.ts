@@ -149,7 +149,7 @@ test("a failed wake's row carries the outcome and a reason from the closed vocab
   assert.equal(failed.reason, "token_ceiling");
   assert.equal(failed.total, measurement.total, "the numbers are the ones the engine reported, not the outcome's");
 
-  assert.deepEqual([...TURN_USAGE_FAILURE_REASONS], ["token_ceiling", "request_ceiling", "wake_timeout", "output_limit", "engine_exit", "turn_rejected", "unknown"]);
+  assert.deepEqual([...TURN_USAGE_FAILURE_REASONS], ["token_ceiling", "request_ceiling", "wake_timeout", "output_limit", "engine_exit", "turn_rejected", "upstream_failed", "broker_refused", "unknown"]);
   for (const reason of TURN_USAGE_FAILURE_REASONS) {
     assert.equal(JSON.parse(renderTurnUsageLine(entry({ outcome: { status: "failed", reason } }))).reason, reason);
   }
