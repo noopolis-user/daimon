@@ -152,7 +152,8 @@ test("a fault's own cause is named too, because `fetch failed` on its own names 
   try {
     const token = proxy.capabilities.issue("agent", "turn"); arm(proxy, async () => undefined);
     assert.equal(await post(proxy.port, token, leanBody()), 503);
-    assert.deepEqual(lines, ["[grok-proxy] refused: broker_unavailable (TypeError: fetch failed <- Error: ENOTFOUND)\n"]);
+    // A transport fault is retried once (`grokBrokerUpstreamFault.ts`) and each attempt names its cause.
+    assert.deepEqual(lines, ["[grok-proxy] retrying once: upstream_transport (TypeError: fetch failed <- Error: ENOTFOUND)\n", "[grok-proxy] refused: broker_unavailable (TypeError: fetch failed <- Error: ENOTFOUND)\n"]);
   } finally { process.stderr.write = original; await proxy.close(); }
 });
 

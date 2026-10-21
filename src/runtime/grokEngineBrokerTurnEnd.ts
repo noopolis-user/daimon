@@ -40,15 +40,24 @@ import type { GrokBrokerTurnMeter } from "./grokBrokerTurnMeter.js";
  * `grokWorkerToolProcess.ts`) is working too: it is never idle while one runs,
  * and the quiet clock restarts from the last poll that saw one. The idle bound
  * stays minutes, not seconds, because that observation is a poll.
+ *
+ * An error response ends a worker's turn too: the worker runs with
+ * `max_retries = 0`, so once the proxy has answered it with an error
+ * (`GrokBrokerTurnMeter.noteFailedResponse`) its inference is over, yet Grok
+ * 1.0.34 then stays alive and idle (pilot run57: a 503 at 16:56:03, the turn
+ * sealed `failed/timeout` ten minutes later). With no new model request and no
+ * tool call in flight for `finalGraceMs` after it, `onEnd("error_response")`
+ * runs; a new request forgets it, exactly as it forgets a final reply. A final
+ * reply still recorded beside it wins, because that is finished work.
  */
 export type GrokBrokerTurnEndTiming = Readonly<{ finalGraceMs: number; idleMs: number; pollMs: number }>;
 export const GROK_BROKER_TURN_END: GrokBrokerTurnEndTiming = Object.freeze({ finalGraceMs: 15_000, idleMs: 10 * 60_000, pollMs: 1_000 });
 /** How long a turn the broker aborted waits for its worker identity to empty before it is sealed. */
 export const GROK_WORKER_REAP_WAIT_MS = 10_000;
-export type GrokBrokerTurnEndReason = "final_reply" | "idle";
+export type GrokBrokerTurnEndReason = "final_reply" | "error_response" | "idle";
 
 export function watchGrokBrokerTurnEnd(input: Readonly<{
-  meter: Pick<GrokBrokerTurnMeter, "finalReply" | "busy" | "lastActivityAt">;
+  meter: Pick<GrokBrokerTurnMeter, "finalReply" | "failedResponse" | "busy" | "lastActivityAt">;
   activity: () => EngineBrokerMcpActivity | undefined;
   /** Whether the worker has a local tool process alive, as last observed; absent means never observed. */
   toolProcess?: () => boolean;
@@ -81,7 +90,9 @@ export function watchGrokBrokerTurnEnd(input: Readonly<{
     const quietSince = Math.max(input.meter.lastActivityAt(), activity?.lastActivityAt ?? 0);
     // A tool process defers only the idle verdict. A final reply called no tool, so a child still
     // alive beside it is not the model's work and must not hold a finished worker open.
+    const failed = final === undefined ? input.meter.failedResponse() : undefined;
     const reason: GrokBrokerTurnEndReason | undefined = final !== undefined && now() - Math.max(final.at, quietSince) >= timing.finalGraceMs ? "final_reply"
+      : failed !== undefined && now() - Math.max(failed.at, quietSince) >= timing.finalGraceMs ? "error_response"
       : now() - Math.max(quietSince, toolSeenAt) >= timing.idleMs ? "idle" : undefined;
     if (reason === undefined) return;
     stop();

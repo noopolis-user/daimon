@@ -284,6 +284,36 @@ fails fast instead and the turn reaches the host with a status. These bytes are
 manifest-pinned per model and effort, so changing them rotates
 `GROK_ENGINE_BROKER.worker.configSha256` and every deployment must re-vendor.
 
+So the broker does retry what is genuinely transient, once. Pilot run57 lost a
+turn to the provider closing its socket mid-response (`[grok-proxy] refused:
+broker_unavailable (TypeError: terminated <- SocketError: other side closed)`):
+the 503 ended the worker's inference, Grok stayed alive and idle, and the turn
+sealed `failed/timeout` at the 10-minute idle bound. A transport-level upstream
+failure — undici's `fetch failed`/`terminated`, or a socket errno/undici code
+(`grokBrokerUpstreamFault.ts`) — is now retried once by the proxy as a freshly
+admitted request: the failed attempt is settled at the missing-usage estimate
+(its own request row, counted in `estimated_requests`), and the retry passes
+`admitWhenIdle` and the run budget again, so every limit and the one-in-flight
+lane hold. A retry that would cross a limit is not attempted and the request
+answers 503 (`upstream_failed`): the meter's non-tripping `hasHeadroom` is
+asked first, because a retry tripping `requests`/`tokens` would seal
+`limit_exceeded`, which Paideia reads as the subject spending its own budget.
+An HTTP status (upstream's answer, passed through), an abort, a
+refusal, a limit and a credential fault are never retried, and the stale-auth
+fence is untouched. A second transport failure is answered 503 as before.
+
+And an error the worker cannot retry ends its turn promptly. Every error
+response the proxy writes to a known turn is noted on its meter
+(`noteFailedResponse`: `upstream_failed` for an upstream error status or a
+failed connection, `broker_refused` for a broker refusal or fault); a newly
+admitted request forgets it, exactly as it forgets a final reply. With no new
+model request and no tool call in flight for `finalGraceMs` (15 s) after it, the
+watchdog ends the turn (`error_response`) through the ordinary abort path and it
+seals `failed` with code `engine_failed`, `limit_reason: none`, and usage
+`reason` `upstream_failed`/`broker_refused` — never `cancelled` and never
+`timeout`, so Paideia's `declaredLimitStop` never reads it as a subject limit.
+A final reply recorded beside it wins: that is finished work.
+
 `grokBrokerProjection.ts` is the public, I/O-free projection of one brokered
 Grok agent's slot (`noopolis.daimon.grok-broker-projection.v2`): Daimon's own
 deny collectors plus the caller's evaluator paths, profile/config/prompt

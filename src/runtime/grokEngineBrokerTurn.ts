@@ -198,7 +198,9 @@ export async function runGrokEngineBrokerTurn(deps: GrokEngineBrokerTurnDependen
     // Sealed completed but its ledger append failed: the published record is the truth, exactly as on the success path.
     if (sealed !== undefined) return sealed;
     const snapshot = meter.snapshot();
-    const code: EngineBrokerTurnFailure["code"] = snapshot.limitReason !== "none" ? "limit_exceeded" : deps.credentialStale() ? "auth_stale" : controller.signal.aborted ? "cancelled" : "engine_failed";
+    // A turn the broker ended after an error response failed on that error, not on a cancellation.
+    const failedResponse = meter.failedResponse();
+    const code: EngineBrokerTurnFailure["code"] = snapshot.limitReason !== "none" ? "limit_exceeded" : deps.credentialStale() ? "auth_stale" : controller.signal.aborted && !(endedBy === "error_response" && !cancelledByCaller) ? "cancelled" : "engine_failed";
     const diagnostic = error instanceof NativeBrokerTurnFailure ? error.diagnostic : nativeDiagnostic && !attested ? { ...nativeDiagnostic, status: "worker_failed" as const, stage: "attestation" as const, failureClass: error instanceof GrokWorkerAttestationFailure ? error.failureClass : "profile_invalid" as const, profileApplied: false } : undefined;
     const stream = output === undefined ? undefined : decodeGrokStreamUsage(output);
     const accounting = { outcome: "failed", usage: streamOrMeterUsage(stream, snapshot), model: declared, requests: requestCount(stream, snapshot), limitReason: snapshot.limitReason } as const;
@@ -213,7 +215,7 @@ export async function runGrokEngineBrokerTurn(deps: GrokEngineBrokerTurnDependen
       ...observation, ...(diagnostic ? { diagnostic } : {}),
       ...(mcpCalls === undefined ? {} : { mcpCalls }), ...accounting
     };
-    const reason = snapshot.limitReason !== "none" ? limitReasonFor[snapshot.limitReason] : rejected ? "turn_rejected" : "unknown";
+    const reason = snapshot.limitReason !== "none" ? limitReasonFor[snapshot.limitReason] : rejected ? "turn_rejected" : code === "engine_failed" && failedResponse !== undefined ? failedResponse.kind : "unknown";
     const failure = new EngineBrokerTurnFailure(code, diagnostic, accounting, mcpCalls, shellClock, observation.providerClock);
     await finishBrokerTurnWithUsage(deps.turns, request, failed, metering, {
       notionalUsd: 0, complete: false, reason, estimatedRequests: snapshot.estimatedRequests,

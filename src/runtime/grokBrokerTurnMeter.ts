@@ -11,6 +11,14 @@ export type GrokBrokerRequestTiming = Readonly<{ startedAt: string; endedAt?: st
 export type GrokBrokerTurnMeterSnapshot = Readonly<{ requests: number; tokens: number; limitReason: EngineBrokerLimitReason; usage: EngineBrokerTurnUsage | null; estimatedRequests: number; timings: readonly GrokBrokerRequestTiming[] }>;
 /** The model's last answer when it called no tool: the turn's final reply, as the proxy saw it, and when it settled. */
 export type GrokBrokerFinalReply = Readonly<{ index: number; text: string; at: number }>;
+/**
+ * Why the proxy last answered this turn's worker with an error: upstream
+ * answered an error status or its connection failed (`upstream_failed`), or
+ * the broker refused or could not serve the request (`broker_refused`).
+ */
+export type GrokBrokerFailedResponseKind = "upstream_failed" | "broker_refused";
+/** The latest error response the worker was given, and when, while no later request has been admitted. */
+export type GrokBrokerFailedResponse = Readonly<{ kind: GrokBrokerFailedResponseKind; at: number }>;
 
 /**
  * The weight a cached prompt read carries against the token ceiling.
@@ -73,6 +81,7 @@ export class GrokBrokerTurnMeter {
   private reason: EngineBrokerLimitReason = "none";
   private inFlight: { index: number; controller: AbortController } | undefined;
   private final: GrokBrokerFinalReply | undefined;
+  private failure: GrokBrokerFailedResponse | undefined;
   private activityAt: number;
   private idleWaiters: (() => void)[] = [];
   constructor(readonly limits: EngineBrokerTurnLimits, private readonly onLimit: (reason: Exclude<EngineBrokerLimitReason, "none">) => void = () => undefined, private readonly now: () => number = Date.now) {
@@ -95,6 +104,8 @@ export class GrokBrokerTurnMeter {
     this.timings.push({ startedAt: new Date(this.now()).toISOString() });
     // A new sampling request means the previous answer was not the last one.
     if (options.keepFinal !== true) this.final = undefined;
+    // A worker that asks again after an error response is still working.
+    this.failure = undefined;
     this.activityAt = this.now();
     const controller = new AbortController();
     this.inFlight = { index: this.timings.length - 1, controller };
@@ -148,6 +159,24 @@ export class GrokBrokerTurnMeter {
 
   /** The turn's final reply, while no later request has been admitted. */
   finalReply(): GrokBrokerFinalReply | undefined { return this.final; }
+  /**
+   * Records that the proxy answered this turn's worker with an error. The
+   * worker runs with `max_retries = 0`, so that response ends its turn unless
+   * it sends a new request — which {@link admit} sees and forgets this for.
+   */
+  noteFailedResponse(kind: GrokBrokerFailedResponseKind): void { this.failure = { kind, at: this.now() }; }
+  /** The latest error response the worker was given, while no later request has been admitted. */
+  failedResponse(): GrokBrokerFailedResponse | undefined { return this.failure; }
+  /**
+   * Whether {@link admit} would admit a request right now if the lane were
+   * free, without tripping anything. A transport retry asks this first: a retry
+   * that would cross a limit is not the subject spending its budget, so it must
+   * never be what trips one (`grokBrokerProxy.ts`).
+   */
+  hasHeadroom(): boolean {
+    return this.reason === "none" && this.now() - this.startedAt < this.limits.timeoutMs &&
+      this.timings.length < this.limits.maxRequests && this.tokens < this.limits.maxTokens;
+  }
   /** Whether a model request is in flight right now. */
   busy(): boolean { return this.inFlight !== undefined; }
   /** When a model request last started or settled (the meter's construction before any). */
