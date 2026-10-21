@@ -174,6 +174,8 @@ async function serve(request: IncomingMessage, response: ServerResponse, authori
         retried = true;
         process.stderr.write(`[grok-proxy] retrying once: upstream_transport (${brokerFaultCause(error, secrets)})\n`);
         settle?.(undefined);
+        // A client that hung up meanwhile has nobody left to read a retried answer.
+        if (response.destroyed) throw new GrokBrokerRetryNotAdmitted("gone");
         const again = await admitWhenIdle(turn.meter, response, { keepFinal: prepared.compaction === true }, () => turns.get(scope.turnId) === turn && guards.has(scope.turnId));
         if (again === "gone") throw new GrokBrokerRetryNotAdmitted("gone");
         if (again === "revoked") throw new GrokBrokerProxyRefusal("no_active_turn");
