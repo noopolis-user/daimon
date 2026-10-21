@@ -153,8 +153,9 @@ async function serve(request: IncomingMessage, response: ServerResponse, authori
     // A successful answer that called nothing and stopped is the turn's final
     // reply: the broker ends a worker that finished but did not exit on it
     // (`grokEngineBrokerTurnEnd.ts`), and reports it when the launcher refused
-    // the worker's stdout. Observation only, exactly like the tool names.
-    settle?.(usageOrEstimate(result.body,result.headers["content-type"]),toolCallsOrNothing(result.body,result.headers["content-type"]),result.status===200?finalReplyOrNothing(result.body,result.headers["content-type"]):undefined);
+    // the worker's stdout. Observation only, exactly like the tool names. A
+    // compaction summary also calls nothing and stops, and is never the reply.
+    settle?.(usageOrEstimate(result.body,result.headers["content-type"]),toolCallsOrNothing(result.body,result.headers["content-type"]),result.status===200&&prepared.compaction!==true?finalReplyOrNothing(result.body,result.headers["content-type"]):undefined);
     response.writeHead(result.status, { "content-type": result.headers["content-type"] ?? "application/json", "cache-control": "no-store" }); response.end(result.body);
   } catch (error) {
     settle?.(undefined);
