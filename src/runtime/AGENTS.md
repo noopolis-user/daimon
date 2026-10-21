@@ -81,8 +81,14 @@ keep cached tokens at their raw count. HTTP 429, and the tripped limit aborts
 the worker through the ordinary cancel/kill path. The token ceiling is checked
 between requests, so a turn overshoots it by at most the last admitted
 request. That bound holds only because a turn has at most one upstream request
-in flight: an overlapping request is refused (429, uncounted), and Grok's loop
-is sequential in every live capture. A per-request usage block above
+in flight: an overlapping request waits for the in-flight one to settle and is
+then admitted afresh, every limit re-checked on the settled total
+(`grokBrokerAdmission.ts`); a waiter whose client hangs up is never forwarded,
+and one whose turn was revoked meanwhile is refused `no_active_turn`. It used
+to be refused 429 `turn request in flight`, which is fatal under
+`max_retries = 0`: Grok's loop is logically sequential, yet pilot run54's proxy
+received two copies of one loop-17 request 4 ms apart, admitted the first and
+refused the copy Grok read, and runs 52–54 all died at the idle bound that way. A per-request usage block above
 `turnLimits.requestUsageMaxTokens` (500k) is invalid, and a response without
 valid usage is charged `ceil(bodyBytes/2) + 4096` tokens (rows say
 `usage_source: "estimated"`, usage rows `estimated_requests`), so a missing
