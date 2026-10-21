@@ -51,13 +51,20 @@ export const grokCeilingTokens = (usage: EngineBrokerTurnUsage): number =>
  *
  * The token bound is only a bound if no request can be admitted on a total
  * that an in-flight request has not yet reported into. So a turn has at most
- * ONE upstream request in flight: a second request arriving before the first
- * settled is refused (`busy`, HTTP 429) without being counted or tripping a
- * limit. Grok's headless loop is sequential — every live capture (P1
- * live-round1, P2 live) shows each request ending before the next starts — so
- * this refuses only a worker that is not behaving like Grok. Tripping a limit
- * (including the broker's timer) aborts that in-flight upstream call through
- * its own `AbortSignal` rather than letting it run to completion.
+ * ONE upstream request in flight: {@link admit} answers `busy` for a second
+ * request while the first is unsettled, without counting it or tripping a
+ * limit, and the proxy then waits on {@link whenIdle} and admits it afresh —
+ * every limit re-checked against a total that now includes the first answer.
+ * It is never refused for arriving early: Grok's loop is sequential, but the
+ * proxy does not see it that way. Training pilot run54 logged one
+ * `inference_start` for loop 17, yet two copies of that request reached the
+ * proxy 4 ms apart (`provider_clock.requests` 18 against 17 admitted); the
+ * first was admitted and answered upstream, the second was refused 429 `turn
+ * request in flight`, and that refusal was the copy Grok read, so the turn
+ * failed at the 10-minute idle bound with its work in progress. Runs 52 and 53
+ * died the same way. Tripping a limit (including the broker's timer) aborts
+ * that in-flight upstream call through its own `AbortSignal` rather than
+ * letting it run to completion, and wakes every waiter into its refusal.
  */
 export class GrokBrokerTurnMeter {
   private readonly startedAt: number;
@@ -67,6 +74,7 @@ export class GrokBrokerTurnMeter {
   private inFlight: { index: number; controller: AbortController } | undefined;
   private final: GrokBrokerFinalReply | undefined;
   private activityAt: number;
+  private idleWaiters: (() => void)[] = [];
   constructor(readonly limits: EngineBrokerTurnLimits, private readonly onLimit: (reason: Exclude<EngineBrokerLimitReason, "none">) => void = () => undefined, private readonly now: () => number = Date.now) {
     this.startedAt = now();
     this.activityAt = this.startedAt;
@@ -118,6 +126,24 @@ export class GrokBrokerTurnMeter {
     this.tokens += grokCeilingTokens(timing.usage);
     this.activityAt = this.now();
     if (finalReply !== undefined && toolCalls !== undefined && toolCalls.length === 0 && index === this.timings.length - 1) this.final = { index, text: finalReply, at: this.activityAt };
+    // Waiters resume asynchronously, after this settle has added the answer's tokens.
+    if (this.inFlight === undefined) this.wakeIdle();
+  }
+
+  /**
+   * Resolves once no request is in flight, or once a limit has tripped. A
+   * request that met `busy` waits here and calls {@link admit} again; it may
+   * meet `busy` once more if another waiter was admitted first.
+   */
+  whenIdle(): Promise<void> {
+    if (this.inFlight === undefined || this.reason !== "none") return Promise.resolve();
+    return new Promise((resolve) => { this.idleWaiters.push(resolve); });
+  }
+
+  private wakeIdle(): void {
+    const waiters = this.idleWaiters;
+    this.idleWaiters = [];
+    for (const wake of waiters) wake();
   }
 
   /** The turn's final reply, while no later request has been admitted. */
@@ -132,6 +158,7 @@ export class GrokBrokerTurnMeter {
     if (this.reason !== "none") return;
     this.reason = reason;
     this.abortInFlight();
+    this.wakeIdle();
     this.onLimit(reason);
   }
 

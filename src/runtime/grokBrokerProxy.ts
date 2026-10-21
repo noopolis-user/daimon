@@ -1,4 +1,5 @@
 import { GrokBrokerRunLimit, type GrokBrokerRunBudget } from "./grokBrokerRunBudget.js";
+import { admitWhenIdle } from "./grokBrokerAdmission.js";
 import { createHash } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -140,9 +141,12 @@ async function serve(request: IncomingMessage, response: ServerResponse, authori
     let token = await authority.accessToken(false);secrets.push(token);const rejectedDigest=createHash("sha256").update(token).digest("hex"); let prepared = authorizeRequestOrRefuse({ method: request.method ?? "", pathname: new URL(request.url ?? "/", "http://127.0.0.1").pathname, headers, body }, capabilities, token, turn.policy ?? fallback); token = "";
     // The spend gate runs after the body is proven a real lean worker request
     // (a refused session-title body never counts) and before any upstream call.
-    const admission=turn.meter.admit({ keepFinal: prepared.compaction === true });
+    // A request that meets another still in flight waits for it rather than being
+    // refused: one 429 ends the worker's turn (`grokBrokerAdmission.ts`).
+    const admission=await admitWhenIdle(turn.meter,response,{ keepFinal: prepared.compaction === true },()=>turns.get(scope.turnId)===turn&&guards.has(scope.turnId));
+    if(admission==="gone")return;
+    if(admission==="revoked")throw new GrokBrokerProxyRefusal("no_active_turn");
     if("refused" in admission){response.writeHead(429,{"content-type":"application/json","cache-control":"no-store"});response.end(JSON.stringify({error:"turn limit reached",limit:admission.refused}));return;}
-    if("busy" in admission){response.writeHead(429,{"content-type":"application/json","cache-control":"no-store"});response.end('{"error":"turn request in flight"}');return;}
     settle=(usage,toolCalls,finalReply)=>{turn.meter.settle(admission.index,usage,body.byteLength,toolCalls,finalReply);settle=undefined;};
     let result = await upstream(prepared,admission.signal);
     if (result.status === 401) { token = authority.refreshAfterRejection?await authority.refreshAfterRejection(rejectedDigest):await authority.accessToken(true);secrets.push(token);const refreshedDigest=createHash("sha256").update(token).digest("hex"); prepared = { ...prepared, headers: { ...prepared.headers, authorization: `Bearer ${token}` } }; token = ""; result = await upstream(prepared,admission.signal);if(result.status===401)await authority.markRejected(refreshedDigest); }

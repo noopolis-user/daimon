@@ -2,6 +2,7 @@ import { GrokBrokerRunLimit } from "./grokBrokerRunBudget.js";
 import { createHash } from "node:crypto";
 import type { ServerResponse } from "node:http";
 
+import { admitWhenIdle } from "./grokBrokerAdmission.js";
 import { GrokBrokerProxyRefusal } from "./grokBrokerProxy.js";
 import type { GrokBrokerCredentialAuthority, GrokBrokerUpstream } from "./grokBrokerProxy.js";
 import { parseGrokUpstreamUsage } from "./grokBrokerTurnMeter.js";
@@ -38,9 +39,10 @@ export async function serveGrokInferenceGrant(input: GrokInferenceProxyInput, re
     catch { throw new GrokBrokerProxyRefusal("request_body_rejected"); }
     let token = await authority.accessToken(false); const rejectedDigest = createHash("sha256").update(token).digest("hex");
     prepared = withBearer(prepared, token); token = "";
-    const admission = grant.meter.admit();
+    // Same lane rule as a turn: an overlapping request waits, a released grant trips its waiters into a refusal.
+    const admission = await admitWhenIdle(grant.meter, response, {});
+    if (admission === "gone" || admission === "revoked") return;
     if ("refused" in admission) return json(response, 429, JSON.stringify({ error: "grant limit reached", limit: admission.refused }));
-    if ("busy" in admission) return json(response, 429, '{"error":"grant request in flight"}');
     settle = (usage) => { settle = undefined; grants.settle(grant, admission.index, usage, input.body.byteLength); };
     let result = await upstream(prepared, admission.signal);
     if (result.status === 401) {
