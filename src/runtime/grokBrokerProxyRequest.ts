@@ -4,6 +4,18 @@ import type { EngineBrokerCapabilities } from "./engineBrokerCapabilities.js";
 import { DEFAULT_GROK_BROKER_MODEL_POLICY, parseGrokBrokerModelPolicy, type GrokBrokerModelPolicy } from "./grokBrokerModelPolicy.js";
 
 const MAX_BODY = 2 * 1024 * 1024;
+
+/**
+ * Which body-gate check refused a request: a closed, content-free code, so a
+ * refusal on the broker's stderr names its cause without a stub harness.
+ */
+export type GrokBrokerProxyRejectionCheck = "route" | "body_size" | "bearer" | "scope" | "client_version" | "json" | "envelope" | "model" | "reasoning_effort" | "tools" | "members" | "stream_options";
+
+/** A body-gate refusal. The message is the historic one; `check` names the failed check. */
+export class GrokBrokerProxyRequestRejection extends Error {
+  constructor(readonly check: GrokBrokerProxyRejectionCheck) { super("broker proxy request rejected"); }
+}
+function reject(check: GrokBrokerProxyRejectionCheck): never { throw new GrokBrokerProxyRequestRejection(check); }
 export type GrokBrokerProxyInput = Readonly<{ method: string; pathname: string; headers: Readonly<Record<string, string | undefined>>; body: Uint8Array; agentId?: string; turnId?: string }>;
 export type GrokBrokerUpstreamRequest = Readonly<{ url: "https://cli-chat-proxy.grok.com/v1/chat/completions"; headers: Readonly<Record<string, string>>; body: Uint8Array }>;
 
@@ -21,14 +33,15 @@ export type GrokBrokerUpstreamRequest = Readonly<{ url: "https://cli-chat-proxy.
  */
 export function authorizeGrokBrokerProxyRequest(input: GrokBrokerProxyInput, capabilities: EngineBrokerCapabilities, bearer: string, policy: GrokBrokerModelPolicy = DEFAULT_GROK_BROKER_MODEL_POLICY): GrokBrokerUpstreamRequest {
   const declared = parseGrokBrokerModelPolicy(policy);
-  if (input.method !== "POST" || input.pathname !== "/v1/chat/completions" || input.body.byteLength < 2 || input.body.byteLength > MAX_BODY) throw new Error("broker proxy request rejected");
+  if (input.method !== "POST" || input.pathname !== "/v1/chat/completions") reject("route");
+  if (input.body.byteLength < 2 || input.body.byteLength > MAX_BODY) reject("body_size");
   const authorization = input.headers.authorization; const match = authorization?.match(/^Bearer ([A-Za-z0-9_-]{40,})$/u);
-  if (match === null || match === undefined) throw new Error("broker proxy request rejected");
+  if (match === null || match === undefined) return reject("bearer");
   const scope = capabilities.authorizeToken(match[1]!);
-  if (scope === undefined || (input.agentId !== undefined && scope.agentId !== input.agentId) || (input.turnId !== undefined && scope.turnId !== input.turnId)) throw new Error("broker proxy request rejected");
+  if (scope === undefined || (input.agentId !== undefined && scope.agentId !== input.agentId) || (input.turnId !== undefined && scope.turnId !== input.turnId)) reject("scope");
   if (!bearer || /[\r\n]/u.test(bearer)) throw new Error("broker credential authority unavailable");
   const clientVersion = input.headers["x-grok-client-version"];
-  if (clientVersion !== GROK_ENGINE_BROKER.grokCliVersion) throw new Error("broker proxy request rejected");
+  if (clientVersion !== GROK_ENGINE_BROKER.grokCliVersion) reject("client_version");
   let parsed: Record<string, unknown>;
   // `__proto__` is refused at any depth: JSON.parse makes it an ordinary own
   // member, but an upstream JavaScript parser may treat it as a prototype.
@@ -37,11 +50,13 @@ export function authorizeGrokBrokerProxyRequest(input: GrokBrokerProxyInput, cap
       if (key === "__proto__") throw new Error("broker proxy request rejected");
       return value;
     }) as Record<string, unknown>;
-  } catch { throw new Error("broker proxy request rejected"); }
-  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed) || parsed.stream !== true || !Array.isArray(parsed.messages)) throw new Error("broker proxy request rejected");
-  if (parsed.model !== declared.model || parsed.reasoning_effort !== declared.reasoningEffort) throw new Error("broker proxy request rejected");
-  if (!exactLeanTools(parsed.tools)) throw new Error("broker proxy request rejected");
-  if (Object.keys(parsed).some((key) => !LEAN_BODY_MEMBERS.has(key)) || !validStreamOptions(parsed.stream_options)) throw new Error("broker proxy request rejected");
+  } catch { return reject("json"); }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed) || parsed.stream !== true || !Array.isArray(parsed.messages)) reject("envelope");
+  if (parsed.model !== declared.model) reject("model");
+  if (parsed.reasoning_effort !== declared.reasoningEffort) reject("reasoning_effort");
+  if (!exactLeanTools(parsed.tools)) reject("tools");
+  if (Object.keys(parsed).some((key) => !LEAN_BODY_MEMBERS.has(key))) reject("members");
+  if (!validStreamOptions(parsed.stream_options)) reject("stream_options");
   // Keep origin/main's production handling: UTF-8 replacement decoding, then
   // serialize the validated object (including last-member-wins duplicates).
   // Only a clocked turn takes the stricter date rewrite before this gate.
