@@ -198,7 +198,7 @@ function moltnetTool(agent: OrganizationRuntimeAgentConfig, wakeContext: PiWakeE
 
 async function connect(agent: OrganizationRuntimeAgentConfig, server: OrganizationRuntimeMcpServer): Promise<{ client: Client; close(): Promise<void> }> {
   taskClockChildEnvironment(server.env);
-  const client = new Client({ name: "daimon-production", version: "0.2.3" }); const headers: Record<string, string> = server.authSecretEnv === undefined ? {} : { authorization: `Bearer ${requiredSecret(server.authSecretEnv)}` };
+  const client = new Client({ name: "daimon-production", version: "0.2.4" }); const headers: Record<string, string> = server.authSecretEnv === undefined ? {} : { authorization: `Bearer ${requiredSecret(server.authSecretEnv)}` };
   const transport = server.transport === "stdio"
     ? new StdioClientTransport({ command: server.command!, args: [...server.args], env: stringEnvironment(readyTaskClockEnvironment({ ...server.env, ...cliChildEnvironment([], agent.runtimeHomePath, { executablePath: server.command }) })) })
     : server.transport === "sse" ? new SSEClientTransport(new URL(server.url!), { requestInit: { headers } })
