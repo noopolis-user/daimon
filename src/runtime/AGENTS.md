@@ -294,7 +294,11 @@ failure — undici's `fetch failed`/`terminated`, or a socket errno/undici code
 admitted request: the failed attempt is settled at the missing-usage estimate
 (its own request row, counted in `estimated_requests`), and the retry passes
 `admitWhenIdle` and the run budget again, so every limit and the one-in-flight
-lane hold. An HTTP status (upstream's answer, passed through), an abort, a
+lane hold. A retry that would cross a limit is not attempted and the request
+answers 503 (`upstream_failed`): the meter's non-tripping `hasHeadroom` is
+asked first, because a retry tripping `requests`/`tokens` would seal
+`limit_exceeded`, which Paideia reads as the subject spending its own budget.
+An HTTP status (upstream's answer, passed through), an abort, a
 refusal, a limit and a credential fault are never retried, and the stale-auth
 fence is untouched. A second transport failure is answered 503 as before.
 

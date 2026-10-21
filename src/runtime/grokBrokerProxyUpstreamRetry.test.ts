@@ -11,7 +11,7 @@ const lean = ["run_terminal_command", "read_file", "list_dir", "grep", "search_t
 const body = JSON.stringify({ model: "grok-4.6", reasoning_effort: "low", stream: true, messages: [], tools: lean });
 const answer = [{ choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: "c", type: "function", function: { name: "use_tool", arguments: "{}" } }] }, finish_reason: "tool_calls" }] }, { choices: [], usage: { prompt_tokens: 10, completion_tokens: 2 } }].map((chunk) => `data: ${JSON.stringify(chunk)}\n\n`).join("") + "data: [DONE]\n\n";
 
-type Script = "cut" | "ok" | number;
+type Script = "cut" | "hold" | "ok" | number;
 
 /**
  * A real provider stand-in on loopback: `cut` writes the status line, headers
@@ -25,6 +25,8 @@ async function provider(script: readonly Script[]): Promise<Readonly<{ server: S
     request.resume();
     const step = script[Math.min(calls++, script.length - 1)]!;
     if (step === "cut") { response.writeHead(200, { "content-type": "text/event-stream", "content-length": String(answer.length * 2) }); response.write(answer.slice(0, 40)); setTimeout(() => response.socket?.destroy(), 5); return; }
+    // `hold` answers headers, then cuts the socket only after the worker's client is gone.
+    if (step === "hold") { response.writeHead(200, { "content-type": "text/event-stream", "content-length": String(answer.length * 2) }); response.write(answer.slice(0, 40)); setTimeout(() => response.socket?.destroy(), 150); return; }
     if (step === "ok") { response.writeHead(200, { "content-type": "text/event-stream" }); response.end(answer); return; }
     response.writeHead(step, { "content-type": "application/json" }); response.end('{"error":"upstream said no"}');
   });
@@ -45,14 +47,14 @@ const send = (port: number, token: string): Promise<Readonly<{ status: number; t
   request.on("error", reject); request.end(body);
 });
 
-async function withProxy(script: readonly Script[], run: (rig: Readonly<{ reply: () => ReturnType<typeof send>; meter: GrokBrokerTurnMeter; calls: () => number }>) => Promise<void>, maxRequests = 64): Promise<void> {
+async function withProxy(script: readonly Script[], run: (rig: Readonly<{ reply: () => ReturnType<typeof send>; meter: GrokBrokerTurnMeter; calls: () => number; port: number; token: string }>) => Promise<void>, maxRequests = 64, maxTokens = 1_000_000): Promise<void> {
   const stand = await provider(script);
-  const meter = new GrokBrokerTurnMeter({ maxRequests, maxTokens: 1_000_000, timeoutMs: 600_000 });
+  const meter = new GrokBrokerTurnMeter({ maxRequests, maxTokens, timeoutMs: 600_000 });
   const proxy = await startGrokBrokerProxy({ accessToken: async () => "provider-token", markRejected: async () => undefined }, stand.upstream, undefined, 0);
   const token = proxy.capabilities.issue("agent", "turn");
   proxy.registerIsolationGuard("turn", async () => undefined);
   proxy.registerTurn("turn", { policy: { model: "grok-4.6", reasoningEffort: "low" }, meter });
-  try { await run({ reply: () => send(proxy.port, token), meter, calls: stand.calls }); }
+  try { await run({ reply: () => send(proxy.port, token), meter, calls: stand.calls, port: proxy.port, token }); }
   finally { await proxy.close(); await new Promise<void>((resolve) => stand.server.close(() => resolve())); }
 }
 
@@ -92,14 +94,29 @@ for (const status of [400, 429, 500, 503]) {
   });
 }
 
-test("the retry is limit-checked: a turn at its request ceiling is refused 429, never forwarded again", { timeout: 10_000 }, async () => {
-  // Mutation guard: retrying on the first admission bypasses `maxRequests` and makes a second call.
-  await withProxy(["cut", "ok"], async ({ reply, meter, calls }) => {
-    const answered = await reply();
-    assert.equal(answered.status, 429, answered.text);
-    assert.match(answered.text, /"limit":"requests"/u);
-    assert.deepEqual([calls(), meter.snapshot().requests, meter.snapshot().limitReason], [1, 1, "requests"]);
-  }, 1);
+for (const [limit, maxRequests, maxTokens] of [["requests", 1, 1_000_000], ["tokens", 64, 100]] as const) {
+  test(`a retry that would cross the ${limit} limit is answered 503 upstream_failed and never trips the limit`, { timeout: 10_000 }, async () => {
+    // A transport fault is not the subject spending its budget: a tripped limit seals
+    // `limit_exceeded`, which Paideia's declaredLimitStop reads as exactly that.
+    // Mutation guard: without the headroom check the retry's admission trips `${limit}` (429).
+    await withProxy(["cut", "ok"], async ({ reply, meter, calls }) => {
+      const answered = await reply();
+      assert.equal(answered.status, 503, answered.text);
+      assert.deepEqual([calls(), meter.snapshot().requests, meter.snapshot().limitReason, meter.failedResponse()?.kind], [1, 1, "none", "upstream_failed"]);
+    }, maxRequests, maxTokens);
+  });
+}
+
+test("a dropped connection whose worker already hung up is not retried: nobody is left to read the answer", { timeout: 10_000 }, async () => {
+  // Mutation guard: without the `response.destroyed` check the retry is forwarded and billed.
+  await withProxy(["hold", "ok"], async ({ port, token, meter, calls }) => {
+    const request = httpRequest({ host: "127.0.0.1", port, path: "/v1/chat/completions", method: "POST", agent: false, headers: { authorization: `Bearer ${token}`, "x-grok-client-version": "1.0.34", "content-type": "application/json" } });
+    request.on("error", () => undefined); request.end(body);
+    while (calls() < 1) await new Promise((resolve) => setTimeout(resolve, 2));
+    request.destroy();
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    assert.deepEqual([calls(), meter.snapshot().requests, meter.busy()], [1, 1, false]);
+  });
 });
 
 test("only transport faults classify as retryable: never an abort, an aborted signal, or an ordinary error", () => {

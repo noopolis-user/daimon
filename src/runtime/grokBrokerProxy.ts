@@ -176,6 +176,11 @@ async function serve(request: IncomingMessage, response: ServerResponse, authori
         settle?.(undefined);
         // A client that hung up meanwhile has nobody left to read a retried answer.
         if (response.destroyed) throw new GrokBrokerRetryNotAdmitted("gone");
+        // A retry that would cross a limit is refused as the transport fault it
+        // is (503, `upstream_failed`), never by tripping the limit: a tripped
+        // `requests`/`tokens` seals `limit_exceeded`, which Paideia reads as the
+        // subject exhausting its own budget.
+        if (!turn.meter.hasHeadroom()) throw error;
         const again = await admitWhenIdle(turn.meter, response, { keepFinal: prepared.compaction === true }, () => turns.get(scope.turnId) === turn && guards.has(scope.turnId));
         if (again === "gone") throw new GrokBrokerRetryNotAdmitted("gone");
         if (again === "revoked") throw new GrokBrokerProxyRefusal("no_active_turn");

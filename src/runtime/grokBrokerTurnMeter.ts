@@ -167,6 +167,16 @@ export class GrokBrokerTurnMeter {
   noteFailedResponse(kind: GrokBrokerFailedResponseKind): void { this.failure = { kind, at: this.now() }; }
   /** The latest error response the worker was given, while no later request has been admitted. */
   failedResponse(): GrokBrokerFailedResponse | undefined { return this.failure; }
+  /**
+   * Whether {@link admit} would admit a request right now if the lane were
+   * free, without tripping anything. A transport retry asks this first: a retry
+   * that would cross a limit is not the subject spending its budget, so it must
+   * never be what trips one (`grokBrokerProxy.ts`).
+   */
+  hasHeadroom(): boolean {
+    return this.reason === "none" && this.now() - this.startedAt < this.limits.timeoutMs &&
+      this.timings.length < this.limits.maxRequests && this.tokens < this.limits.maxTokens;
+  }
   /** Whether a model request is in flight right now. */
   busy(): boolean { return this.inFlight !== undefined; }
   /** When a model request last started or settled (the meter's construction before any). */
