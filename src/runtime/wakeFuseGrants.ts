@@ -99,7 +99,10 @@ export class WakeFuseGrantReader {
       try {
         if (!info.isFile()) throw new TypeError("not a regular file");
         if (info.size > BigInt(MAX_GRANTS_BYTES)) throw new TypeError(`larger than ${MAX_GRANTS_BYTES} bytes`);
-        parsed = parseWakeFuseGrants(JSON.parse(await handle.readFile("utf8")));
+        let value: unknown;
+        // JSON.parse quotes the offending text in its message; report the shape, never the bytes.
+        try { value = JSON.parse(await handle.readFile("utf8")); } catch { throw new TypeError("not valid JSON"); }
+        parsed = parseWakeFuseGrants(value);
       } catch (error) {
         this.warn(signature, error instanceof Error ? error.message : "unreadable");
       }
