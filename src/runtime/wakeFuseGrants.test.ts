@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { appendFile, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { appendFile, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -148,4 +148,14 @@ test("a restart does not re-announce a park the ledger already recorded", async 
   assert.deepEqual(await reopened.parkedRevisitDue(), []);
   await grant(directory, { version: WAKE_FUSE_GRANTS_VERSION, epoch: "test-epoch", agents: { pressman: { extra_executions: 1 } } });
   assert.deepEqual(await reopened.parkedRevisitDue(), ["pressman"]);
+}));
+
+test("a grants path that cannot be opened safely is no grant, warned once", async (t) => await withDirectory(async (directory) => {
+  const lines = logs(t);
+  await writeFile(path.join(directory, "elsewhere.json"), JSON.stringify({ version: WAKE_FUSE_GRANTS_VERSION, epoch: "test-epoch", agents: { pressman: { extra_executions: 5 } } }));
+  await symlink(path.join(directory, "elsewhere.json"), path.join(directory, "grants.json"));
+  const fuse = await WakeFuse.open({ organizationKey: "org", environment: environment(directory) });
+  await fuse.admit("pressman", "one", agentLimits);
+  for (let poll = 0; poll < 3; poll++) assert.deepEqual(await fuse.admit("pressman", "two", agentLimits), { state: "paused", reason: "agent_execution_ceiling" });
+  assert.equal(lines.filter((line) => line.includes("wake fuse grants ignored")).length, 1);
 }));

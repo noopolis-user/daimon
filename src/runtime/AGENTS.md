@@ -930,6 +930,49 @@ claim releases it before `fuse.admit`, so a drain spends no budget. Queued
 deliveries stay `accepted`. Availability says `drained` only when no inbox loop
 is alive (`quiescent()`), which is the signal a drained release waits for.
 
+Budget grants are the operator's daily-budget knob, and they need no rebuild,
+redeploy or restart (`wakeFuseGrants.ts`). On 2026-10-21 an agent's attention
+budget, compiled from Spawnfile `runtime.options.attention`, was spent by 11:06;
+raising it took a full rebuild, and the org fuse after it a container recreate.
+The fuse now re-reads `<fuse directory>/grants.json` — by default
+`/var/lib/spawnfile/daimon/usage/grants.json`, beside `admissions.jsonl` and
+`fuse.stop` — on every admission and snapshot, re-parsing only when the file's
+stat identity moves:
+
+```json
+{ "version": "noopolis.daimon.wake-fuse-grants.v1", "epoch": "2026-10-21",
+  "organization": { "extra_wakes": 50, "extra_tokens": 20000000 },
+  "agents": { "pressman": { "extra_executions": 10, "extra_tokens": 2000000 } } }
+```
+
+Every member but `version` and `epoch` is optional; every extra is a
+non-negative safe integer. The effective limit is declared plus grant, so a
+grant can only raise; a per-agent limit the agent never declared stays
+unlimited. `epoch` is the full fuse epoch, or for the date-derived epoch just
+its `YYYY-MM-DD` day in `DAIMON_WAKE_FUSE_EPOCH_ZONE`, so a grant expires by
+itself at the operator's midnight. Validation is strict and fails closed: a
+missing file is no grant; a malformed, oversized, non-regular or symlinked one
+is no grant plus one `daimon: wake fuse grants ignored …` line per file state.
+A grant whose organization extra lifts a latched `wake_ceiling` or
+`token_ceiling` trip clears it — the grant *is* the explicit operator
+recovery — but never `operator_stop` or `ledger_unavailable`. The control
+host's 1 s fuse poll stats the file and, when it or the epoch changed, gives
+every parked agent an owed dispatcher pass (`AttentionDispatcher.revisit`,
+the same never-new-input pass a resume gives), so a queued wake resumes
+without new mail. Write it atomically (temp file + rename, or `docker cp`)
+from the host; it must be readable by the runtime uid.
+
+A held wake is never silent (`wakeFuseParking.ts`). When the dispatcher
+leaves queued work waiting on a paused budget, or an admission is refused by
+one, the fuse writes `daimon: wake parked agent=… reason=… used=… limit=…
+epoch=…` on stderr and a `kind: "park"` row to `admissions.jsonl`; the first
+admission after it writes `daimon: wake unparked …` and a `kind: "unpark"`
+row. Reasons: `attention_tokens`, `attention_executions` (per-agent),
+`org_tokens`, `org_wakes` (fuse). It is a state machine, not a timer: one line
+per agent, reason and epoch, replayed from the ledger at open so a restart does
+not repeat it. `limit` is the effective limit, grant included. Ledger faults
+there are swallowed; the line is the alert, and no verdict depends on it.
+
 Deferral is bounded. A delivery that sits in `accepted` past
 `STALE_QUEUED_DELIVERY_MS` (24 h, `wakeAcceptanceRetention.ts`) without a live
 claim is no longer offered by `recoverable()`; the dispatcher stops it
