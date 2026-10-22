@@ -12,4 +12,3 @@ const assertSafeGrokCommandArgs = (args: readonly string[] | undefined): readonl
   }
   return values;
 };
-

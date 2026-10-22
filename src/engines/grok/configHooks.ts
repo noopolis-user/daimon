@@ -27,4 +27,3 @@ function grokEngine(input: EngineConfigRecord, label: string, { string }: Engine
   if (!(GROK_BROKER_REASONING_EFFORTS as readonly string[]).includes(effort)) throw new TypeError(`${label}.reasoningEffort must be one of ${GROK_BROKER_REASONING_EFFORTS.join(", ")}`);
   return { kind: "grok", model, reasoningEffort: effort };
 }
-

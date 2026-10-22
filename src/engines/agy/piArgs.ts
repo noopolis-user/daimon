@@ -52,4 +52,3 @@ const assertSafeAgyCommandArgs = (args: readonly string[] | undefined): readonly
   }
   return values;
 };
-

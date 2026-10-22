@@ -31,4 +31,3 @@ function grokTokenPair(value: unknown): { access?: string; refresh?: string } {
     refresh: firstNonBlankString(entry, ["refresh_token"])
   };
 }
-

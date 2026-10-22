@@ -77,4 +77,3 @@ export const recordGrokTurnRequests = async (file: string, entry: GrokTurnReques
   if (entry.requests.length === 0) return false;
   try { return await recordLedgerLines(file, renderGrokTurnRequestLines(entry)); } catch { return false; }
 };
-

@@ -31,4 +31,3 @@ function reasoningEffort(value: unknown, label: string, { string }: EngineConfig
   }
   return result;
 }
-

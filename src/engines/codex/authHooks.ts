@@ -20,4 +20,3 @@ function tokenPair(value: unknown): { access?: string; refresh?: string } {
     refresh: firstNonBlankString(nested, ["refresh_token", "refreshToken"])
   };
 }
-

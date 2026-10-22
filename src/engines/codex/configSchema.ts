@@ -10,4 +10,3 @@
  */
 export const ORGANIZATION_RUNTIME_CODEX_REASONING_EFFORTS = ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra", "persistent"] as const;
 export const ORGANIZATION_RUNTIME_CODEX_WORKSPACE_NO_NETWORK_POLICY = { mode: "workspace-write", networkAccess: false, webSearch: "disabled" } as const;
-
