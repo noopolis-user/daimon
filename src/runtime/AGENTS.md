@@ -955,7 +955,10 @@ missing file is no grant; a malformed, oversized, non-regular or symlinked one
 is no grant plus one `daimon: wake fuse grants ignored …` line per file state.
 A grant whose organization extra lifts a latched `wake_ceiling` or
 `token_ceiling` trip clears it — the grant *is* the explicit operator
-recovery — but never `operator_stop` or `ledger_unavailable`. The control
+recovery — and removes that epoch's `fuse.trip.json` first, because host
+tooling reads the marker as truth (if the unlink fails the trip stays); a
+fuse that crosses its limit again re-trips and rewrites the marker. It never
+clears `operator_stop` or `ledger_unavailable`. The control
 host's 1 s fuse poll stats the file and, when it or the epoch changed, gives
 every parked agent an owed dispatcher pass (`AttentionDispatcher.revisit`,
 the same never-new-input pass a resume gives), so a queued wake resumes
