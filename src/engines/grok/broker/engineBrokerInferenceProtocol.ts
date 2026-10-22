@@ -2,7 +2,7 @@ import { GROK_BROKER_MODELS, GROK_BROKER_REASONING_EFFORTS } from "./grokWorkerC
 import { GROK_ENGINE_BROKER } from "../../../contracts/runtimeContractManifest.js";
 import type { EngineBrokerTurnLimits } from "./engineBrokerTurnAccounting.js";
 import type { GrokBrokerModel, GrokBrokerReasoningEffort } from "./grokBrokerModelPolicy.js";
-import type { GrokInferencePurpose } from "../../../runtime/inferenceUsageLedger.js";
+import type { GrokInferencePurpose } from "./inferenceUsageLedger.js";
 
 /**
  * Evaluator inference grant frames, introduced in v2 and carried by current v3.

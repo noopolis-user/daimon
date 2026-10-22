@@ -13,7 +13,7 @@ import {
 } from "./codexRolloutUsage.js";
 
 const FIXTURE_THREAD = "01a06f31-0000-7000-8000-000000000001";
-const fixturePath = fileURLToPath(new URL("./codex-rollout-token-usage.jsonl", import.meta.url));
+const fixturePath = fileURLToPath(new URL("./fixtures/codex-rollout-token-usage.jsonl", import.meta.url));
 const fixture = async (): Promise<string> => readFile(fixturePath, "utf8");
 
 const withCodexHome = async (body: (home: string) => Promise<void>): Promise<void> => {

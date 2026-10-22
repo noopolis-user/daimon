@@ -1,9 +1,8 @@
+import { SORTED_ENGINE_IDS } from "../engines/descriptors.js";
 import { constants } from "node:fs";
 import { open, rename, stat } from "node:fs/promises";
 
-import { GROK_BROKER_MODELS } from "../engines/grok/broker/grokWorkerContract.js";
-import { ENGINE_BROKER_LIMIT_REASONS, type EngineBrokerLimitReason } from "../engines/grok/broker/engineBrokerTurnAccounting.js";
-import type { GrokBrokerModel } from "../engines/grok/broker/grokBrokerModelPolicy.js";
+import { brokerFields, type BrokerTurnUsageFields } from "../engines/turnUsageFields.js";
 
 /**
  * Append-only per-turn token accounting for one container.
@@ -65,7 +64,7 @@ export type TurnUsageMeasurement = Readonly<{
  * Spawnfile's reader mirrors this list and is updated separately in packet
  * A1b; until then, a reader that rejects `codex` will drop every Codex line.
  */
-export const TURN_USAGE_ENGINES = ["agy", "codex", "grok"] as const;
+export const TURN_USAGE_ENGINES = SORTED_ENGINE_IDS;
 
 /**
  * Whether the wake that spent these tokens went on to succeed.
@@ -122,18 +121,7 @@ export type TurnUsageEntry = Readonly<{
   usage: TurnUsageMeasurement;
   at?: string;
   outcome?: TurnUsageOutcome;
-  /**
-   * Broker rows only. `turn` is the idempotency key readers dedupe on (the
-   * broker turn id, a sha256 hex); `limitReason` and `model` come from the
-   * closed broker vocabularies and are dropped rather than written through
-   * when they are not members.
-   */
-  turn?: string;
-  limitReason?: EngineBrokerLimitReason;
-  model?: GrokBrokerModel;
-  /** Broker rows only: how many of the turn's requests were charged an estimate because their response carried no valid usage. */
-  estimatedRequests?: number;
-}>;
+}> & BrokerTurnUsageFields;
 
 /**
  * Where a metered turn is appended.
@@ -193,12 +181,7 @@ export const renderTurnUsageLine = (entry: TurnUsageEntry): string => `${JSON.st
   ...brokerFields(entry)
 })}\n`;
 
-const brokerFields = (entry: TurnUsageEntry): Record<string, string | number> => ({
-  ...(entry.turn !== undefined && /^[a-f0-9]{64}$/u.test(entry.turn) ? { turn: entry.turn } : {}),
-  ...(entry.limitReason !== undefined && ENGINE_BROKER_LIMIT_REASONS.includes(entry.limitReason) ? { limit_reason: entry.limitReason } : {}),
-  ...(entry.model !== undefined && (GROK_BROKER_MODELS as readonly string[]).includes(entry.model) ? { model: entry.model } : {}),
-  ...(entry.estimatedRequests !== undefined && Number.isSafeInteger(entry.estimatedRequests) && entry.estimatedRequests > 0 ? { estimated_requests: entry.estimatedRequests } : {})
-});
+
 
 /**
  * Collapse rows that share a `turn` key to the first one, keeping rows without

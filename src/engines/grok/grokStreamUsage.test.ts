@@ -6,7 +6,7 @@ import test from "node:test";
 import { decodeGrokHeadlessTurn } from "./grokHeadlessResult.js";
 import { decodeGrokStreamUsage } from "./grokStreamUsage.js";
 
-const fixture = (): Promise<string> => readFile(fileURLToPath(new URL("./grok-1.0.34-streaming-two-requests.jsonl", import.meta.url)), "utf8");
+const fixture = (): Promise<string> => readFile(fileURLToPath(new URL("./fixtures/grok-1.0.34-streaming-two-requests.jsonl", import.meta.url)), "utf8");
 
 test("a real 1.0.34 two-request stream yields one row per request, summing exactly to the terminal result", async () => {
   const output = await fixture();

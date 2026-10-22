@@ -2,8 +2,6 @@ import path from "node:path";
 import { constants } from "node:fs";
 import { open, rename, stat } from "node:fs/promises";
 
-import { readCodexRolloutRequests, type CodexRequestUsage } from "../engines/codex/codexRolloutUsage.js";
-import type { GrokBrokerModel } from "../engines/grok/broker/grokBrokerModelPolicy.js";
 import { TURN_USAGE_LEDGER, TURN_USAGE_MAX_IDENTIFIER_CHARS, TURN_USAGE_ROTATE_BYTES } from "./turnUsageLedger.js";
 
 /**
@@ -53,125 +51,12 @@ export const resolveTurnRequestLedgerPath = (environment: NodeJS.ProcessEnv = pr
   return override !== undefined && override.startsWith("/") ? override : TURN_REQUEST_LEDGER.filePath;
 };
 
-export type TurnRequestEntry = Readonly<{
-  agent: string;
-  wake: string;
-  /** The Codex thread whose rollout these rows were read from. */
-  thread: string;
-  requests: readonly CodexRequestUsage[];
-  at?: string;
-}>;
-
-const bounded = (value: string): string => [...value].slice(0, TURN_USAGE_MAX_IDENTIFIER_CHARS).join("");
-
-/**
- * One line per model request.
- *
- * `fresh_input` is `input − cached_input`, the split the whole exercise exists
- * to see. It is derived from exactly the relationship Daimon already validates
- * (`cached_input_tokens` is a subset of `input_tokens`, asserted by Codex's own
- * reconciled totals and re-checked when the block is decoded). `cache_write` is
- * emitted raw and never subtracted, because whether Codex counts a cache write
- * inside `input_tokens` has not been verified — a reader that needs that answer
- * has the raw number to work from instead of a guess baked into the row.
- */
-export const renderTurnRequestLines = (entry: TurnRequestEntry): string => {
-  const at = entry.at ?? new Date().toISOString();
-  const requests = entry.requests.length;
-  return entry.requests.map((request) => `${JSON.stringify({
-    v: TURN_REQUEST_LEDGER_VERSION,
-    agent: bounded(entry.agent),
-    wake: bounded(entry.wake),
-    engine: "codex",
-    at,
-    thread: bounded(entry.thread),
-    request: request.index,
-    requests,
-    input: request.input,
-    cached_input: request.cachedInput,
-    fresh_input: request.input - request.cachedInput,
-    cache_write: request.cacheWrite,
-    output: request.output,
-    reasoning: request.reasoning,
-    total: request.total,
-    ...requestClockFields(request)
-  })}\n`).join("");
-};
-
 const TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,9})?Z$/u;
 /** Per-request `started_at`/`ended_at`, each only when it was measured; `at` stays the append time. */
-const requestClockFields = (request: Readonly<{ startedAt?: string; endedAt?: string }>): Record<string, string> => ({
+export const requestClockFields = (request: Readonly<{ startedAt?: string; endedAt?: string }>): Record<string, string> => ({
   ...(request.startedAt !== undefined && TIMESTAMP.test(request.startedAt) ? { started_at: request.startedAt } : {}),
   ...(request.endedAt !== undefined && TIMESTAMP.test(request.endedAt) ? { ended_at: request.endedAt } : {})
 });
-
-/** One Grok broker model request: usage from the worker stream, timing from the proxy. */
-/**
- * `usageSource`: `stream` (the worker's own per-request frame), `upstream`
- * (the provider response the proxy saw), or `estimated` (no valid usage; the
- * proxy's conservative charge, see `grokBrokerTurnMeter.ts`).
- */
-/**
- * `toolCalls` are the tool-call names that request's response carried, as the
- * proxy read them (`grokBrokerTurnMeter.ts`): names only, bounded, `[]` for a
- * response that called nothing, and absent when no response could be decoded.
- */
-export type GrokTurnRequest = Readonly<{ index: number; input: number; cacheRead: number; cacheWrite: number; output: number; total: number; startedAt?: string; endedAt?: string; usageSource?: "stream" | "upstream" | "estimated"; toolCalls?: readonly string[] }>;
-/**
- * `requestCount` is the turn's admitted request count when it exceeds the rows:
- * a killed turn's in-flight request was sent upstream but never reported usage,
- * so it has no row yet still counts in every row's `requests`.
- */
-export type GrokTurnRequestEntry = Readonly<{ agent: string; wake: string; turn: string; session?: string; model: GrokBrokerModel; requests: readonly GrokTurnRequest[]; requestCount?: number; at?: string }>;
-
-/**
- * Grok rows share the Codex row's field meaning: `input` is the whole prompt
- * side the request replayed (`input_tokens + cache_read`), `cached_input` the
- * cache read, `fresh_input` the uncached remainder. Grok does not separate
- * reasoning tokens, so `reasoning` is absent rather than zero. `turn` is the
- * broker idempotency key and `thread` the Grok session id when the stream
- * named one.
- *
- * `tool_calls` is what a turn's rows could not say before: whether the model
- * ever *tried* to call anything. Two live turns ended with correctly mounted
- * tools and no visible attempt, and the rows recorded timings and tokens only,
- * so the question could not be answered after the fact. It is names only —
- * never arguments, never message content, never a bearer — bounded, `[]` for a
- * response that called nothing, and absent for a response that could not be
- * decoded, because a fabricated empty list is byte-identical to a measured one.
- *
- * It is an additive field inside the unchanged
- * `noopolis.daimon.turn-requests.v1` row, deliberately without a version bump:
- * Spawnfile's usage reader (`spawnfile/src/runtime/usageLedger.ts`) drops every
- * line whose `v` it does not recognise while ignoring fields it does not know,
- * and Paideia only relocates this stream's path
- * (`DAIMON_TURN_REQUESTS_LEDGER_PATH`). A bump is what would blind them; a new
- * field is not.
- */
-export const renderGrokTurnRequestLines = (entry: GrokTurnRequestEntry): string => {
-  const at = entry.at ?? new Date().toISOString();
-  return entry.requests.map((request) => `${JSON.stringify({
-    v: TURN_REQUEST_LEDGER_VERSION,
-    agent: bounded(entry.agent),
-    wake: bounded(entry.wake),
-    engine: "grok",
-    at,
-    turn: entry.turn,
-    ...(entry.session === undefined ? {} : { thread: bounded(entry.session) }),
-    model: entry.model,
-    request: request.index,
-    requests: Math.max(entry.requests.length, entry.requestCount ?? 0),
-    input: request.input + request.cacheRead,
-    cached_input: request.cacheRead,
-    fresh_input: request.input,
-    cache_write: request.cacheWrite,
-    output: request.output,
-    total: request.total,
-    ...(request.usageSource === undefined ? {} : { usage_source: request.usageSource }),
-    ...(request.toolCalls === undefined ? {} : { tool_calls: request.toolCalls }),
-    ...requestClockFields(request)
-  })}\n`).join("");
-};
 
 /**
  * Append already-rendered, newline-terminated ledger lines in one write, with the
@@ -193,12 +78,6 @@ export const recordLedgerLines = async (file: string, lines: string): Promise<bo
   }
 };
 
-/** Advisory and never rejects, like {@link recordTurnRequests}; an empty turn writes nothing. */
-export const recordGrokTurnRequests = async (file: string, entry: GrokTurnRequestEntry): Promise<boolean> => {
-  if (entry.requests.length === 0) return false;
-  try { return await recordLedgerLines(file, renderGrokTurnRequestLines(entry)); } catch { return false; }
-};
-
 const rotate = async (file: string): Promise<void> => {
   let size: number;
   try { size = (await stat(file)).size; } catch { return; }
@@ -217,55 +96,6 @@ const appendLines = async (file: string, lines: string): Promise<void> => {
   } finally { await handle.close(); }
 };
 
-/**
- * Advisory. Never rejects, and never writes an empty wake.
- *
- * A wake whose rollout was absent, unreadable, or undecodable contributes no
- * rows at all rather than a zero row — the same invariant the usage ledger
- * holds, for the same reason: a fabricated zero is byte-identical to a measured
- * one, and this stream exists to be believed.
- */
-export const recordTurnRequests = async (file: string, entry: TurnRequestEntry): Promise<boolean> => {
-  if (entry.requests.length === 0) return false;
-  try {
-    return await recordLedgerLines(file, renderTurnRequestLines(entry));
-  } catch {
-    /* advisory: instrumentation never fails a wake that published */
-    return false;
-  }
-};
 
-/**
- * The whole instrumentation path for one Codex wake: find that thread's
- * rollout, decode its per-request usage, append it. Never throws.
- *
- * A wake that produced no rows says so on stderr exactly once. Silence would
- * make a permanently blind instrument indistinguishable from a working one —
- * `--ephemeral`, a relocated `CODEX_HOME`, or a Codex version that renamed the
- * usage frame all end here, and each is worth one line rather than a
- * quietly-empty file nobody questions.
- */
-export const recordCodexTurnRequests = async (input: Readonly<{
-  agent: string;
-  wake: string;
-  codexHome: string;
-  threadId: string;
-  file?: string;
-}>): Promise<boolean> => {
-  try {
-    const requests = await readCodexRolloutRequests(input.codexHome, input.threadId);
-    const written = await recordTurnRequests(input.file ?? resolveTurnRequestLedgerPath(), {
-      agent: input.agent,
-      wake: input.wake,
-      thread: input.threadId,
-      requests
-    });
-    if (!written) {
-      console.error(`daimon: no per-request usage recorded for codex thread ${input.threadId} (${requests.length === 0 ? "no decodable rollout usage" : "ledger append failed"})`);
-    }
-    return written;
-  } catch (error) {
-    console.error(`daimon: per-request usage instrumentation failed: ${error instanceof Error ? error.message : "unknown error"}`);
-    return false;
-  }
-};
+export { renderTurnRequestLines, recordTurnRequests, recordCodexTurnRequests, type TurnRequestEntry } from "../engines/codex/turnRequestLedger.js";
+export { renderGrokTurnRequestLines, recordGrokTurnRequests, type GrokTurnRequest, type GrokTurnRequestEntry } from "../engines/grok/broker/turnRequestLedger.js";

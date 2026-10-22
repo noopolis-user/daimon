@@ -1,3 +1,4 @@
+import { ENGINE_DESCRIPTORS, SORTED_ENGINE_IDS } from "../engines/descriptors.js";
 import { GROK_BROKER_TASK_CLOCK } from "../engines/grok/broker/grokBrokerTaskClockContract.js";
 import { WAKE_MOMENTS } from "./wakeMomentContract.js";
 import { OPERATOR_DRAIN, WORK_AVAILABILITY_SCHEMA, WORK_BLOCKED_SCHEMA } from "./attentionContract.js";
@@ -12,7 +13,7 @@ import {
 export const RUNTIME_CONTRACT_MANIFEST_VERSION = "noopolis.daimon.runtime-contract-manifest.v5" as const;
 export const ORGANIZATION_RUNTIME_ACTIVITY_V2_VERSION = "noopolis.daimon.organization-runtime-activity.v2" as const;
 export const ENGINE_CREDENTIAL_MATERIAL = {
-  codex: { sourceSlot: "codex-auth", sourceRelativePath: ".daimon-inbound/codex-auth", destinationRelativePath: ".codex/auth.json", directoryMode: 0o700, fileMode: 0o600 }
+  codex: ENGINE_DESCRIPTORS.codex.credentialMaterial
 } as const;
 export const GROK_SUBSCRIPTION_REALM = {
   agentCredentialRelativePath: ".grok/auth.json",
@@ -195,7 +196,7 @@ export const RUNTIME_CONTRACT_MANIFEST = {
   workAvailabilityResponseSchema: WORK_AVAILABILITY_SCHEMA,
   workBlockedSchema: WORK_BLOCKED_SCHEMA,
   operatorDrain: OPERATOR_DRAIN,
-  supportedEngineKinds: ["agy", "codex", "grok"],
+  supportedEngineKinds: SORTED_ENGINE_IDS,
   engineCredentialMaterial: ENGINE_CREDENTIAL_MATERIAL,
   grokSubscriptionRealm: GROK_SUBSCRIPTION_REALM,
   grokEngineBroker: GROK_ENGINE_BROKER,

@@ -1,4 +1,5 @@
-import { AGY_MAX_TOOL_TURNS, createCliSessionFactory, type CliEngineKind, type CliEngineOptions } from "./cliSession.js";
+import { getEngineHandler } from "../engines/registry.js";
+import { createCliSessionFactory, type CliEngineKind, type CliEngineOptions } from "./cliSession.js";
 
 export interface EngineRunResult {
   readonly durationMs: number;
@@ -13,9 +14,7 @@ export const runEngineDetailed = async (
   paths: { readonly workspacePath: string; readonly runtimeHomePath?: string }
 ): Promise<EngineRunResult> => {
   const startedAt = Date.now();
-  const options: CliEngineOptions = engine === "agy"
-    ? { engine, maxToolTurns: AGY_MAX_TOOL_TURNS, timeoutMs: 180_000 }
-    : { engine };
+  const options: CliEngineOptions = getEngineHandler(engine).defaultRunOptions();
   const { session } = await createCliSessionFactory(options)({
     cwd: paths.workspacePath,
     runtimeHomePath: paths.runtimeHomePath

@@ -4,7 +4,7 @@ import test from "node:test";
 import { GROK_ENGINE_BROKER } from "../../../contracts/runtimeContractManifest.js";
 import { EngineBrokerCapabilities } from "./engineBrokerCapabilities.js";
 import { GrokInferenceGrantRefused, GrokInferenceGrants } from "./grokInferenceGrants.js";
-import type { InferenceUsageEntry } from "../../../runtime/inferenceUsageLedger.js";
+import type { InferenceUsageEntry } from "./inferenceUsageLedger.js";
 
 const judge = { model: "grok-4.6", reasoningEffort: "low", purpose: "judge" } as const;
 const refusedWith = (code: string) => (error: unknown) => error instanceof GrokInferenceGrantRefused && error.code === code;

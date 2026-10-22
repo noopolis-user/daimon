@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { ENGINE_DESCRIPTORS } from "../engines/descriptors.js";
 import { mkdir, open, readFile, realpath, rename, stat } from "node:fs/promises";
 import { createHash, timingSafeEqual } from "node:crypto";
 import { createServer } from "node:http";
@@ -81,7 +82,7 @@ export function parseOrganizationRuntimeCliArguments(arguments_: readonly string
   if (arguments_.length === 3 && arguments_[0] === "run" && arguments_[1] === "--config" && arguments_[2]) {
     return { configPath: arguments_[2], kind: "run" };
   }
-  if (arguments_.length === 5 && arguments_[0] === "auth" && arguments_[1] === "agy" && arguments_[2] === "login"
+  if (arguments_.length === 5 && arguments_[0] === "auth" && arguments_[1] === ENGINE_DESCRIPTORS.agy.id && arguments_[2] === "login"
     && arguments_[3] === "--config" && arguments_[4]) {
     return { configPath: arguments_[4], kind: "agy-login" };
   }

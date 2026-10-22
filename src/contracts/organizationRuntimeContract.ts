@@ -1,4 +1,7 @@
-import { GROK_BROKER_MODELS, GROK_BROKER_REASONING_EFFORTS } from "../engines/grok/broker/grokWorkerContract.js";
+import { ORGANIZATION_RUNTIME_CODEX_REASONING_EFFORTS, ORGANIZATION_RUNTIME_CODEX_WORKSPACE_NO_NETWORK_POLICY } from "../engines/codex/configSchema.js";
+import { ENGINE_IDS } from "../engines/descriptors.js";
+import { GROK_CONFIG_CONDITION } from "../engines/grok/configSchema.js";
+import { AGY_CONFIG_CONDITION } from "../engines/agy/configSchema.js";
 import { WAKE_MOMENT_RECORDING_SCHEMA } from "./wakeMomentContract.js";
 
 /** The data-only organization-runtime constants shared by product code and artifacts. */
@@ -21,18 +24,7 @@ export const ORGANIZATION_RUNTIME_MAX_SCHEDULE_INTERVAL_MS = 31_536_000_000;
  * scheduled instant instead of drifting into the next slot's territory.
  */
 export const ORGANIZATION_RUNTIME_MAX_SCHEDULE_JITTER_SECONDS = 3_600;
-/**
- * Codex's own `model_reasoning_effort` values (`codex-rs/protocol/src/openai_models.rs`,
- * `ReasoningEffort::as_str`), verified against the installed `codex` CLI
- * (0.153.4): `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`,
- * `ultra`, `persistent`. Codex's own parser also accepts an arbitrary
- * `Custom(String)` fallback for forward compatibility with models the
- * installed CLI does not yet know about; Daimon's schema deliberately does
- * not extend that far; an unrecognized value is rejected as a likely
- * misconfiguration rather than silently forwarded to the model.
- */
-export const ORGANIZATION_RUNTIME_CODEX_REASONING_EFFORTS = ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra", "persistent"] as const;
-export const ORGANIZATION_RUNTIME_CODEX_WORKSPACE_NO_NETWORK_POLICY = { mode: "workspace-write", networkAccess: false, webSearch: "disabled" } as const;
+export { ORGANIZATION_RUNTIME_CODEX_REASONING_EFFORTS, ORGANIZATION_RUNTIME_CODEX_WORKSPACE_NO_NETWORK_POLICY };
 
 const PRODUCTION_TOOL_PROPERTIES = {
   recording: WAKE_MOMENT_RECORDING_SCHEMA,
@@ -72,17 +64,13 @@ export const ORGANIZATION_RUNTIME_CONFIG_SCHEMA = {
         workspacePath: { type: "string", maxLength: ORGANIZATION_RUNTIME_MAX_STRING_CODEPOINTS, pattern: "^/" },
         runtimeHomePath: { type: "string", maxLength: ORGANIZATION_RUNTIME_MAX_STRING_CODEPOINTS, pattern: "^/" },
         engine: { type: "object", additionalProperties: false, required: ["kind"], properties: {
-          kind: { enum: ["codex", "grok", "agy"] },
+          kind: { enum: ENGINE_IDS },
           model: { type: "string", minLength: 1, maxLength: ORGANIZATION_RUNTIME_MAX_STRING_CODEPOINTS, pattern: "\\S" },
           reasoningEffort: { enum: ORGANIZATION_RUNTIME_CODEX_REASONING_EFFORTS },
           codexSandbox: { type: "object", additionalProperties: false, required: ["mode", "networkAccess", "webSearch"], properties: {
             mode: { const: "workspace-write" }, networkAccess: { const: false }, webSearch: { const: "disabled" }
           } }
-        }, allOf: [
-          // grok: a declared model is the closed broker pair, both or neither; never a Codex sandbox.
-          { if: { properties: { kind: { const: "grok" } } }, then: { properties: { model: { enum: GROK_BROKER_MODELS }, reasoningEffort: { enum: GROK_BROKER_REASONING_EFFORTS }, codexSandbox: false }, dependentRequired: { model: ["reasoningEffort"], reasoningEffort: ["model"] } } },
-          { if: { properties: { kind: { const: "agy" } } }, then: { properties: { model: false, reasoningEffort: false, codexSandbox: false } } }
-        ] },
+        }, allOf: [GROK_CONFIG_CONDITION, AGY_CONFIG_CONDITION] },
         ...PRODUCTION_TOOL_PROPERTIES
       }
     } }

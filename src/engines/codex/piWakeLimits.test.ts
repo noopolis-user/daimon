@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { resolveCodexWakeTimeoutMs, resolveCodexWakeTokenCeiling, resolveEngineWakeLimitOverrides } from "./engineWakeLimits.js";
+import { resolveCodexWakeTimeoutMs, resolveCodexWakeTokenCeiling, resolveEngineWakeLimitOverrides } from "./piWakeLimits.js";
 
 test("engine-neutral wake bounds drive Codex, with the Codex names kept as aliases", () => {
   assert.equal(resolveCodexWakeTimeoutMs({}), 240_000);

@@ -1,3 +1,4 @@
+import { ENGINE_DESCRIPTORS } from "../engines/descriptors.js";
 import type { CliEngineKind as EngineKind } from "../pi/cliSession.js";
 
 export type RepresentativeEngine = EngineKind | "pi";
@@ -31,7 +32,7 @@ export interface TriadSelfProfile {
 }
 
 const innerEngine = (): EngineKind =>
-  (process.env.DAIMON_JUNGIAN_ARCHETYPE_ENGINE as EngineKind | undefined) ?? "agy";
+  (process.env.DAIMON_JUNGIAN_ARCHETYPE_ENGINE as EngineKind | undefined) ?? ENGINE_DESCRIPTORS.agy.id;
 
 const v = (
   id: string,
@@ -86,7 +87,7 @@ export const triadSelves: TriadSelfProfile[] = [
   {
     id: "maya",
     name: "Maya Ortiz",
-    engine: "codex",
+    engine: ENGINE_DESCRIPTORS.codex.id,
     playRole: "The program coordinator trying to keep the fundraiser from collapsing.",
     publicMask: "Organized, dryly funny, carrying the clipboard.",
     backstory: "Maya is the reliable one everyone calls when something is late.",
@@ -98,7 +99,7 @@ export const triadSelves: TriadSelfProfile[] = [
   {
     id: "leo",
     name: "Leo Park",
-    engine: "grok",
+    engine: ENGINE_DESCRIPTORS.grok.id,
     playRole: "The charming volunteer who forgot the chairs.",
     publicMask: "Helpful, funny, usually a little late.",
     backstory: "Leo is good with people and bad with follow-through.",

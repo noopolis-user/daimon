@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-const maintainedRoots = ["scripts", "src/runtime/native"];
+const maintainedRoots = ["scripts", "src/engines/grok/broker/native"];
 
 const maintainedJavaScriptSources = async (roots: string[]): Promise<string[]> => {
   const results: string[] = [];

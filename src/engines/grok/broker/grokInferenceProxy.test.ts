@@ -7,7 +7,7 @@ import { GROK_SESSION_TITLE_SINK_KEY } from "./grokBrokerWorkerConfig.js";
 import { GrokBrokerTurnMeter } from "./grokBrokerTurnMeter.js";
 import { GrokInferenceGrants } from "./grokInferenceGrants.js";
 import { GROK_INFERENCE_AUTH_STALE_BODY } from "./grokInferenceProxy.js";
-import type { InferenceUsageEntry } from "../../../runtime/inferenceUsageLedger.js";
+import type { InferenceUsageEntry } from "./inferenceUsageLedger.js";
 
 // The judge main request Grok 1.0.34 sends (live capture, `--json-schema` variant).
 const judgeBody = (overrides: Record<string, unknown> = {}): string => JSON.stringify({

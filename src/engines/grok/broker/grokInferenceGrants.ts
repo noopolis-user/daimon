@@ -5,7 +5,7 @@ import type { EngineBrokerInferenceFailureCode } from "./engineBrokerInferencePr
 import type { EngineBrokerTurnLimits, EngineBrokerTurnUsage } from "./engineBrokerTurnAccounting.js";
 import { parseGrokBrokerModelPolicy, type GrokBrokerModelPolicy } from "./grokBrokerModelPolicy.js";
 import { GrokBrokerTurnMeter } from "./grokBrokerTurnMeter.js";
-import { GROK_INFERENCE_PURPOSES, recordInferenceUsage, type GrokInferencePurpose, type InferenceUsageEntry } from "../../../runtime/inferenceUsageLedger.js";
+import { GROK_INFERENCE_PURPOSES, recordInferenceUsage, type GrokInferencePurpose, type InferenceUsageEntry } from "./inferenceUsageLedger.js";
 
 const SPEC = GROK_ENGINE_BROKER.inferenceGrants;
 

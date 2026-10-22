@@ -16,7 +16,7 @@ export { GROK_SLOT_PREFLIGHT_VERSION, grokSlotPreflightCanarySchema, grokSlotPre
 export { grokBrokerWorkerConfigSha256, renderGrokBrokerWorkerConfig } from "../engines/grok/broker/grokBrokerWorkerConfig.js";
 export { GROK_INFERENCE_CLIENT_MODEL_ID, GROK_INFERENCE_GRANT_ENV, grokInferenceClientConfigSha256, renderGrokInferenceClientConfig, renderProductionGrokInferenceClientConfig, type GrokInferenceClientConfigInput } from "../engines/grok/broker/grokInferenceClientConfig.js";
 export { GROK_INFERENCE_PROXY_BASE_URL, ENGINE_BROKER_INFERENCE_FAILURE_CODES, type EngineBrokerInferenceFailureCode } from "../engines/grok/broker/engineBrokerInferenceProtocol.js";
-export { dedupeInferenceUsageRows, INFERENCE_USAGE_LEDGER_VERSION, GROK_INFERENCE_PURPOSES, type GrokInferencePurpose } from "./inferenceUsageLedger.js";
+export { dedupeInferenceUsageRows, INFERENCE_USAGE_LEDGER_VERSION, GROK_INFERENCE_PURPOSES, type GrokInferencePurpose } from "../engines/grok/broker/inferenceUsageLedger.js";
 export { GROK_INFERENCE_AUTH_STALE_BODY } from "../engines/grok/broker/grokInferenceProxy.js";
 export { assertGrokWorkerDenyPathPlacement, assertGrokWorkerDenyPathShape, assertGrokWorkerDenyPathsPlaceable, GROK_WORKER_BASE_PROFILE_GRANTS, grokWorkerCanSearch, grokWorkerDenyPathChain, GrokWorkerDenyPlacementError, readGrokWorkerDenyPathChain } from "../engines/grok/broker/grokWorkerDenyPlacement.js";
 export type { GrokWorkerDenyPathEntry, GrokWorkerDenyPathStep, GrokWorkerDenyPathWorker } from "../engines/grok/broker/grokWorkerDenyPlacement.js";

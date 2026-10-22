@@ -258,7 +258,7 @@ test("reads sandbox events only from the Grok 1.0.34 sessions log", async (t) =>
 });
 
 test("attests real Grok 1.0.34 events: ProfileApplied with a non-empty deny list, then the denial it caused", async (t) => {
-  const fixture = await readFile(new URL("./grok-1.0.34-sandbox-events.jsonl", import.meta.url));
+  const fixture = await readFile(new URL("./fixtures/grok-1.0.34-sandbox-events.jsonl", import.meta.url));
   const liveWorkspace = "/var/lib/spawnfile/instance/workspace/agents/a1";
   assert.doesNotThrow(() => parseGrokWorkerProfileApplied(fixture, liveWorkspace, ["/run/paideia"]));
   assert.throws(() => parseGrokWorkerProfileApplied(fixture, liveWorkspace, []), /attestation unavailable/u);

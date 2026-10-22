@@ -1,3 +1,5 @@
+import type { ENGINE_DESCRIPTORS } from "../engines/descriptors.js";
+
 export type AgentId = string;
 
 export interface AgentStartInput {
@@ -19,7 +21,7 @@ export interface HarnessModelEndpoint {
 export interface HarnessModelSpec {
   auth?: {
     keyEnv?: string;
-    method: "api_key" | "claude-code" | "codex" | "none";
+    method: "api_key" | "claude-code" | typeof ENGINE_DESCRIPTORS.codex.piAuthMethod | "none";
   };
   endpoint?: HarnessModelEndpoint;
   name: string;

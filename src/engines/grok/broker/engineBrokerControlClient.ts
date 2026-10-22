@@ -5,7 +5,7 @@ import type { EngineBrokerInferenceFailureCode, EngineBrokerInferenceRequest, En
 import { ENGINE_BROKER_MCP_REFUSAL_REASONS, type EngineBrokerMcpCallObservation, type EngineBrokerMcpRefusalObservation, type EngineBrokerMcpTunnelObservation } from "./engineBrokerMcpCallLog.js";
 import type { EngineBrokerTurnLimitOverrides } from "./engineBrokerTurnAccounting.js";
 import type { GrokBrokerModel, GrokBrokerReasoningEffort } from "./grokBrokerModelPolicy.js";
-import type { GrokInferencePurpose } from "../../../runtime/inferenceUsageLedger.js";
+import type { GrokInferencePurpose } from "./inferenceUsageLedger.js";
 import type { GrokBrokerProviderClockObservation } from "./grokBrokerProviderClock.js";
 
 /**

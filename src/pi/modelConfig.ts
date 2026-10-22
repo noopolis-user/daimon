@@ -1,3 +1,4 @@
+import { engineHandlers } from "../engines/registry.js";
 import { createHash } from "node:crypto";
 
 import type { HarnessModelSpec } from "../core/types.js";
@@ -87,9 +88,8 @@ export const resolvePiHarnessModel = (model: HarnessModelSpec): PiModelResolutio
     return {
       model: {
         name: model.name,
-        provider: model.provider === "openai" && model.auth?.method === "codex"
-          ? "openai-codex"
-          : model.provider
+        provider: engineHandlers().map((handler) => handler.resolvePiProvider?.(model))
+          .find((provider) => provider !== undefined) ?? model.provider
       },
       modelsConfig: { providers: {} }
     };

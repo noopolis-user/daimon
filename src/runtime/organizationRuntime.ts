@@ -1,3 +1,4 @@
+import type { EngineKind } from "../engines/descriptors.js";
 import type { AttentionConfig } from "../contracts/attentionContract.js";
 import type { WakeMomentRecording } from "../contracts/wakeMomentContract.js";
 export type { WakeMomentRecording } from "../contracts/wakeMomentContract.js";
@@ -35,14 +36,14 @@ export {
   ORGANIZATION_RUNTIME_VERSION
 };
 
-export type OrganizationRuntimeEngineKind = "codex" | "grok" | "agy";
+export type OrganizationRuntimeEngineKind = EngineKind;
 /**
  * `model`/`reasoningEffort` are accepted for codex (open model name) and for
  * grok (closed broker lists, declared together); agy owns its own model
  * selection and `organizationRuntimeParsing.ts` rejects either field there at
  * parse time rather than silently ignoring it. The type stays flat
  * — not a `kind`-discriminated union — because every parsed value already
- * satisfies the invariant; callers that need it narrow on `kind === "codex"`.
+ * satisfies the invariant; callers that need it narrow on the engine kind.
  */
 export type OrganizationRuntimeCodexSandboxPolicy = Readonly<{ mode: "workspace-write"; networkAccess: false; webSearch: "disabled" }>;
 export type OrganizationRuntimeEngineIntent = Readonly<{ kind: OrganizationRuntimeEngineKind; model?: string; reasoningEffort?: string; codexSandbox?: OrganizationRuntimeCodexSandboxPolicy }>;

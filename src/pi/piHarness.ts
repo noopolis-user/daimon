@@ -1,3 +1,4 @@
+import { DEFAULT_PI_MODEL } from "../engines/descriptors.js";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
 
@@ -117,11 +118,7 @@ export class PiHarnessAdapter implements AgentHarnessAdapter {
     await mkdir(input.workspacePath, { recursive: true });
     const memoryRuntimeHomePath = this.options.memory?.runtimeHomePath ?? input.runtimeHomePath;
     await ensureRuntimeHome(memoryRuntimeHomePath);
-    const modelSpec = this.options.model ?? {
-      auth: { method: "codex" as const },
-      provider: "openai",
-      name: "gpt-5.4-mini"
-    };
+    const modelSpec = this.options.model ?? DEFAULT_PI_MODEL;
     const resolvedModel = resolvePiHarnessModel(modelSpec).model;
     const model = this.modelRegistry.find(resolvedModel.provider, resolvedModel.name);
     if (!model) {

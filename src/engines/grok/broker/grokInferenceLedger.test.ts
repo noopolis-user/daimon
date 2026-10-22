@@ -11,7 +11,7 @@ import { EngineBrokerTurnRegistry } from "./engineBrokerTurnRegistry.js";
 import { startGrokBrokerProxy } from "./grokBrokerProxy.js";
 import { runGrokEngineBrokerTurn, type GrokEngineBrokerTurnDependencies } from "./grokEngineBrokerTurn.js";
 import { createLedgeredGrokInferenceGrants } from "./grokInferenceGrants.js";
-import { dedupeInferenceUsageRows, INFERENCE_USAGE_LEDGER_VERSION } from "../../../runtime/inferenceUsageLedger.js";
+import { dedupeInferenceUsageRows, INFERENCE_USAGE_LEDGER_VERSION } from "./inferenceUsageLedger.js";
 import { WakeFuse } from "../../../runtime/wakeFuse.js";
 
 const lean = ["run_terminal_command", "read_file", "list_dir", "grep", "search_tool", "use_tool"].map((name) => ({ type: "function", function: { name } }));
