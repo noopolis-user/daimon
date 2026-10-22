@@ -4,6 +4,9 @@ import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 
 import { resolveTurnUsageLedgerPath, TURN_USAGE_LEDGER, TURN_USAGE_MAX_IDENTIFIER_CHARS, TURN_USAGE_ROTATE_BYTES } from "./turnUsageLedger.js";
+import { raised, WakeFuseGrantReader } from "./wakeFuseGrants.js";
+import { ensureUsageLedgerUsable, lines, sumTokens } from "./wakeFuseLedger.js";
+import { isWakeParkRow, parkOf, WakeParkLog, type WakeParkRow } from "./wakeFuseParking.js";
 
 export const WAKE_FUSE_VERSION = "noopolis.daimon.wake-fuse.v1" as const;
 export const WAKE_FUSE_DIRECTORY_ENV = "DAIMON_WAKE_FUSE_DIRECTORY" as const;
@@ -49,6 +52,7 @@ export type WakeFuseOptions = Readonly<{
 
 type Admission = Readonly<{ v: typeof WAKE_FUSE_VERSION; kind: "admission"; epoch: string; at: string; agent: string; delivery: string }>;
 type EpochStart = Readonly<{ v: typeof WAKE_FUSE_VERSION; kind: "epoch_start"; epoch: string; at: string }>;
+type ParkRecord = Readonly<{ v: typeof WAKE_FUSE_VERSION } & WakeParkRow>;
 type TripMarker = Readonly<{ v: typeof WAKE_FUSE_VERSION; kind: "trip"; epoch: string; at: string; reason: WakeFuseTripReason }>;
 const TRIP_MARKER = "fuse.trip.json";
 let warnedDisarmed = false;
@@ -64,6 +68,9 @@ export class WakeFuse {
   private serial: Promise<void> = Promise.resolve();
   private reason: WakeFuseTripReason | undefined;
   private tripMarkerMissing = false;
+  private readonly grants: WakeFuseGrantReader;
+  private readonly parking: WakeParkLog;
+  private revisitSignature: string | undefined;
 
   private constructor(
     private readonly armed: boolean,
@@ -76,7 +83,10 @@ export class WakeFuse {
     private readonly usageLedgerPath: string,
     private readonly now: () => Date,
     private readonly nextEpoch: (at: Date) => string
-  ) {}
+  ) {
+    this.grants = new WakeFuseGrantReader(directory);
+    this.parking = new WakeParkLog(async (row) => await append(directory, { v: WAKE_FUSE_VERSION, ...row }), now);
+  }
 
   static async open(options: WakeFuseOptions): Promise<WakeFuse> {
     const environment = options.environment ?? process.env;
@@ -113,6 +123,7 @@ export class WakeFuse {
       .filter((record): record is Admission => record.kind === "admission" && record.epoch === epoch)
       .map((record) => key(record.agent, record.delivery)));
     const fuse = new WakeFuse(true, directory, epoch, epochStartedAt, maxWakes, maxTokens, admissions, usageLedgerPath, now, nextEpoch);
+    fuse.parking.seed(records.filter((record): record is ParkRecord => (record.kind === "park" || record.kind === "unpark") && record.epoch === epoch));
     if (await exists(path.join(directory, "fuse.stop"))) fuse.reason = "operator_stop";
     else fuse.reason = await readTripMarker(directory, epoch);
     return fuse;
@@ -138,22 +149,74 @@ export class WakeFuse {
    * and only a process restart could renew the budget. The roll is serialized
    * with admissions so a snapshot and an admission never see two windows.
    */
-  async snapshot(agentId: string, limits: WakeBudgetLimits = {}): Promise<WakeBudgetSnapshot> {
+  async snapshot(agentId: string, limits: WakeBudgetLimits = {}, holding = false): Promise<WakeBudgetSnapshot> {
     const result = this.serial.catch(() => undefined).then(async () => {
-      if (this.armed) await this.rollEpochIfDue();
-      return await this.snapshotNow(agentId, limits);
+      if (this.armed) { await this.rollEpochIfDue(); await this.reconsiderCeilingTrip().catch(() => undefined); }
+      const measured = await this.measure(agentId, limits);
+      // `holding`: the caller is about to leave queued work waiting on this verdict.
+      if (holding && measured.snapshot.state === "paused") await this.notePark(agentId, measured);
+      return measured.snapshot;
     });
     this.serial = result.then(() => undefined, () => undefined);
     return await result;
   }
 
-  private async snapshotNow(agentId: string, limits: WakeBudgetLimits = {}): Promise<WakeBudgetSnapshot> {
+  /**
+   * Usage against the EFFECTIVE limits: declared plus the operator's grant for
+   * this epoch (`wakeFuseGrants.ts`). A grant is non-negative by validation,
+   * so it can only raise a limit; an undeclared per-agent limit stays absent.
+   */
+  private async measure(agentId: string, declared: WakeBudgetLimits = {}): Promise<Measured> {
+    const grant = this.armed ? await this.grants.read(this.epoch) : undefined;
+    const agentGrant = grant?.agents.get(agentId);
+    const maxWakes = raised(this.maxWakes, grant?.organization.extraWakes ?? 0);
+    const maxTokens = raised(this.maxTokens, grant?.organization.extraTokens ?? 0);
+    const limits: WakeBudgetLimits = {
+      ...(declared.maxExecutions === undefined ? {} : { maxExecutions: raised(declared.maxExecutions, agentGrant?.extraExecutions ?? 0) }),
+      ...(declared.maxTokens === undefined ? {} : { maxTokens: raised(declared.maxTokens, agentGrant?.extraTokens ?? 0) })
+    };
     const used = this.admissions.size;
     const agentUsed = [...this.admissions].filter((entry) => entry.startsWith(`${bounded(agentId)}\u0000`)).length;
     const tokens = this.armed ? await sumTokens(this.usageLedgerPath, this.epochStartedAt) : 0;
     const agentTokens = this.armed ? await sumTokens(this.usageLedgerPath, this.epochStartedAt, agentId) : 0;
-    const reason = this.reason ?? (this.armed ? used >= this.maxWakes ? "wake_ceiling" : tokens >= this.maxTokens ? "token_ceiling" : limits.maxExecutions !== undefined && agentUsed >= limits.maxExecutions ? "agent_execution_ceiling" : limits.maxTokens !== undefined && agentTokens >= limits.maxTokens ? "agent_token_ceiling" : undefined : undefined);
-    return { armed: this.armed, epoch: this.epoch, state: reason === undefined ? "available" : reason === "operator_stop" || reason === "ledger_unavailable" ? "stopped" : "paused", ...(reason === undefined ? {} : { reason }), executions_used: used, executions_remaining: Math.max(0, this.maxWakes - used), tokens_used: tokens, tokens_remaining: Math.max(0, this.maxTokens - tokens), agent_executions_used: agentUsed, agent_tokens_used: agentTokens, ...(limits.maxExecutions === undefined ? {} : { agent_executions_remaining: Math.max(0, limits.maxExecutions - agentUsed) }), ...(limits.maxTokens === undefined ? {} : { agent_tokens_remaining: Math.max(0, limits.maxTokens - agentTokens) }) };
+    const reason = this.reason ?? (this.armed ? used >= maxWakes ? "wake_ceiling" : tokens >= maxTokens ? "token_ceiling" : limits.maxExecutions !== undefined && agentUsed >= limits.maxExecutions ? "agent_execution_ceiling" : limits.maxTokens !== undefined && agentTokens >= limits.maxTokens ? "agent_token_ceiling" : undefined : undefined);
+    const snapshot: WakeBudgetSnapshot = { armed: this.armed, epoch: this.epoch, state: reason === undefined ? "available" : reason === "operator_stop" || reason === "ledger_unavailable" ? "stopped" : "paused", ...(reason === undefined ? {} : { reason }), executions_used: used, executions_remaining: Math.max(0, maxWakes - used), tokens_used: tokens, tokens_remaining: Math.max(0, maxTokens - tokens), agent_executions_used: agentUsed, agent_tokens_used: agentTokens, ...(limits.maxExecutions === undefined ? {} : { agent_executions_remaining: Math.max(0, limits.maxExecutions - agentUsed) }), ...(limits.maxTokens === undefined ? {} : { agent_tokens_remaining: Math.max(0, limits.maxTokens - agentTokens) }) };
+    return { snapshot, reason, maxWakes, maxTokens, limits, used, tokens, agentUsed, agentTokens };
+  }
+
+  /**
+   * A ceiling trip is latched for its epoch so a restart cannot reopen it — but
+   * an operator grant IS the explicit recovery, so a ceiling the grant has
+   * lifted clears. Only a ceiling: an operator stop and a ledger fault never.
+   */
+  private async reconsiderCeilingTrip(): Promise<void> {
+    if (this.reason !== "wake_ceiling" && this.reason !== "token_ceiling") return;
+    const grant = await this.grants.read(this.epoch);
+    const lifted = this.reason === "wake_ceiling" ? grant.organization.extraWakes > 0 && this.admissions.size < raised(this.maxWakes, grant.organization.extraWakes)
+      : grant.organization.extraTokens > 0 && await sumTokens(this.usageLedgerPath, this.epochStartedAt) < raised(this.maxTokens, grant.organization.extraTokens);
+    if (!lifted) return;
+    // The marker is what host tooling reads as truth, so a lifted trip must not
+    // leave it behind. Removed first: if that fails the trip stays (fail closed).
+    if (await readTripMarker(this.directory, this.epoch) === this.reason) { await unlink(path.join(this.directory, TRIP_MARKER)); await syncDirectory(this.directory); }
+    this.reason = undefined; this.tripMarkerMissing = false;
+  }
+
+  private async notePark(agentId: string, measured: Measured): Promise<void> {
+    const park = parkOf(measured);
+    if (park !== undefined) await this.parking.park(bounded(agentId), park.reason, park.used, park.limit, this.epoch);
+  }
+
+  /**
+   * Agents held by a budget whose limits MAY have moved since the last call —
+   * the grant file changed or the day rolled. The control host revisits them,
+   * so a grant resumes a parked agent without a restart or new mail.
+   */
+  async parkedRevisitDue(): Promise<string[]> {
+    if (!this.armed) return [];
+    const signature = `${await this.grants.signature()}|${this.nextEpoch(this.now())}`;
+    if (signature === this.revisitSignature) return [];
+    this.revisitSignature = signature;
+    return this.parking.agents();
   }
 
   async pollOperatorStop(): Promise<WakeFuseTripReason | undefined> {
@@ -215,22 +278,28 @@ export class WakeFuse {
   private async admitNow(agentId: string, deliveryId: string, limits: WakeBudgetLimits): Promise<WakeFuseVerdict> {
     // Before the trip is consulted: a new day may have cleared a ceiling.
     await this.rollEpochIfDue();
-    if (this.reason !== undefined) return await this.trip(this.reason);
+    await this.reconsiderCeilingTrip().catch(() => undefined);
+    if (this.reason !== undefined) {
+      if (this.reason === "wake_ceiling" || this.reason === "token_ceiling") await this.notePark(agentId, await this.measure(agentId, limits)).catch(() => undefined);
+      return await this.trip(this.reason);
+    }
     try {
       if (await exists(path.join(this.directory, "fuse.stop"))) return await this.trip("operator_stop");
       const admissionKey = key(bounded(agentId), bounded(deliveryId));
       if (this.admissions.has(admissionKey)) return { state: "admitted" };
-      const budget = await this.snapshotNow(agentId, limits);
-      if (budget.agent_executions_remaining === 0) return { state: "paused", reason: "agent_execution_ceiling" };
-      if (budget.agent_tokens_remaining === 0) return { state: "paused", reason: "agent_token_ceiling" };
-      if (this.admissions.size >= this.maxWakes) return await this.trip("wake_ceiling");
+      const measured = await this.measure(agentId, limits);
+      const budget = measured.snapshot;
+      if (budget.agent_executions_remaining === 0) { await this.notePark(agentId, { ...measured, reason: "agent_execution_ceiling" }); return { state: "paused", reason: "agent_execution_ceiling" }; }
+      if (budget.agent_tokens_remaining === 0) { await this.notePark(agentId, { ...measured, reason: "agent_token_ceiling" }); return { state: "paused", reason: "agent_token_ceiling" }; }
+      if (this.admissions.size >= measured.maxWakes) { await this.notePark(agentId, { ...measured, reason: "wake_ceiling" }); return await this.trip("wake_ceiling"); }
       // Lagging indicator: usage is written after turn completion, so in-flight
       // spend can overshoot by one concurrent round. The wake ceiling bounds it;
       // design §5.2 owns the later pre-spawn reservation.
-      if (await sumTokens(this.usageLedgerPath, this.epochStartedAt) >= this.maxTokens) return await this.trip("token_ceiling");
+      if (await sumTokens(this.usageLedgerPath, this.epochStartedAt) >= measured.maxTokens) { await this.notePark(agentId, { ...measured, reason: "token_ceiling" }); return await this.trip("token_ceiling"); }
       const record: Admission = { v: WAKE_FUSE_VERSION, kind: "admission", epoch: this.epoch, at: this.now().toISOString(), agent: bounded(agentId), delivery: bounded(deliveryId) };
       await append(this.directory, record);
       this.admissions.add(admissionKey);
+      await this.parking.clear(bounded(agentId), this.epoch);
       return { state: "admitted" };
     } catch { return await this.trip("ledger_unavailable"); }
   }
@@ -270,7 +339,7 @@ function bounded(value: string): string { return [...value].slice(0, TURN_USAGE_
 function key(agent: string, delivery: string): string { return `${agent}\u0000${delivery}`; }
 function admissionsPath(directory: string): string { return path.join(directory, "admissions.jsonl"); }
 
-async function append(directory: string, record: Admission | EpochStart): Promise<void> {
+async function append(directory: string, record: Admission | EpochStart | ParkRecord): Promise<void> {
   const file = admissionsPath(directory);
   try { if ((await stat(file)).size >= TURN_USAGE_ROTATE_BYTES) await rename(file, `${file}.1`); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
   const bytes = Buffer.from(`${JSON.stringify(record)}\n`, "utf8");
@@ -282,8 +351,8 @@ async function append(directory: string, record: Admission | EpochStart): Promis
 
 async function syncDirectory(directory: string): Promise<void> { const handle = await open(directory, constants.O_RDONLY); try { await handle.sync(); } finally { await handle.close(); } }
 
-async function readFuseRecords(directory: string): Promise<Array<Admission | EpochStart>> {
-  const records: Array<Admission | EpochStart> = [];
+async function readFuseRecords(directory: string): Promise<Array<Admission | EpochStart | ParkRecord>> {
+  const records: Array<Admission | EpochStart | ParkRecord> = [];
   for (const file of [`${admissionsPath(directory)}.1`, admissionsPath(directory)]) {
     for (const line of await lines(file)) {
       try {
@@ -291,29 +360,13 @@ async function readFuseRecords(directory: string): Promise<Array<Admission | Epo
         if (value.v !== WAKE_FUSE_VERSION || typeof value.epoch !== "string" || typeof value.at !== "string" || Number.isNaN(Date.parse(value.at))) continue;
         if (value.kind === "epoch_start") records.push(value as EpochStart);
         else if (value.kind === "admission" && typeof value.agent === "string" && typeof value.delivery === "string") records.push(value as Admission);
+        else if (isWakeParkRow(value as Record<string, unknown>)) records.push(value as unknown as ParkRecord);
       } catch { /* malformed historical fuse lines do not count */ }
     }
   }
   return records;
 }
 
-async function sumTokens(ledgerPath: string, since: string, agentId?: string): Promise<number> {
-  let total = 0;
-  // Rows carrying a `turn` idempotency key count once per turn, whichever file holds them.
-  const turns = new Set<string>();
-  for (const file of [`${ledgerPath}.1`, ledgerPath]) {
-    for (const line of await lines(file)) {
-      try {
-        const value = JSON.parse(line) as { at?: unknown; total?: unknown; agent?: unknown; turn?: unknown; kind?: unknown };
-        // Evaluator inference rows belong to their own ledger; one here (a misconfigured path) is never subject spend.
-        if (value.kind === "inference") continue;
-        if (typeof value.turn === "string") { if (turns.has(value.turn)) continue; turns.add(value.turn); }
-        if ((agentId === undefined || value.agent === agentId) && typeof value.at === "string" && !Number.isNaN(Date.parse(value.at)) && value.at >= since && typeof value.total === "number" && Number.isFinite(value.total) && value.total >= 0) total += value.total;
-      } catch { /* usage accounting is advisory input; malformed lines are skipped */ }
-    }
-  }
-  return total;
-}
 async function writeTripMarker(directory: string, marker: TripMarker): Promise<void> {
   const target = path.join(directory, TRIP_MARKER);
   const temporary = path.join(directory, `.${TRIP_MARKER}.${process.pid}.${randomUUID()}`);
@@ -338,68 +391,6 @@ async function readTripMarker(directory: string, epoch: string): Promise<WakeFus
     return "ledger_unavailable";
   }
 }
+type Measured = Readonly<{ snapshot: WakeBudgetSnapshot; reason: string | undefined; maxWakes: number; maxTokens: number; limits: WakeBudgetLimits; used: number; tokens: number; agentUsed: number; agentTokens: number }>;
 function isTripReason(value: unknown): value is WakeFuseTripReason { return value === "wake_ceiling" || value === "token_ceiling" || value === "operator_stop" || value === "ledger_unavailable"; }
-async function lines(file: string): Promise<string[]> { try { return (await readFile(file, "utf8")).split("\n").filter(Boolean); } catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return []; throw error; } }
-
-/**
- * An unenforceable usage ledger at arm time must never degrade to a silent
- * zero. `sumTokens` (used on every later `admit`) deliberately treats a
- * missing ledger as an empty one — if the ledger is deleted mid-epoch, the
- * fuse still needs to keep functioning rather than wedge the organization —
- * but that same tolerance is exactly how a 17.6M-token run passed a 5M
- * ceiling untouched: the ledger was never created at all, so every sum read
- * zero and the ceiling never had anything to compare against.
- *
- * Four states, distinguished by what actually makes the ceiling
- * unenforceable versus merely unwritten yet:
- *  - The ledger directory is missing, or present but not writable by this
- *    uid: the ceiling is genuinely unenforceable. Fails loudly, the same
- *    treatment `readdir(directory)` above already gives a missing
- *    admissions directory.
- *  - The directory is present and writable but the ledger file itself is
- *    absent: Spawnfile's entrypoint provisions and chows the directory as a
- *    persistent volume before the first turn ever writes usage
- *    (`renderDaimonUsageLedgerProvisioning`), so a brand-new organization
- *    legitimately has zero recorded spend. That is a true zero, not an
- *    unknown one — but only once this durably creates the (empty) ledger
- *    itself and verifies the result is readable, rather than assuming a
- *    missing file means zero.
- *  - The ledger file exists and is readable: arm normally; `sumTokens` sums
- *    whatever is in it.
- *  - The ledger file exists but is unreadable (EACCES, EISDIR, ...): fails
- *    loudly, exactly as before.
- */
-async function ensureUsageLedgerUsable(ledgerPath: string): Promise<void> {
-  try {
-    await readFile(ledgerPath, "utf8");
-    return;
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    if (code !== "ENOENT") {
-      throw new Error(`DAIMON_WAKE_FUSE cannot start: usage ledger at ${ledgerPath} is missing or unreadable (${code ?? String(error)}); refusing to admit wakes against an unenforceable token ceiling`);
-    }
-  }
-
-  // Ledger file absent. Create it empty, matching the mode the broker itself
-  // writes usage records with, so a fresh organization can start.
-  try {
-    const handle = await open(ledgerPath, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, TURN_USAGE_LEDGER.fileMode);
-    await handle.close();
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    // EEXIST means a concurrent writer created it first (e.g. a racing turn
-    // append); that is not a creation failure, so fall through to verify.
-    if (code !== "EEXIST") {
-      throw new Error(`DAIMON_WAKE_FUSE cannot start: usage ledger at ${ledgerPath} is missing and could not be created (${code ?? String(error)}); refusing to admit wakes against an unenforceable token ceiling`);
-    }
-  }
-
-  // Never assume the create succeeded: read the file back before treating
-  // the ceiling as enforceable.
-  try { await readFile(ledgerPath, "utf8"); }
-  catch (error) {
-    const code = (error as NodeJS.ErrnoException).code ?? String(error);
-    throw new Error(`DAIMON_WAKE_FUSE cannot start: usage ledger at ${ledgerPath} is missing or unreadable (${code}); refusing to admit wakes against an unenforceable token ceiling`);
-  }
-}
 async function exists(file: string): Promise<boolean> { try { await stat(file); return true; } catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return false; throw error; } }

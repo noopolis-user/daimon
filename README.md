@@ -172,6 +172,24 @@ descriptor with a bounded retry delay. A budget pause never becomes a terminal
 receipt. Existing fuse trip markers remain latched until explicit operator
 recovery; changing attention settings does not erase historical spending.
 
+An operator raises a day's budget without a rebuild or restart by writing
+`grants.json` beside the fuse ledger (default
+`/var/lib/spawnfile/daimon/usage/grants.json`):
+
+```json
+{ "version": "noopolis.daimon.wake-fuse-grants.v1", "epoch": "2026-10-21",
+  "organization": { "extra_wakes": 50, "extra_tokens": 20000000 },
+  "agents": { "pressman": { "extra_executions": 10, "extra_tokens": 2000000 } } }
+```
+
+Each extra is added to the declared limit for the named epoch only (the full
+epoch, or its `YYYY-MM-DD` day for the date-derived epoch), so grants only
+raise limits and expire by themselves. A malformed file is ignored with one
+warning. Parked agents resume within about a second. A wake held by a spent
+budget logs `daimon: wake parked agent=… reason=… used=… limit=… epoch=…` once
+(and `daimon: wake unparked …` when it clears) and records a `park`/`unpark`
+row in `admissions.jsonl`, for host alerting.
+
 `POST /v2/drain` and `POST /v2/resume` (same bearer token) are the reversible
 counterpart: a drain answers new wakes with the same 409 `work-blocked`
 descriptor, keeps queued deliveries, lets running turns finish and reports

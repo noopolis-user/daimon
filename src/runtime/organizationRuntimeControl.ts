@@ -28,6 +28,7 @@ type TestControlOptions = OrganizationRuntimeControlOptions & Readonly<{
   storeOptions?: WakeAcceptanceStoreTestOptions;
   fuseEnvironment?: NodeJS.ProcessEnv;
   fusePollIntervalMsForTest?: number;
+  fuseNowForTest?: () => Date;
   attentionRegistryForTest?: AttentionRegistry;
 }>;
 
@@ -149,14 +150,16 @@ function createControl(config: OrganizationRuntimeConfig, host: OrganizationRunt
       const opened = await WakeAcceptanceStore.open(options.acceptanceStorePath, options.storeOptions);
       let openedFuse: WakeFuse | undefined;
       try {
-        openedFuse = await WakeFuse.open({ organizationKey: [...knownAgents].sort().join("\u0000"), environment: options.fuseEnvironment });
+        openedFuse = await WakeFuse.open({ organizationKey: [...knownAgents].sort().join("\u0000"), environment: options.fuseEnvironment, ...(options.fuseNowForTest === undefined ? {} : { now: options.fuseNowForTest }) });
         await host.start();
         store = opened; fuse = openedFuse; started = true;
         dispatcher = new AttentionDispatcher({ store, host, fuse, agents: config.agents, registry, token: expectedToken, onIdle: (agentId) => { void schedules?.drain(agentId).catch(() => undefined); } });
         if (!hardReason()) for (const agentId of new Set((await opened.recoverable(knownAgents)).filter((record) => !record.deferred).map((record) => record.agent_id))) dispatcher.notify(agentId);
         fusePoll = setInterval(() => {
           void fuse?.pollOperatorStop().then((reason) => {
-            if (reason === "operator_stop" || reason === "ledger_unavailable") dispatcher?.halt();
+            if (reason === "operator_stop" || reason === "ledger_unavailable") { dispatcher?.halt(); return; }
+            // An operator grant (or a new day) can lift a budget pause; revisit the parked queues.
+            return fuse?.parkedRevisitDue().then((agents) => { if (agents.length > 0 && !hardReason()) dispatcher?.revisit(agents); });
           }).catch(() => undefined);
         }, options.fusePollIntervalMsForTest ?? WAKE_FUSE_OPERATOR_POLL_MS);
         fusePoll.unref();
