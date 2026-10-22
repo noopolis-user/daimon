@@ -12,3 +12,8 @@ export * from "./runtimeSandbox.js";
 export * from "./turnRequestLedger.js";
 export { seedPiOpenAICodexAuthFromCodex, createPiOpenAICodexAuthFromCodexToken } from "./piAuth.js";
 export { resolveCodexPiProvider } from "./piModel.js";
+export * from "./codexFilesystemRules.js";
+export * from "./codexHeadlessResult.js";
+export * from "./codexRolloutUsage.js";
+export * from "./codexSandboxProjection.js";
+export * from "./portableCredentialMaterial.js";

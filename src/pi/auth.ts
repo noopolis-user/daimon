@@ -1,3 +1,4 @@
+import { seedPiOpenAICodexAuthFromCodex as seedCodexPiAuth } from "../engines/codex/piAuth.js";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
@@ -24,7 +25,6 @@ const writePiAuth = async (
 };
 
 
-import { seedPiOpenAICodexAuthFromCodex as seedCodexPiAuth } from "../engines/codex/piAuth.js";
 
 export { createPiOpenAICodexAuthFromCodexToken } from "../engines/codex/piAuth.js";
 

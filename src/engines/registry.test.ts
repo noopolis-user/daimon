@@ -8,7 +8,10 @@ import { ENGINE_IDS } from "./descriptors.js";
 const execute = promisify(execFile);
 
 test("handlers and barrels initialize from every isolated import entry point", async () => {
-  const entries = ["index", "registry", "grok/broker/index", ...ENGINE_IDS.flatMap((id) =>
+  const entries = ["index", "registry", "contract", "descriptors", "authHooks", "configHooks", "piHooks", "runtimeHooks",
+    "grok/broker/index", "../runtime/engineReadiness", "../pi/cliEnvironment", "../pi/cliSession", "../pi/auth",
+    "../pi/cliChildOutput", "../pi/cliEngineSpawn", "../pi/modelConfig", "../contracts/runtimeContractManifest",
+    ...ENGINE_IDS.flatMap((id) =>
     ["index", "piHooks", "runtimeHooks", "authHooks", "configHooks"].map((name) => `${id}/${name}`))];
   for (const entry of entries) {
     const source = `await import(${JSON.stringify(new URL(`./${entry}.ts`, import.meta.url).href)});`

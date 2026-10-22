@@ -1,6 +1,6 @@
 import type { CliEngineOptions } from "../pi/cliSession.js";
 import type { PiWakeEnvironmentContextRef } from "../pi/piAgentWakeSupport.js";
-import type { OrganizationRuntimeAgentConfig } from "../runtime/organizationRuntime.js";
+import type { OrganizationRuntimeAgentConfig, OrganizationRuntimeConfig } from "../runtime/organizationRuntime.js";
 import type { EngineReadiness } from "../runtime/engineReadiness.js";
 import type { OrganizationRuntimePathAuthority } from "../runtime/physicalReadiness.js";
 import type { AgySubscriptionRealm } from "./agy/agySubscriptionRealm.js";
@@ -30,8 +30,13 @@ export type RuntimeSandboxContext = Readonly<{
   sharedProtectedPaths: readonly string[];
 }>;
 
+export type EngineCliAuthCommand = Readonly<{ configPath: string; kind: "agy-login" }>;
+
 /** Runtime authority and provider behavior used by the generic host. */
 export interface RuntimeEngineHooks {
+  readonly cliCommandKind?: EngineCliAuthCommand["kind"];
+  parseCliArguments?(arguments_: readonly string[]): EngineCliAuthCommand | undefined;
+  runCliCommand?(config: OrganizationRuntimeConfig): Promise<void>;
   readonly runtimeHomeShape: "private" | "worker-traversable";
   assertRuntimeHomeDirectory?(entry: RuntimeDirectoryEntry, label: string, runtime: RuntimeDirectoryIdentity): void;
   /** Preserve credential materialization, broker readiness, then realm startup order. */

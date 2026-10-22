@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-import { ENGINE_DESCRIPTORS } from "../engines/descriptors.js";
+import { engineHandlers } from "../engines/registry.js";
+import type { EngineCliAuthCommand } from "../engines/runtimeHooks.js";
 import { mkdir, open, readFile, realpath, rename, stat } from "node:fs/promises";
 import { createHash, timingSafeEqual } from "node:crypto";
 import { createServer } from "node:http";
@@ -8,7 +9,6 @@ import path from "node:path";
 
 import { createOrganizationRuntimeHost } from "./organizationRuntimeHost.js";
 import { createOrganizationRuntimeControlHost } from "./organizationRuntimeControl.js";
-import { runAgySubscriptionBootstrap } from "../engines/agy/agySubscriptionBootstrap.js";
 import { parseOrganizationRuntimeConfig, parseOrganizationRuntimeWakeRequest } from "./organizationRuntime.js";
 import { runEngineBrokerServiceCli } from "../engines/grok/broker/engineBrokerServiceCli.js";
 
@@ -21,8 +21,9 @@ export async function runOrganizationRuntimeCli(arguments_: readonly string[], e
   if(arguments_.length===2&&arguments_[0]==="engine-broker"&&arguments_[1]==="serve"){await runEngineBrokerServiceCli();return;}
   const command = parseArguments(arguments_);
   const config = parseOrganizationRuntimeConfig(JSON.parse(await readBoundedFile(command.configPath)));
-  if (command.kind === "agy-login") {
-    await runAgySubscriptionBootstrap(config);
+  if (command.kind !== "run") {
+    const handler = engineHandlers().find((candidate) => candidate.cliCommandKind === command.kind)!;
+    await handler.runCliCommand!(config);
     return;
   }
   const storePath = environment[ACCEPTANCE_STORE_ENV];
@@ -77,14 +78,14 @@ async function writeReadinessReceipt(file: string, config: ReturnType<typeof par
 
 export function parseOrganizationRuntimeCliArguments(arguments_: readonly string[]): Readonly<{
   configPath: string;
-  kind: "agy-login" | "run";
-}> {
+  kind: "run";
+}> | EngineCliAuthCommand {
   if (arguments_.length === 3 && arguments_[0] === "run" && arguments_[1] === "--config" && arguments_[2]) {
     return { configPath: arguments_[2], kind: "run" };
   }
-  if (arguments_.length === 5 && arguments_[0] === "auth" && arguments_[1] === ENGINE_DESCRIPTORS.agy.id && arguments_[2] === "login"
-    && arguments_[3] === "--config" && arguments_[4]) {
-    return { configPath: arguments_[4], kind: "agy-login" };
+  for (const handler of engineHandlers()) {
+    const command = handler.parseCliArguments?.(arguments_);
+    if (command !== undefined) return command;
   }
   throw new Error("usage: daimon-runtime run --config <path> | daimon-runtime auth agy login --config <path>");
 }
