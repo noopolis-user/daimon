@@ -10,7 +10,7 @@ import {
   asGrokAuthenticationRejected,
   classifyGrokAuthenticationDiagnostic,
   GrokSubscriptionAuthenticationRejectedError
-} from "../runtime/grokAuthenticationError.js";
+} from "../engines/grok/broker/grokAuthenticationError.js";
 import type { TurnUsageOutcome } from "../runtime/turnUsageLedger.js";
 import { readChild } from "./cliChildOutput.js";
 import { cliChildEnvironment } from "./cliEnvironment.js";
@@ -24,11 +24,11 @@ import {
   renderAgyMcpRemoveArgs,
   type CliMcpRegistration
 } from "./cliMcpRegistration.js";
-import { registerGrokHomeMcpServer } from "./grokHomeMcpRegistration.js";
-import { decodeAgyHeadlessTurn, type AgyTurnUsage } from "./agyHeadlessResult.js";
-import { type CodexTurnUsage } from "./codexHeadlessResult.js";
+import { registerGrokHomeMcpServer } from "../engines/grok/grokHomeMcpRegistration.js";
+import { decodeAgyHeadlessTurn, type AgyTurnUsage } from "../engines/agy/agyHeadlessResult.js";
+import { type CodexTurnUsage } from "../engines/codex/codexHeadlessResult.js";
 import { createCliTurnMeter, decodeCodexTurn, failedTurnOutcome, publishTurnRequests, publishTurnUsage } from "./cliTurnMetering.js";
-import { decodeGrokHeadlessResult } from "./grokHeadlessResult.js";
+import { decodeGrokHeadlessResult } from "../engines/grok/grokHeadlessResult.js";
 import { terminateChild, trackCliChild } from "./cliProcess.js";
 import type { PiSessionLike } from "./piAgentHandle.js";
 import type { PiSessionFactoryInput } from "./piHarness.js";

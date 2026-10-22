@@ -1,6 +1,6 @@
-import type { AgyTurnUsage } from "./agyHeadlessResult.js";
+import type { AgyTurnUsage } from "../engines/agy/agyHeadlessResult.js";
 import { cliChildFailureReason, tagCliChildFailure } from "./cliChildOutput.js";
-import { decodeCodexHeadlessTurn, type CodexHeadlessTurn, type CodexTurnUsage } from "./codexHeadlessResult.js";
+import { decodeCodexHeadlessTurn, type CodexHeadlessTurn, type CodexTurnUsage } from "../engines/codex/codexHeadlessResult.js";
 import type { TurnUsageOutcome } from "../runtime/turnUsageLedger.js";
 
 /**

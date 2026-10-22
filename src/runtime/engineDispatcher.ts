@@ -1,9 +1,9 @@
-import { brokerProcessClock } from "./grokBrokerTaskClock.js";
+import { brokerProcessClock } from "../engines/grok/broker/grokBrokerTaskClock.js";
 import { reportEngineTaskClockGap } from "../pi/engineTaskClock.js";
 import { attentionTools, type AttentionRegistry } from "./attention.js";
 import { readTaskClock } from "./taskClock.js";
 import { memoryClockOptions } from "../pi/memoryClock.js";
-import { grokDaimonToolName, grokMountedToolNamingRule } from "../contracts/grokWorkerContract.js";
+import { grokDaimonToolName, grokMountedToolNamingRule } from "../engines/grok/broker/grokWorkerContract.js";
 import path from "node:path";
 
 import type { AgentHandle } from "../core/types.js";
@@ -11,13 +11,13 @@ import { AGY_MAX_TOOL_TURNS, createCliSessionFactory, resolveCodexWakeTimeoutMs,
 import {
   GROK_DAIMON_SANDBOX_PROFILE,
   prepareAndVerifyGrokSandbox
-} from "../pi/grokSandbox.js";
+} from "../engines/grok/grokSandbox.js";
 import { PiHarnessAdapter } from "../pi/piHarness.js";
 
 import type { OrganizationRuntimeAgentConfig } from "./organizationRuntime.js";
 import type { OrganizationRuntimePathAuthority } from "./physicalReadiness.js";
 import { engineAuthFile, engineHomeName, prepareEngineExecutable, prepareEngineReadiness, readPortableEngineCredentialSecrets } from "./engineReadiness.js";
-import type { EngineBrokerTurnClient } from "./engineBrokerControlClient.js";
+import type { EngineBrokerTurnClient } from "../engines/grok/broker/engineBrokerControlClient.js";
 import { createProductionAgentTools } from "./productionAgentTools.js";
 import { AGY_SUBSCRIPTION_REALM, GROK_SUBSCRIPTION_REALM } from "./contractManifest.js";
 import { recordTurnUsage, resolveTurnUsageLedgerPath } from "./turnUsageLedger.js";
@@ -141,7 +141,7 @@ function adapterFor(agent: OrganizationRuntimeAgentConfig, controlTokenEnv: stri
           // Codex has no broker to meter it, so publish terminal-frame usage
           // to the shared advisory ledger — on the wake that published and on
           // the wake that failed after Codex had already reported its spend.
-          onTurnUsage: (usage: import("../pi/codexHeadlessResult.js").CodexTurnUsage, outcome: import("./turnUsageLedger.js").TurnUsageOutcome) => recordTurnUsage(resolveTurnUsageLedgerPath(), { agent: agent.id, wake: wakeEnvironmentContext.current ?? "wake", engine: "codex", usage, outcome }),
+          onTurnUsage: (usage: import("../engines/codex/codexHeadlessResult.js").CodexTurnUsage, outcome: import("./turnUsageLedger.js").TurnUsageOutcome) => recordTurnUsage(resolveTurnUsageLedgerPath(), { agent: agent.id, wake: wakeEnvironmentContext.current ?? "wake", engine: "codex", usage, outcome }),
           // Per-model-request accounting, written to its own stream beside the
           // ledger. `engineHomePath` is the agent's `CODEX_HOME`
           // (`../pi/cliEnvironment.ts`), so the rollout Codex just wrote for

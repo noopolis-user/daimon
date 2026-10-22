@@ -1,4 +1,4 @@
-import { GROK_BROKER_MODELS, GROK_BROKER_REASONING_EFFORTS } from "./grokWorkerContract.js";
+import { GROK_BROKER_MODELS, GROK_BROKER_REASONING_EFFORTS } from "../engines/grok/broker/grokWorkerContract.js";
 import { WAKE_MOMENT_RECORDING_SCHEMA } from "./wakeMomentContract.js";
 
 /** The data-only organization-runtime constants shared by product code and artifacts. */

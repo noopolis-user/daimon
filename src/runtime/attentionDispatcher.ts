@@ -7,7 +7,7 @@ import { sanitizeExecutionError, type StoredWakeAcceptanceRecord } from "./wakeA
 import { STALE_QUEUED_DELIVERY_MS } from "./wakeAcceptanceRetention.js";
 import { WakeFuse } from "./wakeFuse.js";
 import { ORGANIZATION_RUNTIME_MAX_STRING_CODEPOINTS, ORGANIZATION_RUNTIME_MAX_WAKE_TEXT_BYTES } from "../contracts/organizationRuntimeContract.js";
-import { grokDaimonToolName } from "../contracts/grokWorkerContract.js";
+import { grokDaimonToolName } from "../engines/grok/broker/grokWorkerContract.js";
 import { verifyHostRecordingStore, wakeFromDurableInbox } from "./organizationRuntimeAdmission.js";
 import { recordWakeMoment, type WakeMomentOptions } from "./wakeMomentRecorder.js";
 

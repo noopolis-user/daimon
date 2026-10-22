@@ -3,7 +3,7 @@ import path from "node:path";
 import test from "node:test";
 
 import { identityEnvelope } from "./engineDispatcher.js";
-import { DAIMON_GROK_MCP_SERVER, DAIMON_GROK_SYSTEM_PROMPT, DAIMON_GROK_TOOL_PREFIX, GROK_MCP_INVOKE_TOOL, GROK_MCP_SEARCH_TOOL, GROK_MCP_TOOL_NAME_ARGUMENT, grokDaimonToolName } from "../contracts/grokWorkerContract.js";
+import { DAIMON_GROK_MCP_SERVER, DAIMON_GROK_SYSTEM_PROMPT, DAIMON_GROK_TOOL_PREFIX, GROK_MCP_INVOKE_TOOL, GROK_MCP_SEARCH_TOOL, GROK_MCP_TOOL_NAME_ARGUMENT, grokDaimonToolName } from "../engines/grok/broker/grokWorkerContract.js";
 import type { OrganizationRuntimeAgentConfig } from "./organizationRuntime.js";
 
 const rootConfig = (root: string, kind: OrganizationRuntimeAgentConfig["engine"]["kind"]): OrganizationRuntimeAgentConfig => ({

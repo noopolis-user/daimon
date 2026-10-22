@@ -1,12 +1,12 @@
 import { reportEngineTaskClockGap } from "../pi/engineTaskClock.js";
-import { startAgySubscriptionRealm, type AgySubscriptionRealm } from "./agySubscriptionRealm.js";
+import { startAgySubscriptionRealm, type AgySubscriptionRealm } from "../engines/agy/agySubscriptionRealm.js";
 import { prepareEngineExecutable, verifyAgySubscriptionEnrollment } from "./engineReadiness.js";
 import { readTaskClock } from "./taskClock.js";
 import { memoryClockOptions } from "../pi/memoryClock.js";
 import type { OrganizationRuntimeConfig } from "./organizationRuntime.js";
 import { prepareOrganizationRuntimePaths, type OrganizationRuntimePathAuthority } from "./physicalReadiness.js";
-import { materializePortableCredential } from "./portableCredentialMaterial.js";
-import { EngineBrokerControlClient } from "./engineBrokerControlClient.js";
+import { materializePortableCredential } from "../engines/codex/portableCredentialMaterial.js";
+import { EngineBrokerControlClient } from "../engines/grok/broker/engineBrokerControlClient.js";
 
 export type OrganizationRuntimeHostReadiness = Readonly<{
   agyRealm?: AgySubscriptionRealm;

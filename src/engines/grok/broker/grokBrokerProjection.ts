@@ -1,0 +1,184 @@
+import { brokerTaskClockFileFor } from "./grokBrokerSlot.js";
+import { GROK_BROKER_TASK_CLOCK, type GrokWorkerConfigVariant } from "./grokBrokerTaskClockContract.js";
+import { createHash } from "node:crypto";
+import path from "node:path";
+
+import { canonicalJson } from "../../../contracts/canonicalJson.js";
+import { DAIMON_GROK_SYSTEM_PROMPT } from "./grokWorkerContract.js";
+import { GROK_ENGINE_BROKER } from "../../../contracts/runtimeContractManifest.js";
+import { grokSandboxProtectedPaths } from "../../../runtime/engineDispatcher.js";
+import { parseEngineBrokerServiceConfig, type EngineBrokerServiceRegistration } from "./engineBrokerServiceConfig.js";
+import { parseEngineBrokerTurnLimits, type EngineBrokerTurnLimits } from "./engineBrokerTurnAccounting.js";
+import { grokBrokerWorkerConfigPins, grokBrokerWorkerConfigSha256 } from "./grokBrokerWorkerConfig.js";
+import type { GrokBrokerModel, GrokBrokerReasoningEffort } from "./grokBrokerModelPolicy.js";
+import { grokWorkerSkillsSha256, parseAgentSkills, type AgentSkill } from "./grokWorkerSkills.js";
+import { GROK_WORKER_SANDBOX_PROFILE, grokWorkerEventsPathFor, renderGrokWorkerSandboxProfile, grokWorkerSandboxProfileSha256 } from "./grokWorkerSandboxProfile.js";
+import { parseOrganizationRuntimeConfig } from "../../../runtime/organizationRuntime.js";
+
+export const GROK_BROKER_PROJECTION_VERSION = GROK_ENGINE_BROKER.projectionVersion;
+
+/**
+ * Everything a consumer (Spawnfile provisioning, Paideia's native adapter, the
+ * root slot supervisor) needs to know about one brokered Grok agent's slot,
+ * computed by Daimon from the same renderers and collectors the broker attests
+ * against. It never reads credentials, runs a worker, or touches the realm.
+ */
+export type OrganizationGrokBrokerProjection = Readonly<{
+  version: typeof GROK_BROKER_PROJECTION_VERSION;
+  agentId: string;
+  workspacePath: string;
+  runtimeHomePath: string;
+  workerUid: number;
+  slot: number;
+  profilePath: string;
+  profileSha256: string;
+  denyPaths: readonly string[];
+  workerConfigSha256: string;
+  workerConfigVariant: GrokWorkerConfigVariant;
+  taskClock?: Omit<typeof GROK_BROKER_TASK_CLOCK, "directoryPath" | "timestampFilePath"> & Readonly<{ directoryPath: string; timestampFilePath: string }>;
+  systemPromptSha256: string;
+  /**
+   * Digest of the declared skills rendered into `$GROK_HOME/skills`
+   * (`grokWorkerSkillsSha256`). Present only when the agent declares at least
+   * one skill, so a skill-less projection is byte-identical to one computed
+   * before skills existed.
+   */
+  skillsSha256?: string;
+  grokCliVersion: string;
+  grokExecutableSha256: string;
+  nativeAbiVersion: number;
+  model: GrokBrokerModel;
+  reasoningEffort: GrokBrokerReasoningEffort;
+  limits: EngineBrokerTurnLimits;
+  usageLedgerPath: string;
+  /** The container seccomp profile the worker must run under (the pinned default-plus-userns profile bubblewrap needs). */
+  seccompProfileSha256: string;
+  attestation: Readonly<{ platform: "linux/landlock"; enforced: true; restrictNetwork: true; profileName: typeof GROK_WORKER_SANDBOX_PROFILE; sandboxRuntime: "bubblewrap"; eventsPath: string }>;
+}>;
+
+export type OrganizationGrokBrokerProjectionOptions = Readonly<{
+  /** Clocked configs require an isolated clock directory per slot. Defaults to the unchanged production bytes. */
+  workerConfigVariant?: GrokWorkerConfigVariant;
+  /** Deployment-assigned slot identity. */
+  slot: number;
+  workerUid: number;
+  /** The worker's home; its `GROK_HOME` is `<workerHomePath>/.grok`. */
+  workerHomePath: string;
+  architecture: "arm64" | "x64";
+  usageLedgerPath: string;
+  limits: EngineBrokerTurnLimits;
+  /**
+   * The deny entry that protects the durable wake-acceptance store: the store
+   * itself, or a directory containing it.
+   *
+   * Grok 1.0.34 materializes every deny target inside bubblewrap **as the
+   * worker uid**, so a target whose parent directory the worker cannot search
+   * is unplaceable and makes Grok refuse the whole profile — every turn of that
+   * worker then fails, not just that path. Deployments that keep the store
+   * under a private `state` directory (`2000:2000 0700`) therefore declare that
+   * directory here: it covers the store, nothing else lives there, and lifting
+   * the mask adds the worker no reach, where opening the parent with `o+x`
+   * would. The caller is the one party that knows both the layout and the
+   * modes; whoever recomputes this projection must pass the same value or the
+   * digests will not match, which is the intended fail-closed outcome.
+   */
+  acceptanceStorePath: string;
+  /** Evaluator and host-bind paths the deployment must keep from the worker (R4). */
+  denyPaths?: readonly string[];
+  /** sha256 of the seccomp profile bytes the deployment runs the worker under. */
+  seccompProfileSha256: string;
+  /** When the caller already holds a rendered profile digest, it must equal Daimon's. */
+  profileSha256?: string;
+  /**
+   * The agent's declared skills: the compiled workspace `.agents/skills` tree
+   * every engine is given (`readAgentSkillsDirectory`), which root provisioning
+   * renders into `$GROK_HOME/skills` (`renderGrokWorkerSkillsTree`). Omitted or
+   * empty means no skills.
+   */
+  skills?: readonly AgentSkill[];
+}>;
+
+/**
+ * Resolve the public Grok broker projection for one agent.
+ *
+ * Paths are taken as given, never resolved: the caller (Spawnfile provisioning)
+ * must supply canonical, non-symlink paths — the fixed tmpfs/workspace roots it
+ * creates — and its provisioning must verify they are not symlinks before a
+ * slot is used; the broker's own attestation re-checks the worker home at
+ * every turn.
+ *
+ * Deterministic and I/O-free on purpose: its digest
+ * ({@link grokBrokerProjectionSha256}) is what the slot preflight receipt
+ * binds, so the supervisor that writes the receipt and the evaluator that reads
+ * it must compute byte-equal projections from the same inputs.
+ *
+ * The agent must be a Grok agent that *declares* its model and reasoning
+ * effort; nothing is defaulted. The deny list is Daimon's own protected set for
+ * this agent (realm, bootstrap, peers, and the mask covering the acceptance
+ * store) plus the caller's evaluator paths, sorted and deduplicated exactly as
+ * the profile renderer does. A supplied `profileSha256` that differs is
+ * refused. Declared `skills` add `skillsSha256`, which the implied
+ * registration carries and the broker attests against `$GROK_HOME/skills`.
+ */
+export function resolveOrganizationGrokBrokerProjection(config: unknown, agentId: string, options: OrganizationGrokBrokerProjectionOptions): OrganizationGrokBrokerProjection {
+  const parsed = parseOrganizationRuntimeConfig(config);
+  const agent = parsed.agents.find((entry) => entry.id === agentId);
+  if (agent === undefined || agent.engine.kind !== "grok") throw new Error("Grok broker projection requires a known Grok agent");
+  if (agent.engine.model === undefined || agent.engine.reasoningEffort === undefined) throw new Error("Grok broker projection requires a declared model and reasoning effort");
+  for (const [label, value] of [["workerHomePath", options.workerHomePath], ["acceptanceStorePath", options.acceptanceStorePath]] as const) {
+    if (!path.posix.isAbsolute(value) || path.posix.normalize(value) !== value || value === "/" || value.endsWith("/")) throw new Error(`Grok broker projection requires a canonical absolute ${label}`);
+  }
+  if (!/^[a-f0-9]{64}$/u.test(options.seccompProfileSha256)) throw new Error("Grok broker projection requires a seccomp profile sha256");
+  const model = agent.engine.model as GrokBrokerModel, reasoningEffort = agent.engine.reasoningEffort as GrokBrokerReasoningEffort;
+  const denyPaths = [...new Set([...grokSandboxProtectedPaths(agent.id, parsed.agents, [options.acceptanceStorePath]), ...(options.denyPaths ?? [])])].sort();
+  renderGrokWorkerSandboxProfile(denyPaths);
+  const profileSha256 = grokWorkerSandboxProfileSha256(denyPaths);
+  if (options.profileSha256 !== undefined && options.profileSha256 !== profileSha256) throw new Error("Grok broker projection profile digest mismatch");
+  const workerConfigVariant = options.workerConfigVariant ?? "unclocked";
+  const workerConfigSha256 = grokBrokerWorkerConfigSha256({ model, reasoningEffort }, workerConfigVariant, options.slot);
+  const pin = grokBrokerWorkerConfigPins({ model, reasoningEffort }, options.slot)[workerConfigVariant];
+  if (workerConfigVariant === "clocked" && denyPaths.some((denied) => [brokerTaskClockFileFor(options.slot), GROK_BROKER_TASK_CLOCK.preloadPath].some((file) => file === denied || file.startsWith(`${denied}/`)))) throw new Error("Grok broker task clock path is denied");
+  if (workerConfigSha256 !== pin) throw new Error("Grok broker projection worker config drifted from the manifest");
+  if (createHash("sha256").update(DAIMON_GROK_SYSTEM_PROMPT).digest("hex") !== GROK_ENGINE_BROKER.worker.systemPromptSha256) throw new Error("Grok broker projection system prompt drifted from the manifest");
+  const artifact = GROK_ENGINE_BROKER.grokCliArtifacts[options.architecture];
+  if (artifact === undefined) throw new Error("Grok broker projection requires a pinned architecture");
+  const skills = parseAgentSkills(options.skills ?? []);
+  const profilePath = path.posix.join(options.workerHomePath, ".grok", "sandbox.toml");
+  const projection: OrganizationGrokBrokerProjection = {
+    version: GROK_BROKER_PROJECTION_VERSION, agentId, workspacePath: agent.workspacePath, runtimeHomePath: agent.runtimeHomePath,
+    workerUid: options.workerUid, slot: options.slot, profilePath, profileSha256, denyPaths, workerConfigSha256, workerConfigVariant,
+    ...(workerConfigVariant === "clocked" ? { taskClock: { ...GROK_BROKER_TASK_CLOCK, directoryPath: path.posix.dirname(brokerTaskClockFileFor(options.slot)), timestampFilePath: brokerTaskClockFileFor(options.slot) } } : {}),
+    systemPromptSha256: GROK_ENGINE_BROKER.worker.systemPromptSha256, ...(skills.length === 0 ? {} : { skillsSha256: grokWorkerSkillsSha256(skills) }), grokCliVersion: GROK_ENGINE_BROKER.grokCliVersion, grokExecutableSha256: artifact.sha256,
+    nativeAbiVersion: GROK_ENGINE_BROKER.nativeAbiVersion, model, reasoningEffort, limits: parseEngineBrokerTurnLimits(options.limits), usageLedgerPath: options.usageLedgerPath, seccompProfileSha256: options.seccompProfileSha256,
+    attestation: { platform: "linux/landlock", enforced: true, restrictNetwork: true, profileName: GROK_WORKER_SANDBOX_PROFILE, sandboxRuntime: "bubblewrap", eventsPath: grokWorkerEventsPathFor(profilePath) }
+  };
+  // The registration this projection implies must itself be a valid v2 service.json entry.
+  grokBrokerServiceRegistrationFor(projection);
+  return projection;
+}
+
+/** sha256 over the projection's canonical JSON; what a slot preflight receipt binds. */
+export const grokBrokerProjectionSha256 = (projection: OrganizationGrokBrokerProjection): string =>
+  createHash("sha256").update(canonicalJson(projection)).digest("hex");
+
+/** The `service.json` v2 registration a deployment provisions for this projection, validated by the broker's own parser. */
+export function grokBrokerServiceRegistrationFor(projection: OrganizationGrokBrokerProjection): Readonly<Record<string, unknown>> {
+  const registration = {
+    agentId: projection.agentId, slot: projection.slot, workerUid: projection.workerUid, workspace: projection.workspacePath,
+    profilePath: projection.profilePath, eventsPath: projection.attestation.eventsPath, profileSha256: projection.profileSha256,
+    usageLedgerPath: projection.usageLedgerPath, limits: projection.limits, model: { id: projection.model, reasoningEffort: projection.reasoningEffort },
+    ...(projection.skillsSha256 === undefined ? {} : { skillsSha256: projection.skillsSha256 })
+  };
+  parseEngineBrokerServiceConfig({ version: "noopolis.daimon.engine-broker-service.v2", credentialHome: GROK_ENGINE_BROKER.credentialHomePath, turnStore: GROK_ENGINE_BROKER.turnStorePath, registrations: [registration] });
+  return registration;
+}
+
+/**
+ * Refuses a provisioned registration that does not describe this projection:
+ * any differing member — a weaker profile digest, another model, raised
+ * limits, a different ledger — is a mismatch, never a merge.
+ */
+export function verifyGrokBrokerRegistrationMatchesProjection(registration: EngineBrokerServiceRegistration, projection: OrganizationGrokBrokerProjection): void {
+  const expected = parseEngineBrokerServiceConfig({ version: "noopolis.daimon.engine-broker-service.v2", credentialHome: GROK_ENGINE_BROKER.credentialHomePath, turnStore: GROK_ENGINE_BROKER.turnStorePath, registrations: [grokBrokerServiceRegistrationFor(projection)] }).registrations[0]!;
+  if (canonicalJson(expected) !== canonicalJson(registration)) throw new Error("Grok broker registration does not match its projection");
+}

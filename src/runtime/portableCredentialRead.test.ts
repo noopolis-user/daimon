@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import test, { mock } from "node:test";
 
-import { materializePortableCredential } from "./portableCredentialMaterial.js";
+import { materializePortableCredential } from "../engines/codex/portableCredentialMaterial.js";
 import type { OrganizationRuntimeAgentConfig } from "./organizationRuntime.js";
 
 const altered = (entry: Stats, patch: Partial<Stats>): Stats => Object.assign(Object.create(Object.getPrototypeOf(entry)), entry, patch);

@@ -2,7 +2,7 @@ import { constants, type Stats } from "node:fs";
 import { lstat, open, readdir } from "node:fs/promises";
 import path from "node:path";
 
-import { AGENT_SKILLS_BOUNDS, parseAgentSkills, type AgentSkill, type AgentSkillFile } from "./grokWorkerSkills.js";
+import { AGENT_SKILLS_BOUNDS, parseAgentSkills, type AgentSkill, type AgentSkillFile } from "../engines/grok/broker/grokWorkerSkills.js";
 
 /**
  * What every entry of a skills tree must satisfy beyond being a plain,

@@ -3,7 +3,7 @@ import { codexTaskClockArgs } from "./engineTaskClock.js";
 
 import { trackCliChild } from "./cliProcess.js";
 import { cliChildEnvironment } from "./cliEnvironment.js";
-import { codexFilesystemRules } from "./codexFilesystemRules.js";
+import { codexFilesystemRules } from "../engines/codex/codexFilesystemRules.js";
 import type { CliEngineOptions, CliSessionInput } from "./cliSession.js";
 
 export const GROK_STRICT_SANDBOX_PROFILE = "strict";

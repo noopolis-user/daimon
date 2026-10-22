@@ -1,4 +1,4 @@
-import { GROK_BROKER_MODELS, GROK_BROKER_REASONING_EFFORTS } from "../contracts/grokWorkerContract.js";
+import { GROK_BROKER_MODELS, GROK_BROKER_REASONING_EFFORTS } from "../engines/grok/broker/grokWorkerContract.js";
 import { parseAttention } from "./attention.js";
 import { isolateRecording, parseRecording } from "./organizationRuntimeRecording.js";
 import {

@@ -1,7 +1,7 @@
-import { GROK_BROKER_TASK_CLOCK } from "./grokBrokerTaskClock.js";
+import { GROK_BROKER_TASK_CLOCK } from "../engines/grok/broker/grokBrokerTaskClockContract.js";
 import { WAKE_MOMENTS } from "./wakeMomentContract.js";
 import { OPERATOR_DRAIN, WORK_AVAILABILITY_SCHEMA, WORK_BLOCKED_SCHEMA } from "./attentionContract.js";
-import { GROK_BROKER_MODELS, GROK_BROKER_REASONING_EFFORTS, GROK_WORKER_MAX_TURNS, GROK_WORKER_TOOL_IDS, GROK_WORKER_VISIBLE_TOOLS } from "./grokWorkerContract.js";
+import { GROK_BROKER_MODELS, GROK_BROKER_REASONING_EFFORTS, GROK_WORKER_MAX_TURNS, GROK_WORKER_TOOL_IDS, GROK_WORKER_VISIBLE_TOOLS } from "../engines/grok/broker/grokWorkerContract.js";
 import {
   ORGANIZATION_RUNTIME_CONFIG_SCHEMA,
   ORGANIZATION_RUNTIME_CONFIG_V2_SCHEMA,

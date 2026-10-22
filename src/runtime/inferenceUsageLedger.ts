@@ -1,7 +1,7 @@
-import { GROK_BROKER_MODELS } from "../contracts/grokWorkerContract.js";
+import { GROK_BROKER_MODELS } from "../engines/grok/broker/grokWorkerContract.js";
 import { GROK_ENGINE_BROKER } from "../contracts/runtimeContractManifest.js";
-import type { EngineBrokerTurnUsage } from "./engineBrokerTurnAccounting.js";
-import type { GrokBrokerModel } from "./grokBrokerModelPolicy.js";
+import type { EngineBrokerTurnUsage } from "../engines/grok/broker/engineBrokerTurnAccounting.js";
+import type { GrokBrokerModel } from "../engines/grok/broker/grokBrokerModelPolicy.js";
 import { recordLedgerLines } from "./turnRequestLedger.js";
 
 /**

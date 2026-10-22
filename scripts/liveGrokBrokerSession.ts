@@ -6,13 +6,13 @@ import path from "node:path";
 
 import { readChild } from "../src/pi/cliChildOutput.ts";
 import { terminateChild, trackCliChild } from "../src/pi/cliProcess.ts";
-import { decodeGrokHeadlessTurn } from "../src/pi/grokHeadlessResult.ts";
-import { readGrokBrokerCredential } from "../src/runtime/grokBrokerCredentialReader.ts";
-import { DEFAULT_GROK_BROKER_TURN_LIMITS } from "../src/runtime/engineBrokerTurnAccounting.ts";
-import { startGrokBrokerProxy } from "../src/runtime/grokBrokerProxy.ts";
-import { GrokBrokerTurnMeter } from "../src/runtime/grokBrokerTurnMeter.ts";
-import { DEFAULT_GROK_BROKER_MODEL_POLICY } from "../src/runtime/grokBrokerModelPolicy.ts";
-import { GROK_BROKER_PROVIDER_CAPABILITY_ENV, renderGrokBrokerWorkerArgs, renderGrokBrokerWorkerConfigWith } from "../src/runtime/grokBrokerWorkerConfig.ts";
+import { decodeGrokHeadlessTurn } from "../src/engines/grok/grokHeadlessResult.ts";
+import { readGrokBrokerCredential } from "../src/engines/grok/broker/grokBrokerCredentialReader.ts";
+import { DEFAULT_GROK_BROKER_TURN_LIMITS } from "../src/engines/grok/broker/engineBrokerTurnAccounting.ts";
+import { startGrokBrokerProxy } from "../src/engines/grok/broker/grokBrokerProxy.ts";
+import { GrokBrokerTurnMeter } from "../src/engines/grok/broker/grokBrokerTurnMeter.ts";
+import { DEFAULT_GROK_BROKER_MODEL_POLICY } from "../src/engines/grok/broker/grokBrokerModelPolicy.ts";
+import { GROK_BROKER_PROVIDER_CAPABILITY_ENV, renderGrokBrokerWorkerArgs, renderGrokBrokerWorkerConfigWith } from "../src/engines/grok/broker/grokBrokerWorkerConfig.ts";
 
 // Explicit live auth/transport check, not the Linux native worker/isolation E2E.
 // Read the operator credential only in this process; never stage or rotate it.

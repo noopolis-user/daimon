@@ -3,7 +3,7 @@ import type { ChildProcess } from "node:child_process";
 import { redactCredentialText } from "../core/credentialRedaction.js";
 import { headUtf8, tailUtf8 } from "../runtime/toolResultSpill.js";
 import type { TurnUsageFailureReason } from "../runtime/turnUsageLedger.js";
-import { decodeCodexTurnUsage, type CodexTurnUsage } from "./codexHeadlessResult.js";
+import { decodeCodexTurnUsage, type CodexTurnUsage } from "../engines/codex/codexHeadlessResult.js";
 import { terminateChild, trackCliChild } from "./cliProcess.js";
 
 /** Maximum assistant reply bytes retained from stdout. */

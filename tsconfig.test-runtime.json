@@ -3,8 +3,8 @@
   "compilerOptions": { "declaration": false, "declarationMap": false, "outDir": "dist-test-runtime", "sourceMap": false },
   "exclude": [
     "src/**/*.test.ts",
-    "src/runtime/native/build.ts",
-    "src/runtime/native/copyArtifact.ts",
-    "src/runtime/native/verifyArtifacts.ts"
+    "src/engines/grok/broker/native/build.ts",
+    "src/engines/grok/broker/native/copyArtifact.ts",
+    "src/engines/grok/broker/native/verifyArtifacts.ts"
   ]
 }

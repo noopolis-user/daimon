@@ -7,9 +7,9 @@ import path from "node:path";
 
 import { createOrganizationRuntimeHost } from "./organizationRuntimeHost.js";
 import { createOrganizationRuntimeControlHost } from "./organizationRuntimeControl.js";
-import { runAgySubscriptionBootstrap } from "./agySubscriptionBootstrap.js";
+import { runAgySubscriptionBootstrap } from "../engines/agy/agySubscriptionBootstrap.js";
 import { parseOrganizationRuntimeConfig, parseOrganizationRuntimeWakeRequest } from "./organizationRuntime.js";
-import { runEngineBrokerServiceCli } from "./engineBrokerServiceCli.js";
+import { runEngineBrokerServiceCli } from "../engines/grok/broker/engineBrokerServiceCli.js";
 
 const MAX_BODY_BYTES = 1_048_576;
 const MAX_CONFIG_BYTES = 1_048_576;

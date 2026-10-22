@@ -7,11 +7,11 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
-import { materializePortableCredential } from "./portableCredentialMaterial.js";
+import { materializePortableCredential } from "../engines/codex/portableCredentialMaterial.js";
 import type { OrganizationRuntimeAgentConfig } from "./organizationRuntime.js";
 
 const execute = promisify(execFile);
-const reader = fileURLToPath(new URL("./portableCredentialMaterial.ts", import.meta.url));
+const reader = fileURLToPath(new URL("../engines/codex/portableCredentialMaterial.ts", import.meta.url));
 const child = `const {materializePortableCredential}=await import(process.argv[1]);const home=process.argv[2];try{await materializePortableCredential({id:'agent:codex',name:'Codex',instructions:'Unused',workspacePath:home+'/workspace',runtimeHomePath:home,engine:{kind:'codex'}},home);process.stdout.write('UNEXPECTED_IMPORT');}catch{process.stdout.write('MATERIALIZATION_REFUSED');}`;
 
 for (const kind of ["mode", "hardlink", "directory", "empty", "oversize", "symlink"] as const) {
