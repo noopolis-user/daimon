@@ -39,16 +39,16 @@
     "access": "public"
   },
   "scripts": {
-    "build": "rm -rf dist && tsc --project tsconfig.build.json && node --import tsx scripts/emitRuntimeContractManifest.ts && node --experimental-strip-types src/runtime/native/copyArtifact.ts",
+    "build": "rm -rf dist && tsc --project tsconfig.build.json && node --import tsx scripts/emitRuntimeContractManifest.ts && node --experimental-strip-types src/engines/grok/broker/native/copyArtifact.ts",
     "build:test-runtime": "rm -rf dist-test-runtime && tsc --project tsconfig.test-runtime.json",
     "clean": "rm -rf dist",
     "prepack": "npm run build",
     "prepublishOnly": "npm run typecheck && npm test",
     "typecheck": "tsc --project tsconfig.json --noEmit && tsc --project scripts/tsconfig.json --noEmit && tsc --project .github/scripts/ci/tsconfig.json",
     "verify:contract-manifest": "node --import tsx scripts/emitRuntimeContractManifest.ts --check",
-    "verify:native": "node --experimental-strip-types src/runtime/native/verifyArtifacts.ts",
+    "verify:native": "node --experimental-strip-types src/engines/grok/broker/native/verifyArtifacts.ts",
     "verify:production-closure": "node --experimental-strip-types scripts/verifyProductionClosure.ts",
-    "test": "node --import tsx --test \"src/**/*.test.ts\" scripts/scriptSourcePolicy.test.ts",
+    "test": "npm run test:engine-boundary && node --import tsx --test --test-concurrency=4 \"src/**/*.test.ts\" scripts/scriptSourcePolicy.test.ts",
     "emit-causal-fixture": "tsx src/observability/emitCausalFixture.ts",
     "emit-causal-fixture:spoof": "tsx src/observability/emitCausalFixture.ts --spoof",
     "live:codex-session": "node --import tsx scripts/liveCodexSession.ts",
@@ -56,7 +56,8 @@
     "e2e:pi-agent": "tsx src/examples/pi-agent.ts",
     "e2e:pi-memory-org": "tsx src/examples/pi-memory-org.ts",
     "e2e:jungian-play-org": "tsx src/examples/jungian-play-org.ts",
-    "e2e:jungian-triad-org": "tsx src/examples/jungian-triad-org.ts"
+    "e2e:jungian-triad-org": "tsx src/examples/jungian-triad-org.ts",
+    "test:engine-boundary": "vitest run"
   },
   "engines": {
     "node": ">=22.19.0"
@@ -72,6 +73,7 @@
   "devDependencies": {
     "@types/node": "^24.12.4",
     "tsx": "^4.21.0",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "vitest": "^5.0.5"
   }
 }

@@ -7,9 +7,9 @@ import { spawnRealTime } from "./taskClockProcess.js";
 import { readChild } from "../pi/cliChildOutput.js";
 import { prepareEngineExecutable, verifyAgySubscriptionEnrollment } from "./engineReadiness.js";
 import { registerCliMcpServer } from "../pi/cliMcpRegistration.js";
-import { runNativeBrokerTurn } from "./engineBrokerNativeClient.js";
-import { acquireGrokBrokerRealmLease } from "./grokBrokerRealmLease.js";
-import { refreshGrokBrokerCredential } from "./grokBrokerRefresh.js";
+import { runNativeBrokerTurn } from "../engines/grok/broker/engineBrokerNativeClient.js";
+import { acquireGrokBrokerRealmLease } from "../engines/grok/broker/grokBrokerRealmLease.js";
+import { refreshGrokBrokerCredential } from "../engines/grok/broker/grokBrokerRefresh.js";
 
 async function fixture(t: TestContext) {
   const previous = process.env;

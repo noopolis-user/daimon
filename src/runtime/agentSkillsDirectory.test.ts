@@ -5,7 +5,7 @@ import path from "node:path";
 import test, { mock, type TestContext } from "node:test";
 
 import { readAgentSkillsDirectory } from "./agentSkillsDirectory.js";
-import { AGENT_SKILLS_WORKSPACE_DIRECTORY, grokWorkerSkillsSha256, renderGrokWorkerSkillsTree } from "./grokWorkerSkills.js";
+import { AGENT_SKILLS_WORKSPACE_DIRECTORY, grokWorkerSkillsSha256, renderGrokWorkerSkillsTree } from "../engines/grok/broker/grokWorkerSkills.js";
 
 const skillMd = (name: string) => `---\nname: ${name}\ndescription: ${name} skill\n---\n\nBody of ${name}.\n`;
 const scratch = async (t: TestContext) => {

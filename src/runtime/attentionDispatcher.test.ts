@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { AttentionDispatcher, inboxPrompt } from "./attentionDispatcher.js";
-import { DAIMON_GROK_TOOL_PREFIX, grokDaimonToolName } from "../contracts/grokWorkerContract.js";
+import { DAIMON_GROK_TOOL_PREFIX, grokDaimonToolName } from "../engines/grok/broker/grokWorkerContract.js";
 import { createOrganizationRuntimeHost } from "./organizationRuntimeHost.js";
 import { WakeAcceptanceStore, WakeExecutionClaimLostError } from "./wakeAcceptanceStore.js";
 import { parseWakeAcceptanceRequest } from "./wakeAcceptanceTypes.js";

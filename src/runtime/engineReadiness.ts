@@ -4,7 +4,9 @@ import path from "node:path";
 import { spawnRealTime as spawn } from "./taskClockProcess.js";
 import { createHash } from "node:crypto";
 
-import { cliChildEnvironment } from "../pi/cliEnvironment.js";
+import { ENGINE_DESCRIPTORS, type EngineKind, type PortableEngineKind } from "../engines/descriptors.js";
+import { getEngineHandler } from "../engines/registry.js";
+export { verifyAgySubscriptionEnrollment } from "../engines/agy/authHooks.js";
 import type { OrganizationRuntimeAgentConfig } from "./organizationRuntime.js";
 import { hasRefreshablePortableCredential, portableCredentialSecretValues } from "./portableCredentialAuth.js";
 
@@ -36,7 +38,7 @@ export async function prepareEngineReadiness(
 ): Promise<EngineReadiness> {
   const executable = await prepareEngineExecutable(agent.id, agent.engine.kind);
   const executablePath = executable.executablePath;
-  const engineHomePath = agent.engine.kind === "agy" ? runtimeHomePath : path.join(runtimeHomePath, engineHomeName(agent.engine.kind));
+  const engineHomePath = getEngineHandler(agent.engine.kind).engineHomePath(runtimeHomePath);
   await verifyEngineAuth(agent.id, agent.engine.kind, engineHomePath, executablePath, runtimeHomePath, agyBusAddress);
   return {
     executablePath,
@@ -50,7 +52,7 @@ export async function prepareEngineReadiness(
 
 export async function prepareEngineExecutable(
   agentId: string,
-  engine: "codex" | "grok" | "agy"
+  engine: EngineKind
 ): Promise<EngineExecutableReadiness> {
   const executablePath = await resolveExecutable(agentId, engine);
   const executableIdentity = identity(await stat(executablePath));
@@ -74,15 +76,15 @@ export async function prepareEngineExecutable(
   };
 }
 
-export function engineHomeName(engine: "codex" | "grok"): string {
-  return engine === "codex" ? ".codex" : ".grok";
+export function engineHomeName(engine: PortableEngineKind): string {
+  return ENGINE_DESCRIPTORS[engine].homeDirectory;
 }
 
-export function engineAuthFile(_engine: "codex" | "grok", engineHomePath: string): string {
+export function engineAuthFile(_engine: PortableEngineKind, engineHomePath: string): string {
   return path.join(engineHomePath, "auth.json");
 }
 
-async function resolveExecutable(agentId: string, engine: "codex" | "grok" | "agy"): Promise<string> {
+async function resolveExecutable(agentId: string, engine: EngineKind): Promise<string> {
   const sourcePath = process.env.PATH ?? "";
   for (const directory of sourcePath.split(path.delimiter)) {
     if (!directory || !path.isAbsolute(directory)) continue;
@@ -127,17 +129,13 @@ async function probeExecutable(agentId: string, executablePath: string, engine: 
 }
 
 async function verifyEngineAuth(
-  agentId: string, engine: "codex" | "grok" | "agy", engineHomePath: string,
+  agentId: string, engine: EngineKind, engineHomePath: string,
   executablePath: string, runtimeHomePath: string, agyBusAddress?: string
 ): Promise<void> {
-  if (engine === "agy") {
-    await verifyAgySubscriptionEnrollment(agentId, executablePath, runtimeHomePath, agyBusAddress);
-    return;
-  }
-  await verifyPortableEngineAuth(agentId, engine, engineHomePath);
+  await getEngineHandler(engine).verifyAuth({ agentId, engine, engineHomePath, executablePath, runtimeHomePath, busAddress: agyBusAddress });
 }
 
-async function verifyPortableEngineAuth(agentId: string, engine: "codex" | "grok", engineHomePath: string): Promise<void> {
+export async function verifyPortableEngineAuth(agentId: string, engine: PortableEngineKind, engineHomePath: string): Promise<void> {
   const authPath = engineAuthFile(engine, engineHomePath);
   let handle: Awaited<ReturnType<typeof open>> | undefined;
   let buffer: Buffer | undefined;
@@ -168,7 +166,7 @@ async function verifyPortableEngineAuth(agentId: string, engine: "codex" | "grok
 /** Securely rereads the currently staged provider credential for exact output redaction. */
 export async function readPortableEngineCredentialSecrets(
   agentId: string,
-  engine: "codex" | "grok",
+  engine: PortableEngineKind,
   engineHomePath: string
 ): Promise<readonly string[]> {
   const authPath = engineAuthFile(engine, engineHomePath);
@@ -201,33 +199,6 @@ function assertPrivateAuthEntry(entry: Awaited<ReturnType<typeof lstat>>): void 
   }
 }
 
-export async function verifyAgySubscriptionEnrollment(
-  agentId: string,
-  executablePath: string,
-  runtimeHomePath: string,
-  busAddress: string | undefined
-): Promise<void> {
-  if (busAddress === undefined) throw unavailable(agentId, "agy", "Daimon subscription realm is unavailable");
-  await new Promise<void>((resolve, reject) => {
-    const child = spawn(executablePath, ["models"], {
-      cwd: runtimeHomePath,
-      env: cliChildEnvironment([], runtimeHomePath, {
-        dbusSessionBusAddress: busAddress,
-        engine: "agy",
-        executablePath,
-        engineHomePath: runtimeHomePath
-      }),
-      stdio: ["ignore", "ignore", "ignore"]
-    });
-    const timer = setTimeout(() => child.kill("SIGKILL"), 10_000);
-    child.once("error", () => { clearTimeout(timer); reject(unavailable(agentId, "agy", "native secure-storage authentication probe failed")); });
-    child.once("close", (code) => {
-      clearTimeout(timer);
-      if (code === 0) resolve();
-      else reject(unavailable(agentId, "agy", "subscription enrollment is required; run the Daimon AGY bootstrap command"));
-    });
-  });
-}
 function noFollow(): number { return (constants as typeof constants & { O_NOFOLLOW?: number }).O_NOFOLLOW ?? 0; }
 function identity(value: Awaited<ReturnType<typeof stat>>): FileIdentity {
   const numeric = value as typeof value & { dev: number; ino: number; size: number; mtimeMs: number; mode: number };

@@ -7,7 +7,7 @@ import { sanitizeExecutionError, type StoredWakeAcceptanceRecord } from "./wakeA
 import { STALE_QUEUED_DELIVERY_MS } from "./wakeAcceptanceRetention.js";
 import { WakeFuse } from "./wakeFuse.js";
 import { ORGANIZATION_RUNTIME_MAX_STRING_CODEPOINTS, ORGANIZATION_RUNTIME_MAX_WAKE_TEXT_BYTES } from "../contracts/organizationRuntimeContract.js";
-import { grokDaimonToolName } from "../contracts/grokWorkerContract.js";
+import { getEngineHandler } from "../engines/registry.js";
 import { verifyHostRecordingStore, wakeFromDurableInbox } from "./organizationRuntimeAdmission.js";
 import { recordWakeMoment, type WakeMomentOptions } from "./wakeMomentRecorder.js";
 
@@ -294,7 +294,7 @@ function deliveryBlock(message: unknown, index: number): string | undefined {
 export function inboxPrompt(messages: readonly unknown[], engine: OrganizationRuntimeAgentConfig["engine"]["kind"], maxBytes = 12000): string {
   const body = JSON.stringify(messages);
   const blocks = messages.map(deliveryBlock).filter((block): block is string => block !== undefined);
-  const tool = (name: string): string => engine === "grok" ? grokDaimonToolName(name) : name;
+  const tool = (name: string): string => getEngineHandler(engine).runtimeToolName(name);
   const accounting = `\nWhen the work above is done, record each delivery with ${tool("daimon_inbox_disposition")} (complete), or defer the ones you could not finish; use ${tool("daimon_inbox")} for deliveries and remaining allowances. Reading or ending this turn never completes a delivery, and deferred work waits for a later external wake.\n`;
   const header = blocks.length === 1 ? "Carry out this delivery.\n" : `Carry out these ${blocks.length} deliveries.\n`;
   const fits = (value: string): boolean => Buffer.byteLength(value) <= ORGANIZATION_RUNTIME_MAX_WAKE_TEXT_BYTES

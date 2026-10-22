@@ -15,8 +15,8 @@
   },
   "include": ["src/**/*.ts"],
   "exclude": [
-    "src/runtime/native/build.ts",
-    "src/runtime/native/copyArtifact.ts",
-    "src/runtime/native/verifyArtifacts.ts"
+    "src/engines/grok/broker/native/build.ts",
+    "src/engines/grok/broker/native/copyArtifact.ts",
+    "src/engines/grok/broker/native/verifyArtifacts.ts"
   ]
 }

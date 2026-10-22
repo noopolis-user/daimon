@@ -1,3 +1,4 @@
+import { ENGINE_DESCRIPTORS } from "../engines/descriptors.js";
 import type { CliEngineKind as EngineKind } from "../pi/cliSession.js";
 
 export interface JungianArchetypeProfile {
@@ -29,7 +30,7 @@ export interface JungianSelfProfile {
 }
 
 const innerEngine = (): EngineKind =>
-  (process.env.DAIMON_JUNGIAN_ARCHETYPE_ENGINE as EngineKind | undefined) ?? "agy";
+  (process.env.DAIMON_JUNGIAN_ARCHETYPE_ENGINE as EngineKind | undefined) ?? ENGINE_DESCRIPTORS.agy.id;
 
 const representativeEngine = (fallback: EngineKind): EngineKind =>
   (process.env.DAIMON_JUNGIAN_REPRESENTATIVE_ENGINE as EngineKind | undefined) ?? fallback;
@@ -189,7 +190,7 @@ export const jungianSelves: JungianSelfProfile[] = [
   {
     id: "maya",
     name: "Maya Ortiz",
-    engine: representativeEngine("agy"),
+    engine: representativeEngine(ENGINE_DESCRIPTORS.agy.id),
     playRole: "A community-center program coordinator trying to save a Saturday fundraiser.",
     publicMask: "Organized, dryly funny, always holding a clipboard.",
     backstory: "Maya is the person everyone calls when something is late, missing, or on fire.",
@@ -205,7 +206,7 @@ export const jungianSelves: JungianSelfProfile[] = [
   {
     id: "leo",
     name: "Leo Park",
-    engine: "grok",
+    engine: ENGINE_DESCRIPTORS.grok.id,
     playRole: "A beloved but chaotic volunteer who forgot to order the fundraiser chairs.",
     publicMask: "Funny, helpful, easy to forgive, usually five minutes late.",
     backstory: "Leo is good with people and bad with calendars, and he hates that everyone knows it.",

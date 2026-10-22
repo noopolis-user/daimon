@@ -20,7 +20,7 @@ import { createCliSessionFactory } from "./cliSession.js";
  */
 
 const FIXTURE_THREAD = "01a06f31-0000-7000-8000-000000000001";
-const fixturePath = fileURLToPath(new URL("./fixtures/codex-rollout-token-usage.jsonl", import.meta.url));
+const fixturePath = fileURLToPath(new URL("../engines/codex/fixtures/codex-rollout-token-usage.jsonl", import.meta.url));
 
 const frame = (value: unknown): string => `process.stdout.write(${JSON.stringify(`${JSON.stringify(value)}\n`)});`;
 const threadStarted = (threadId: string): string => frame({ type: "thread.started", thread_id: threadId });

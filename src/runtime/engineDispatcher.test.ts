@@ -6,7 +6,7 @@ import test from "node:test";
 
 import { codexSandboxProtectedPaths, codexSandboxReadablePaths, grokSandboxProtectedPaths, startOrganizationRuntimeEngine } from "./engineDispatcher.js";
 import { AGY_SUBSCRIPTION_REALM, GROK_SUBSCRIPTION_REALM } from "./contractManifest.js";
-import type { EngineBrokerTurnClient } from "./engineBrokerControlClient.js";
+import type { EngineBrokerTurnClient } from "../engines/grok/broker/engineBrokerControlClient.js";
 import { ORGANIZATION_RUNTIME_VERSION, type OrganizationRuntimeAgentConfig } from "./organizationRuntime.js";
 
 const rootConfig = (root: string, kind: OrganizationRuntimeAgentConfig["engine"]["kind"]): OrganizationRuntimeAgentConfig => ({

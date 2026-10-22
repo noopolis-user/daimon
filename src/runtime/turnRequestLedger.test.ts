@@ -5,7 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 
-import type { CodexRequestUsage } from "../pi/codexRolloutUsage.js";
+import type { CodexRequestUsage } from "../engines/codex/codexRolloutUsage.js";
 import {
   recordCodexTurnRequests,
   recordLedgerLines,
@@ -19,7 +19,7 @@ import {
 import { TURN_USAGE_ROTATE_BYTES, TURN_USAGE_LEDGER, TURN_USAGE_LEDGER_VERSION } from "./turnUsageLedger.js";
 
 const FIXTURE_THREAD = "01a06f31-0000-7000-8000-000000000001";
-const fixturePath = fileURLToPath(new URL("../pi/fixtures/codex-rollout-token-usage.jsonl", import.meta.url));
+const fixturePath = fileURLToPath(new URL("../engines/codex/fixtures/codex-rollout-token-usage.jsonl", import.meta.url));
 
 const request = (overrides: Partial<CodexRequestUsage> = {}): CodexRequestUsage =>
   ({ index: 0, input: 22_119, cachedInput: 21_888, cacheWrite: 0, output: 358, reasoning: 169, total: 22_477, ...overrides });

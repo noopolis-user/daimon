@@ -6,56 +6,24 @@ import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 
 import type { WakeEvent } from "../core/types.js";
 import { redactCredentialError, redactCredentialText } from "../core/credentialRedaction.js";
-import {
-  asGrokAuthenticationRejected,
-  classifyGrokAuthenticationDiagnostic,
-  GrokSubscriptionAuthenticationRejectedError
-} from "../runtime/grokAuthenticationError.js";
 import type { TurnUsageOutcome } from "../runtime/turnUsageLedger.js";
 import { readChild } from "./cliChildOutput.js";
-import { cliChildEnvironment } from "./cliEnvironment.js";
-import {
-  renderCodexArgs,
-  spawnEngine
-} from "./cliEngineSpawn.js";
-import {
-  registerCliMcpServer,
-  renderAgyMcpAddArgs,
-  renderAgyMcpRemoveArgs,
-  type CliMcpRegistration
-} from "./cliMcpRegistration.js";
-import { registerGrokHomeMcpServer } from "./grokHomeMcpRegistration.js";
-import { decodeAgyHeadlessTurn, type AgyTurnUsage } from "./agyHeadlessResult.js";
-import { type CodexTurnUsage } from "./codexHeadlessResult.js";
-import { createCliTurnMeter, decodeCodexTurn, failedTurnOutcome, publishTurnRequests, publishTurnUsage } from "./cliTurnMetering.js";
-import { decodeGrokHeadlessResult } from "./grokHeadlessResult.js";
-import { terminateChild, trackCliChild } from "./cliProcess.js";
+import { spawnEngine } from "./cliEngineSpawn.js";
+import type { CliMcpRegistration } from "./cliMcpRegistration.js";
+import { type AgyTurnUsage } from "../engines/agy/agyHeadlessResult.js";
+import { type CodexTurnUsage } from "../engines/codex/codexHeadlessResult.js";
+import { createCliTurnMeter, failedTurnOutcome, publishTurnRequests, publishTurnUsage } from "./cliTurnMetering.js";
+import { getEngineHandler } from "../engines/registry.js";
+import type { EngineKind } from "../engines/descriptors.js";
+import type { EngineCliIdentity } from "../engines/piHooks.js";
+import { terminateChild } from "./cliProcess.js";
 import type { PiSessionLike } from "./piAgentHandle.js";
 import type { PiSessionFactoryInput } from "./piHarness.js";
 import { ensureRuntimeHome, ensureRuntimeHomeDirectory } from "../runtime/runtimeHomeLayout.js";
 
-export type CliEngineKind = "agy" | "codex" | "grok";
+export type CliEngineKind = EngineKind;
 
-/**
- * The per-wake tool-call bound for AGY, and the one place it is decided.
- *
- * Codex and Grok leave this `undefined` — their only bound is the wake
- * deadline. AGY does not get that treatment, for a measured reason: its
- * terminal usage frame is the *sum* over the turn's model steps, and each tool
- * step resends the whole context. The live capture is 13,796 total tokens for a
- * tool-free turn and 45,381 for a turn with a single call against an
- * empty-schema tool — one call roughly triples the wake. An unbounded loop on
- * the one engine whose subscription quota is currently the operator's only
- * working credential is a cost hazard, not a capability.
- *
- * 16 is chosen so a realistic wake is never truncated (read a few declared MCP
- * tools, then send one or two Moltnet messages) while the worst case is bounded
- * at roughly a quarter-million tokens instead of "whatever fits in 180s". The
- * bound degrades gracefully rather than failing the wake: exceeding it returns
- * `McpToolTurnLimitError` to the model as a tool *error*, so the agent can still
- * finish its turn and reply.
- */
-export const AGY_MAX_TOOL_TURNS = 16;
+export { AGY_MAX_TOOL_TURNS } from "../engines/agy/piHooks.js";
 
 export {
   DAIMON_CODEX_WAKE_TIMEOUT_MS_ENV, DAIMON_CODEX_WAKE_TOKEN_CEILING_ENV, DAIMON_ENGINE_WAKE_TIMEOUT_MS_ENV, DAIMON_ENGINE_WAKE_TOKEN_CEILING_ENV,
@@ -117,12 +85,7 @@ export type CliEngineOptions = {
    * whichever file on disk is newest. Errors here never reach the wake.
    */
   readonly onCodexTurnRequests?: (threadId: string) => Promise<void>;
-} & ({
-  readonly engine: "codex" | "grok";
-} | {
-  readonly dbusSessionBusAddress?: string;
-  readonly engine: "agy";
-});
+} & EngineCliIdentity;
 
 export type CliSessionInput = {
   readonly cwd: string;
@@ -184,6 +147,7 @@ class CliSession implements PiSessionLike {
 
   public async prompt(text: string): Promise<void> {
     if (this.disposed) throw new Error("CLI session is disposed");
+    const handler = getEngineHandler(this.options.engine);
     reportEngineTaskClockGap(this.options.engine);
     await prepareCliRuntimeHome(this.input.runtimeHomePath);
     const deadline = this.options.timeoutMs === undefined ? undefined : Date.now() + this.options.timeoutMs;
@@ -222,38 +186,15 @@ class CliSession implements PiSessionLike {
         if (this.disposed) void started.close();
       });
       this.ensureLive();
-      if (this.options.engine === "grok" && this.options.grokBrokerTurn !== undefined && mount !== undefined) {
+      const brokerTurn = handler.brokerTurn(this.options);
+      if (brokerTurn !== undefined && mount !== undefined) {
         const controller=new AbortController();this.activeBrokerTurn=controller;
-        try{output=await this.options.grokBrokerTurn(`${this.options.identityPrompt ?? ""}${text}`,mount.endpoint,controller.signal);}finally{if(this.activeBrokerTurn===controller)this.activeBrokerTurn=undefined;}
+        try{output=await brokerTurn(`${this.options.identityPrompt ?? ""}${text}`,mount.endpoint,controller.signal);}finally{if(this.activeBrokerTurn===controller)this.activeBrokerTurn=undefined;}
       } else {
-      if (this.options.engine === "grok" && mount !== undefined) {
-        await this.options.verifyExecutable?.();
-        registration = await registerGrokHomeMcpServer({
-          engineHomePath: this.options.engineHomePath,
-          endpoint: mount.endpoint,
-          ...(this.options.verifyGrokSandbox !== undefined ? { verify: this.options.verifyGrokSandbox } : {})
-        });
-        this.mcpRegistration = registration;
-      } else if (this.options.engine === "agy" && mount !== undefined) {
-        await this.options.verifyExecutable?.();
-        registration = await registerCliMcpServer({
-          addArgs: renderAgyMcpAddArgs(this.options.commandArgs, mount.endpoint),
-          removeArgs: renderAgyMcpRemoveArgs(this.options.commandArgs),
-          command: this.options.command ?? this.options.engine,
-          cwd: this.input.cwd,
-          env: cliChildEnvironment([
-            ...(this.options.redactedEnvironmentNames ?? []),
-            ...(this.input.daimonSecretEnvironmentNames ?? [])
-          ], this.input.runtimeHomePath, {
-            ...(this.options.dbusSessionBusAddress !== undefined ? { dbusSessionBusAddress: this.options.dbusSessionBusAddress } : {}),
-            engine: this.options.engine,
-            executablePath: this.options.command,
-            engineHomePath: this.options.engineHomePath
-          }),
+      if (mount !== undefined) {
+        registration = await handler.registerMcp({ options: this.options, input: this.input, endpoint: mount.endpoint,
           onChild: (setupChild) => { this.setupChildren.add(setupChild); },
-          onChildSettled: (setupChild) => this.setupChildren.delete(setupChild),
-          secretValues
-        });
+          onChildSettled: (setupChild) => this.setupChildren.delete(setupChild), secretValues });
         this.mcpRegistration = registration;
       }
       this.ensureLive();
@@ -265,13 +206,7 @@ class CliSession implements PiSessionLike {
       // Attach terminal listeners synchronously. A fast local sentinel may
       // exit before an asynchronous post-spawn authority recheck completes.
       const outputPromise = readChild(child, deadline === undefined ? undefined : Math.max(1, deadline - Date.now()), secretValues, {
-        failureClassifier: this.options.engine === "grok" ? classifyGrokAuthenticationDiagnostic : undefined,
-        retainNdjson: this.options.engine === "codex" ? "codex" : undefined,
-        retainStdoutTail: this.options.engine === "grok",
-        timeoutErrorMessage: this.options.engine === "codex" && this.options.timeoutMs !== undefined
-          ? `Codex wake exceeded its ${this.options.timeoutMs}ms per-wake wall-clock bound`
-          : undefined,
-        codexTokenCeiling: this.options.engine === "codex" ? this.options.codexTokenCeiling : undefined,
+        ...handler.childReadOptions(this.options),
         onCodexTurnCompleted: meter.observeCodexTurnCompleted,
         onCodexThreadStarted: (threadId) => { codexThreadId = threadId; }
       });
@@ -279,17 +214,9 @@ class CliSession implements PiSessionLike {
       await this.options.verifyRuntimePaths?.();
       await this.options.verifyExecutable?.();
       const childOutput = await outputPromise;
-      if (this.options.engine === "grok") output = decodeGrokHeadlessResult(childOutput);
-      else if (this.options.engine === "codex") {
-        const decoded = decodeCodexTurn(childOutput);
-        output = decoded.text;
-        turnUsage = decoded.usage;
-      }
-      else if (this.options.engine === "agy") {
-        const decoded = decodeAgyHeadlessTurn(childOutput);
-        output = decoded.text;
-        turnUsage = decoded.usage;
-      } else output = childOutput;
+      const decoded = handler.decodeOutput(childOutput);
+      output = decoded.text;
+      turnUsage = decoded.usage;
       }
     } catch (error) {
       promptFailure = error;
@@ -316,17 +243,15 @@ class CliSession implements PiSessionLike {
       await instrument();
     }
     if (promptFailure !== undefined) {
-      const authRejection = this.options.engine === "grok" ? asGrokAuthenticationRejected(promptFailure) : undefined;
-      if (authRejection !== undefined) throw new GrokSubscriptionAuthenticationRejectedError(
-        cleanupFailure === undefined ? undefined : redactCredentialError(cleanupFailure, finalSecrets)
-      );
+      const authRejection = handler.authenticationError(promptFailure,
+        cleanupFailure === undefined ? undefined : redactCredentialError(cleanupFailure, finalSecrets));
+      if (authRejection !== undefined) throw authRejection;
       if (cleanupFailure !== undefined) throw redactCredentialError(cleanupFailure, finalSecrets);
       throw redactCredentialError(promptFailure, finalSecrets);
     }
     if (cleanupFailure !== undefined) {
-      if (this.options.engine === "grok" && asGrokAuthenticationRejected(cleanupFailure) !== undefined) {
-        throw new GrokSubscriptionAuthenticationRejectedError();
-      }
+      const authRejection = handler.authenticationError(cleanupFailure);
+      if (authRejection !== undefined) throw authRejection;
       throw redactCredentialError(cleanupFailure, finalSecrets);
     }
     if (output === undefined) return;

@@ -8,7 +8,7 @@ import { createOrganizationRuntimeHostForTest } from "./organizationRuntimeHost.
 import { createOrganizationRuntimeControlHostWithCoreForTest } from "./organizationRuntimeControl.js";
 import { prepareProductionReadiness } from "./organizationRuntimeReadiness.js";
 import { grokBrokerTurnFor, startOrganizationRuntimeEngine } from "./engineDispatcher.js";
-import type { EngineBrokerTurnClient } from "./engineBrokerControlClient.js";
+import type { EngineBrokerTurnClient } from "../engines/grok/broker/engineBrokerControlClient.js";
 import type { AttentionRegistry } from "./attention.js";
 import { attentionTools } from "./attention.js";
 import { parseOrganizationRuntimeConfig } from "./organizationRuntime.js";

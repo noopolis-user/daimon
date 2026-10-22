@@ -1,9 +1,11 @@
 import path from "node:path";
+import { getEngineHandler } from "../engines/registry.js";
+import type { EngineKind } from "../engines/descriptors.js";
 import { readTaskClock } from "../runtime/taskClock.js";
 
 type CliEnvironmentIntent = Readonly<{
   dbusSessionBusAddress?: string;
-  engine?: "codex" | "grok" | "agy";
+  engine?: EngineKind;
   executablePath?: string;
   engineHomePath?: string;
   wakeId?: string;
@@ -21,10 +23,7 @@ export const cliChildEnvironment = (
     // not claim production organization-runtime isolation.
     return { PATH: process.env.PATH, LANG: process.env.LANG ?? "C", LC_ALL: process.env.LC_ALL ?? "C", TZ: process.env.TZ ?? "UTC" };
   }
-  const engine = intent.engine;
-  const engineVariable = engine === "codex" ? "CODEX_HOME" : engine === "grok" ? "GROK_HOME" : engine === "agy" ? "ANTIGRAVITY_CLI_HOME" : undefined;
-  const engineHome = intent.engineHomePath;
-  const keyringBus = engine === "agy" ? localSecretServiceBus(intent.dbusSessionBusAddress) : undefined;
+  const engineEnvironment = intent.engine === undefined ? {} : getEngineHandler(intent.engine).environmentVariables(intent);
   return {
     // The executable is pinned absolutely. PATH remains only for a trusted
     // interpreter in a local shebang (and never selects the engine itself).
@@ -38,11 +37,7 @@ export const cliChildEnvironment = (
     XDG_STATE_HOME: `${runtimeHomePath}/.local/state`,
     XDG_CACHE_HOME: `${runtimeHomePath}/.cache`,
     TMPDIR: `${runtimeHomePath}/.tmp`,
-    ...(engineVariable === undefined || engineHome === undefined ? {} : { [engineVariable]: engineHome }),
-    ...(keyringBus === undefined ? {} : { DBUS_SESSION_BUS_ADDRESS: keyringBus }),
+    ...engineEnvironment,
     ...(intent.wakeId === undefined ? {} : { [DAIMON_WAKE_ID_ENV]: intent.wakeId })
   };
 };
-
-const localSecretServiceBus = (value: string | undefined): string | undefined =>
-  value !== undefined && /^unix:(?:path|abstract)=[^;,\r\n]+$/u.test(value) ? value : undefined;

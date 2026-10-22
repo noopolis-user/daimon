@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import test, { mock } from "node:test";
 
-import { materializePortableCredential } from "./portableCredentialMaterial.js";
+import { materializePortableCredential } from "../engines/codex/portableCredentialMaterial.js";
 import type { OrganizationRuntimeAgentConfig } from "./organizationRuntime.js";
 
 test("keeps directory and existing-credential protections and refuses undeclared engines", async () => {

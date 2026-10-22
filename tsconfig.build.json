@@ -6,8 +6,9 @@
     "src/runtime/testRuntimeMcpActions.ts",
     "src/runtime/fixtures/testMcpServer.mjs",
     "src/runtime/testRuntimeSubprocess.ts",
-    "src/runtime/native/build.ts",
-    "src/runtime/native/copyArtifact.ts",
-    "src/runtime/native/verifyArtifacts.ts"
+    "src/engines/grok/broker/native/build.ts",
+    "src/engines/grok/broker/native/copyArtifact.ts",
+    "src/engines/grok/broker/native/verifyArtifacts.ts",
+    "src/**/*.vitest.ts"
   ]
 }

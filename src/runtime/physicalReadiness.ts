@@ -2,7 +2,8 @@ import { constants, type Stats } from "node:fs";
 import { access, lstat, open, realpath } from "node:fs/promises";
 import path from "node:path";
 
-import { GROK_ENGINE_BROKER } from "../contracts/runtimeContractManifest.js";
+import { engineHandlers, getEngineHandler } from "../engines/registry.js";
+
 import type { OrganizationRuntimeAgentConfig } from "./organizationRuntime.js";
 import { pathsOverlap } from "./organizationRuntimeRecording.js";
 
@@ -41,7 +42,7 @@ export type OrganizationRuntimePathAuthority = Readonly<{
 
 /** Only a brokered Grok agent's home is worker-traversable; every other engine keeps 0700. */
 function runtimeHomeShape(agent: OrganizationRuntimeAgentConfig): DirectoryShape {
-  return agent.engine.kind === "grok" ? "worker-traversable" : "private";
+  return getEngineHandler(agent.engine.kind).runtimeHomeShape;
 }
 
 export async function prepareOrganizationRuntimePaths(
@@ -172,12 +173,8 @@ export function assertRuntimeDirectory(entry: DirectoryEntry, label: string, sha
   if (entry.uid !== runtime.uid) throw new Error(`${label} must be owned by the runtime user`);
   const permissions = Number(entry.mode) & 0o7777;
   if (shape === "private" && permissions !== 0o700) throw new Error(`${label} must have mode 0700`);
-  if (shape === "worker-traversable") {
-    const home = GROK_ENGINE_BROKER.worker.home.organizationRuntimeHome;
-    if (permissions !== home.mode) throw new Error(`${label} must have mode 0710 for a brokered Grok agent`);
-    if (entry.gid < (runtime.firstWorkerUid ?? GROK_ENGINE_BROKER.identities.firstWorkerUid) || entry.gid === runtime.gid) {
-      throw new Error(`${label} must be group-owned by the agent's Grok worker group`);
-    }
+  for (const handler of engineHandlers()) {
+    if (handler.runtimeHomeShape === shape) handler.assertRuntimeHomeDirectory?.(entry, label, runtime);
   }
   if (shape === "safe" && (permissions & 0o022) !== 0) throw new Error(`${label} must not grant group or other write access`);
 }

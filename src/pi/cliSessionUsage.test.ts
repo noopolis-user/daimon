@@ -8,8 +8,8 @@ import { recordTurnUsage, TURN_USAGE_LEDGER_VERSION, type TurnUsageOutcome } fro
 import { tagCliChildFailure } from "./cliChildOutput.js";
 import { createCliSessionFactory } from "./cliSession.js";
 import { failedTurnOutcome } from "./cliTurnMetering.js";
-import type { AgyTurnUsage } from "./agyHeadlessResult.js";
-import type { CodexTurnUsage } from "./codexHeadlessResult.js";
+import type { AgyTurnUsage } from "../engines/agy/agyHeadlessResult.js";
+import type { CodexTurnUsage } from "../engines/codex/codexHeadlessResult.js";
 
 /**
  * A Codex wake that breaches its per-wake token ceiling recorded *nothing* in

@@ -7,11 +7,11 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
-import { materializePortableCredential } from "./portableCredentialMaterial.js";
+import { materializePortableCredential } from "../engines/codex/portableCredentialMaterial.js";
 import type { OrganizationRuntimeAgentConfig } from "./organizationRuntime.js";
 
 const execute = promisify(execFile);
-const reader = fileURLToPath(new URL("./portableCredentialMaterial.ts", import.meta.url));
+const reader = fileURLToPath(new URL("../engines/codex/portableCredentialMaterial.ts", import.meta.url));
 const child = `const {materializePortableCredential}=await import(process.argv[1]);const home=process.argv[2];try{await materializePortableCredential({id:'agent:codex',name:'Codex',instructions:'Unused',workspacePath:home+'/workspace',runtimeHomePath:home,engine:{kind:'codex'}},home);process.stdout.write('UNEXPECTED_IMPORT');}catch{process.stdout.write('MATERIALIZATION_REFUSED');}`;
 
 for (const kind of ["mode", "hardlink", "directory", "empty", "oversize", "symlink"] as const) {
@@ -42,7 +42,7 @@ test("a real FIFO is rejected promptly; deleting nonblocking open makes the subp
     const run = (modulePath: string) => execute(process.execPath, ["--import", "tsx", "--input-type=module", "-e", child, modulePath, root], { timeout: 3000, killSignal: "SIGKILL" });
     assert.equal((await run(reader)).stdout, "MATERIALIZATION_REFUSED");
     const original = await readFile(reader, "utf8");
-    const mutated = original.replace(" | constants.O_NONBLOCK", "").replace('"./contractManifest.js"', JSON.stringify(fileURLToPath(new URL("./contractManifest.ts", import.meta.url))));
+    const mutated = original.replace(" | constants.O_NONBLOCK", "").replace('"../../runtime/contractManifest.js"', JSON.stringify(fileURLToPath(new URL("./contractManifest.ts", import.meta.url))));
     assert.notEqual(mutated, original);
     await writeFile(`${root}/package.json`, '{"type":"module"}');
     const mutant = `${root}/mutant.ts`; await writeFile(mutant, mutated);

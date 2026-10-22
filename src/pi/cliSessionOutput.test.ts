@@ -11,7 +11,7 @@ import {
   readChild,
   spawnEngine
 } from "./cliSession.js";
-import { GrokSubscriptionAuthenticationRejectedError } from "../runtime/grokAuthenticationError.js";
+import { GrokSubscriptionAuthenticationRejectedError } from "../engines/grok/broker/grokAuthenticationError.js";
 
 test("verbose progress stderr is drained without invalidating a bounded successful reply", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "daimon-cli-stderr-progress-"));

@@ -1,3 +1,4 @@
+import { ENGINE_DESCRIPTORS } from "../src/engines/descriptors.js";
 import assert from "node:assert/strict";
 import { spawn } from "../src/runtime/taskClockProcess.ts";
 import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -6,13 +7,13 @@ import path from "node:path";
 
 import { readChild } from "../src/pi/cliChildOutput.ts";
 import { terminateChild, trackCliChild } from "../src/pi/cliProcess.ts";
-import { decodeGrokHeadlessTurn } from "../src/pi/grokHeadlessResult.ts";
-import { readGrokBrokerCredential } from "../src/runtime/grokBrokerCredentialReader.ts";
-import { DEFAULT_GROK_BROKER_TURN_LIMITS } from "../src/runtime/engineBrokerTurnAccounting.ts";
-import { startGrokBrokerProxy } from "../src/runtime/grokBrokerProxy.ts";
-import { GrokBrokerTurnMeter } from "../src/runtime/grokBrokerTurnMeter.ts";
-import { DEFAULT_GROK_BROKER_MODEL_POLICY } from "../src/runtime/grokBrokerModelPolicy.ts";
-import { GROK_BROKER_PROVIDER_CAPABILITY_ENV, renderGrokBrokerWorkerArgs, renderGrokBrokerWorkerConfigWith } from "../src/runtime/grokBrokerWorkerConfig.ts";
+import { decodeGrokHeadlessTurn } from "../src/engines/grok/grokHeadlessResult.ts";
+import { readGrokBrokerCredential } from "../src/engines/grok/broker/grokBrokerCredentialReader.ts";
+import { DEFAULT_GROK_BROKER_TURN_LIMITS } from "../src/engines/grok/broker/engineBrokerTurnAccounting.ts";
+import { startGrokBrokerProxy } from "../src/engines/grok/broker/grokBrokerProxy.ts";
+import { GrokBrokerTurnMeter } from "../src/engines/grok/broker/grokBrokerTurnMeter.ts";
+import { DEFAULT_GROK_BROKER_MODEL_POLICY } from "../src/engines/grok/broker/grokBrokerModelPolicy.ts";
+import { GROK_BROKER_PROVIDER_CAPABILITY_ENV, renderGrokBrokerWorkerArgs, renderGrokBrokerWorkerConfigWith } from "../src/engines/grok/broker/grokBrokerWorkerConfig.ts";
 
 // Explicit live auth/transport check, not the Linux native worker/isolation E2E.
 // Read the operator credential only in this process; never stage or rotate it.
@@ -52,7 +53,7 @@ try {
       // argv as the native launcher with the built-in strict profile.
       const args = [...renderGrokBrokerWorkerArgs(prompt, home)].map((value) => value === "daimon-strict" ? "strict" : value);
       args[args.indexOf("--max-turns") + 1] = "1";
-      const child = trackCliChild(spawn("grok", args, {
+      const child = trackCliChild(spawn(ENGINE_DESCRIPTORS.grok.id, args, {
         cwd: home, detached: process.platform !== "win32",
         env: { PATH: process.env.PATH, HOME: home, GROK_HOME: home, LANG: "C", LC_ALL: "C", TZ: "UTC", [GROK_BROKER_PROVIDER_CAPABILITY_ENV]: capability },
         stdio: ["ignore", "pipe", "pipe"],

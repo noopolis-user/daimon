@@ -5,8 +5,8 @@ import path from "node:path";
 import test, { type TestContext } from "node:test";
 import { codexTaskClockArgs, grokTaskClockConfig, reportEngineTaskClockGap } from "./engineTaskClock.js";
 import { renderCodexArgs } from "./cliEngineSpawn.js";
-import { registerGrokHomeMcpServer } from "./grokHomeMcpRegistration.js";
-import { renderGrokLeanBaseConfig } from "../runtime/grokBrokerWorkerConfig.js";
+import { registerGrokHomeMcpServer } from "../engines/grok/grokHomeMcpRegistration.js";
+import { renderGrokLeanBaseConfig } from "../engines/grok/broker/grokBrokerWorkerConfig.js";
 
 const expectedSet = '{"FAKETIME"="-843385600.250","FAKETIME_DONT_FAKE_MONOTONIC"="1","LC_ALL"="C","LD_PRELOAD"="/caller/libfaketime.so.1"}';
 const expectedPolicy = `{inherit="all",ignore_default_excludes=false,exclude=[],include_only=[],set=${expectedSet}}`;
