@@ -70,6 +70,13 @@ export class AttentionDispatcher {
     for (const agentId of queued) this.pausedOut.add(agentId);
     for (const agent of this.options.agents) if ((this.generations.get(agent.id) ?? 0) > (this.observed.get(agent.id) ?? 0) || this.pausedOut.has(agent.id)) this.notify(agent.id);
   }
+  /** An owed pass for budget-parked agents whose limits may have moved (a grant, a new day); never new input. */
+  revisit(agentIds: Iterable<string>): void {
+    for (const agentId of agentIds) {
+      if (this.stopping || !this.options.agents.some((agent) => agent.id === agentId)) continue;
+      this.pausedOut.add(agentId); this.notify(agentId);
+    }
+  }
   /** True once no inbox loop is alive: nothing runs, and nothing can start until resume. */
   quiescent(): boolean { return this.work.size === 0; }
 
@@ -86,7 +93,8 @@ export class AttentionDispatcher {
       observedGeneration = generation; this.observed.set(agentId, generation);
       this.errors.delete(agentId);
       if (!selected.length) return;
-      const budget = await this.options.fuse.snapshot(agentId, agent.attention);
+      // `holding`: a paused verdict here leaves this queue waiting, so the fuse announces the park.
+      const budget = await this.options.fuse.snapshot(agentId, agent.attention, true);
       if (budget.state !== "available") return;
       if (this.paused) { this.pausedOut.add(agentId); return; }
       const executionId = selected[0]!.execution_id ?? randomUUID();

@@ -156,7 +156,9 @@ function createControl(config: OrganizationRuntimeConfig, host: OrganizationRunt
         if (!hardReason()) for (const agentId of new Set((await opened.recoverable(knownAgents)).filter((record) => !record.deferred).map((record) => record.agent_id))) dispatcher.notify(agentId);
         fusePoll = setInterval(() => {
           void fuse?.pollOperatorStop().then((reason) => {
-            if (reason === "operator_stop" || reason === "ledger_unavailable") dispatcher?.halt();
+            if (reason === "operator_stop" || reason === "ledger_unavailable") { dispatcher?.halt(); return; }
+            // An operator grant (or a new day) can lift a budget pause; revisit the parked queues.
+            return fuse?.parkedRevisitDue().then((agents) => { if (agents.length > 0 && !hardReason()) dispatcher?.revisit(agents); });
           }).catch(() => undefined);
         }, options.fusePollIntervalMsForTest ?? WAKE_FUSE_OPERATOR_POLL_MS);
         fusePoll.unref();
