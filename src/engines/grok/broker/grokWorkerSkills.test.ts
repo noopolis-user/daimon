@@ -35,7 +35,7 @@ test("refuses names, paths and shapes Grok or a filesystem would reinterpret", (
   const md = [{ path: "SKILL.md", content: skillMd("x") }];
   for (const [label, value] of Object.entries({
     "not an array": {},
-    "dot name": one(".", md), "dotdot name": one("../../..", md), "hidden name": one(".hidden", md), "slash name": one("a/b", md), "empty name": one("", md),
+    "dot name": one(".", md), "dotdot name": one("..", md), "hidden name": one(".hidden", md), "slash name": one("a/b", md), "empty name": one("", md),
     "no SKILL.md": one("x", [{ path: "README.md", content: "" }]), "no files": one("x", []),
     "traversal path": one("x", [...md, { path: "../escape.md", content: "" }]), "absolute path": one("x", [...md, { path: "/etc/passwd", content: "" }]),
     "empty component": one("x", [...md, { path: "a//b.md", content: "" }]), "hidden file": one("x", [...md, { path: ".env", content: "" }]),

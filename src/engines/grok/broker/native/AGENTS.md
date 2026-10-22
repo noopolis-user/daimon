@@ -299,7 +299,7 @@ known, in `engineBrokerNativeClient.ts` (`scrubCutFragments`), on both sides of
 every marker and at the window's outer ends.
 
 Changing any of the six pinned launcher sources means rebuilding: `node
---import tsx src/runtime/native/build.ts`, then re-pin
+--import tsx src/engines/grok/broker/native/build.ts`, then re-pin
 `artifacts.sourceSha256`/`x64Sha256`/`arm64Sha256` in the contract manifest and
 re-emit it. `artifactsManifest.test.ts` fails by design until that is done. The
 adversarial suite is `docker build -f Dockerfile.integration -t <tag> .` in this

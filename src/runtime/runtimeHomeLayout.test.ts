@@ -157,13 +157,13 @@ test("the private mode is used only where it is also asserted", async () => {
       if ((await readFile(target, "utf8")).includes("RUNTIME_HOME_SUBDIRECTORY_MODE")) offenders.push(target);
     }
   };
-  await Promise.all(["src/pi", "src/observability", "src/runtime", "src/mcp", "src/core"].map(walk));
+  await Promise.all(["src/pi", "src/observability", "src/runtime", "src/mcp", "src/core", "src/engines"].map(walk));
   assert.deepEqual(offenders, []);
 });
 
 // Creations that are not inside an agent's runtime home.
 const OUTSIDE_RUNTIME_HOME = [
-  "src/runtime/native/copyArtifact.ts", "src/observability/emitCausalFixture.ts", "src/pi/auth.ts", "src/runtime/cli.ts"
+  "src/engines/grok/broker/native/copyArtifact.ts", "src/observability/emitCausalFixture.ts", "src/pi/auth.ts", "src/runtime/cli.ts"
 ];
 
 /**
@@ -213,6 +213,6 @@ test("no runtime-home directory is created without an explicit private mode, and
       }
     }
   };
-  await Promise.all(["src/pi", "src/observability", "src/runtime", "src/mcp", "src/core"].map(walk));
+  await Promise.all(["src/pi", "src/observability", "src/runtime", "src/mcp", "src/core", "src/engines"].map(walk));
   assert.deepEqual(offenders, []);
 });

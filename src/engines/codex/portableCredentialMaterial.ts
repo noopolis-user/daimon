@@ -172,10 +172,10 @@ function assertCredentialEntry(entry: Stats, mode: number, agent: PortableAgent)
   return identity(entry);
 }
 
-function contained(root: string, relative: string): string {
+export function contained(root: string, relative: string): string {
   const candidate = path.resolve(root, relative);
   const relation = path.relative(path.resolve(root), candidate);
-  if (!relation || relation === "../.." || relation.startsWith(`..${path.sep}`) || path.isAbsolute(relation)) {
+  if (!relation || relation === ".." || relation.startsWith(`..${path.sep}`) || path.isAbsolute(relation)) {
     throw new Error("Daimon credential contract escapes the runtime home");
   }
   return candidate;

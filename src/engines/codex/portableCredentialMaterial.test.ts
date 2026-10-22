@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { materializePortableCredential } from "./portableCredentialMaterial.js";
+import { contained, materializePortableCredential } from "./portableCredentialMaterial.js";
 import type { OrganizationRuntimeAgentConfig } from "../../runtime/organizationRuntime.js";
 
 const agent = (root: string, kind: "codex"): OrganizationRuntimeAgentConfig & {
@@ -88,4 +88,11 @@ test("rejects unsafe ingress without disclosing its path or contents", async () 
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("a credential path resolving to the runtime home's parent escapes it", () => {
+  assert.throws(() => contained("/home/agent", ".."), /escapes the runtime home/);
+  assert.throws(() => contained("/home/agent", "../other"), /escapes the runtime home/);
+  assert.throws(() => contained("/home/agent", "."), /escapes the runtime home/);
+  assert.equal(contained("/home/agent", ".codex/auth.json"), "/home/agent/.codex/auth.json");
 });

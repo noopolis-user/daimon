@@ -44,7 +44,7 @@ const exact = (value: Record<string, unknown>, fields: readonly string[]): void 
  * The native launcher derives HOME, GROK_HOME and TMPDIR from the registered
  * home and refuses a non-canonical one, so the broker's view must match it.
  */
-const absolute = (item: unknown): item is string => typeof item === "string" && item.length > 1 && item.startsWith("/") && !item.endsWith("/") && path.posix.normalize(item) === item && !item.split("/").slice(1).some((part) => part === "." || part === "../../..") && !item.includes("\0");
+const absolute = (item: unknown): item is string => typeof item === "string" && item.length > 1 && item.startsWith("/") && !item.endsWith("/") && path.posix.normalize(item) === item && !item.split("/").slice(1).some((part) => part === "." || part === "..") && !item.includes("\0");
 
 /** The per-request stream written beside a registration's usage ledger. */
 export const engineBrokerRequestLedgerPathFor = (usageLedgerPath: string): string => path.posix.join(path.posix.dirname(usageLedgerPath), "requests.jsonl");
