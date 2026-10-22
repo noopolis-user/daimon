@@ -159,3 +159,40 @@ test("a grants path that cannot be opened safely is no grant, warned once", asyn
   for (let poll = 0; poll < 3; poll++) assert.deepEqual(await fuse.admit("pressman", "two", agentLimits), { state: "paused", reason: "agent_execution_ceiling" });
   assert.equal(lines.filter((line) => line.includes("wake fuse grants ignored")).length, 1);
 }));
+
+test("a grant-lifted ceiling removes its trip marker, and the fuse re-trips when the grant goes", async (t) => await withDirectory(async (directory) => {
+  logs(t);
+  const marker = path.join(directory, "fuse.trip.json");
+  const env = environment(directory, { DAIMON_WAKE_FUSE_MAX_WAKES: "1" });
+  const fuse = await WakeFuse.open({ organizationKey: "org", environment: env });
+  await fuse.admit("alpha", "one");
+  assert.deepEqual(await fuse.admit("alpha", "two"), { state: "tripped", reason: "wake_ceiling" });
+  assert.equal(JSON.parse(await readFile(marker, "utf8")).reason, "wake_ceiling");
+  await grant(directory, { version: WAKE_FUSE_GRANTS_VERSION, epoch: "test-epoch", organization: { extra_wakes: 1 } });
+  assert.equal((await fuse.snapshot("alpha")).state, "available");
+  await assert.rejects(readFile(marker, "utf8"), { code: "ENOENT" });
+  assert.deepEqual(await fuse.admit("alpha", "two"), { state: "admitted" });
+  await rm(path.join(directory, "grants.json"));
+  assert.deepEqual(await fuse.admit("alpha", "three"), { state: "tripped", reason: "wake_ceiling" });
+  const rewritten = JSON.parse(await readFile(marker, "utf8")) as Record<string, unknown>;
+  assert.equal(rewritten.epoch, "test-epoch"); assert.equal(rewritten.reason, "wake_ceiling");
+  // And a restart honours the re-written marker.
+  await fuse.close();
+  const reopened = await WakeFuse.open({ organizationKey: "org", environment: env });
+  assert.equal(reopened.tripped(), "wake_ceiling");
+}));
+
+test("a day change makes a parked agent due for a revisit, with no grant file at all", async (t) => await withDirectory(async (directory) => {
+  logs(t);
+  let now = new Date("2026-10-21T21:00:00.000Z");
+  const env = { ...environment(directory), DAIMON_WAKE_FUSE_EPOCH: undefined, DAIMON_WAKE_FUSE_EPOCH_ZONE: "Europe/Berlin" };
+  const fuse = await WakeFuse.open({ organizationKey: "org", environment: env, now: () => now });
+  await fuse.admit("pressman", "one", agentLimits);
+  assert.equal((await fuse.admit("pressman", "two", agentLimits)).state, "paused");
+  assert.deepEqual(await fuse.parkedRevisitDue(), ["pressman"]);
+  assert.deepEqual(await fuse.parkedRevisitDue(), []);
+  now = new Date("2026-10-21T21:59:59.000Z");
+  assert.deepEqual(await fuse.parkedRevisitDue(), [], "still the 21st in Berlin");
+  now = new Date("2026-10-21T22:00:01.000Z");
+  assert.deepEqual(await fuse.parkedRevisitDue(), ["pressman"], "Berlin midnight renews the budget");
+}));

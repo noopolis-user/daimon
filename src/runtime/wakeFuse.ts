@@ -151,7 +151,7 @@ export class WakeFuse {
    */
   async snapshot(agentId: string, limits: WakeBudgetLimits = {}, holding = false): Promise<WakeBudgetSnapshot> {
     const result = this.serial.catch(() => undefined).then(async () => {
-      if (this.armed) { await this.rollEpochIfDue(); await this.reconsiderCeilingTrip(); }
+      if (this.armed) { await this.rollEpochIfDue(); await this.reconsiderCeilingTrip().catch(() => undefined); }
       const measured = await this.measure(agentId, limits);
       // `holding`: the caller is about to leave queued work waiting on this verdict.
       if (holding && measured.snapshot.state === "paused") await this.notePark(agentId, measured);
@@ -192,8 +192,13 @@ export class WakeFuse {
   private async reconsiderCeilingTrip(): Promise<void> {
     if (this.reason !== "wake_ceiling" && this.reason !== "token_ceiling") return;
     const grant = await this.grants.read(this.epoch);
-    if (this.reason === "wake_ceiling" && grant.organization.extraWakes > 0 && this.admissions.size < raised(this.maxWakes, grant.organization.extraWakes)) this.reason = undefined;
-    else if (this.reason === "token_ceiling" && grant.organization.extraTokens > 0 && await sumTokens(this.usageLedgerPath, this.epochStartedAt) < raised(this.maxTokens, grant.organization.extraTokens)) this.reason = undefined;
+    const lifted = this.reason === "wake_ceiling" ? grant.organization.extraWakes > 0 && this.admissions.size < raised(this.maxWakes, grant.organization.extraWakes)
+      : grant.organization.extraTokens > 0 && await sumTokens(this.usageLedgerPath, this.epochStartedAt) < raised(this.maxTokens, grant.organization.extraTokens);
+    if (!lifted) return;
+    // The marker is what host tooling reads as truth, so a lifted trip must not
+    // leave it behind. Removed first: if that fails the trip stays (fail closed).
+    if (await readTripMarker(this.directory, this.epoch) === this.reason) { await unlink(path.join(this.directory, TRIP_MARKER)); await syncDirectory(this.directory); }
+    this.reason = undefined; this.tripMarkerMissing = false;
   }
 
   private async notePark(agentId: string, measured: Measured): Promise<void> {

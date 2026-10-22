@@ -27,14 +27,14 @@ class Core implements OrganizationRuntimeHost {
   async stop() { this.releases.forEach((release, index) => release({ version: "noopolis.daimon.wake-result.v1", status: "stopped", agentId: this.wakes[index]!.agentId, wakeId: this.wakes[index]!.event.id, code: "active_wake_aborted" })); return { version: "noopolis.daimon.organization-runtime-stop.v1" as const, state: "stopped" as const }; }
 }
 
-async function fixture(maxExecutions: number, maxWakes: number) {
+async function fixture(maxExecutions: number, maxWakes: number, fuseNowForTest?: () => Date) {
   const root = await mkdtemp(path.join(os.tmpdir(), "daimon-grant-")); await chmod(root, 0o700);
   const usage = await mkdtemp(path.join(os.tmpdir(), "daimon-grant-usage-")); await writeFile(path.join(usage, "usage.jsonl"), "");
   const registry: AttentionRegistry = new Map();
   const core = new Core();
   const control = createOrganizationRuntimeControlHostWithCoreForTest(config(maxExecutions), core, {
-    acceptanceStorePath: root, controlToken: token, storeOptions, attentionRegistryForTest: registry, fusePollIntervalMsForTest: 10,
-    fuseEnvironment: { DAIMON_WAKE_FUSE_DIRECTORY: usage, DAIMON_WAKE_FUSE_EPOCH: "edition", DAIMON_WAKE_FUSE_MAX_WAKES: String(maxWakes), DAIMON_WAKE_FUSE_MAX_TOKENS: "10000", DAIMON_TURN_USAGE_LEDGER_PATH: path.join(usage, "usage.jsonl") }
+    acceptanceStorePath: root, controlToken: token, storeOptions, attentionRegistryForTest: registry, fusePollIntervalMsForTest: 10, ...(fuseNowForTest === undefined ? {} : { fuseNowForTest }),
+    fuseEnvironment: { DAIMON_WAKE_FUSE_DIRECTORY: usage, ...(fuseNowForTest === undefined ? { DAIMON_WAKE_FUSE_EPOCH: "edition" } : { DAIMON_WAKE_FUSE_EPOCH_ZONE: "Europe/Berlin" }), DAIMON_WAKE_FUSE_MAX_WAKES: String(maxWakes), DAIMON_WAKE_FUSE_MAX_TOKENS: "10000", DAIMON_TURN_USAGE_LEDGER_PATH: path.join(usage, "usage.jsonl") }
   });
   await control.start();
   const spend = async () => {
@@ -89,5 +89,20 @@ test("a grant for another epoch leaves the parked wake held", async (t) => {
     await writeFile(path.join(f.usage, "grants.json"), JSON.stringify({ version: WAKE_FUSE_GRANTS_VERSION, epoch: "last-edition", agents: { pressman: { extra_executions: 5 } } }));
     await pause(100);
     assert.equal(f.core.wakes.length, 1);
+  } finally { await f.cleanup(); }
+});
+
+test("Berlin midnight resumes a budget-parked agent's queued wake with no restart and no new mail", async (t) => {
+  const lines = captureLogs(t);
+  let now = new Date("2026-10-21T21:59:00.000Z");
+  const f = await fixture(1, 100, () => now);
+  try {
+    await f.spend();
+    await pause(60);
+    assert.equal(f.core.wakes.length, 1, "held while the day's agent budget is spent");
+    now = new Date("2026-10-21T22:00:30.000Z");
+    await until(() => f.core.wakes.length === 2);
+    assert.match(f.core.wakes[1]!.event.text, /Handle two/u);
+    assert.equal(lines.filter((line) => line.includes("wake unparked agent=pressman")).length, 1);
   } finally { await f.cleanup(); }
 });

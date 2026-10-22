@@ -28,6 +28,7 @@ type TestControlOptions = OrganizationRuntimeControlOptions & Readonly<{
   storeOptions?: WakeAcceptanceStoreTestOptions;
   fuseEnvironment?: NodeJS.ProcessEnv;
   fusePollIntervalMsForTest?: number;
+  fuseNowForTest?: () => Date;
   attentionRegistryForTest?: AttentionRegistry;
 }>;
 
@@ -149,7 +150,7 @@ function createControl(config: OrganizationRuntimeConfig, host: OrganizationRunt
       const opened = await WakeAcceptanceStore.open(options.acceptanceStorePath, options.storeOptions);
       let openedFuse: WakeFuse | undefined;
       try {
-        openedFuse = await WakeFuse.open({ organizationKey: [...knownAgents].sort().join("\u0000"), environment: options.fuseEnvironment });
+        openedFuse = await WakeFuse.open({ organizationKey: [...knownAgents].sort().join("\u0000"), environment: options.fuseEnvironment, ...(options.fuseNowForTest === undefined ? {} : { now: options.fuseNowForTest }) });
         await host.start();
         store = opened; fuse = openedFuse; started = true;
         dispatcher = new AttentionDispatcher({ store, host, fuse, agents: config.agents, registry, token: expectedToken, onIdle: (agentId) => { void schedules?.drain(agentId).catch(() => undefined); } });
