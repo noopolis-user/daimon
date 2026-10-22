@@ -1,6 +1,36 @@
-import { readJsonFile, readPiAuth, writePiAuth } from "./authFiles.js";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import path from "node:path";
 
-export { seedPiOpenAICodexAuthFromCodex, createPiOpenAICodexAuthFromCodexToken } from "../engines/codex/piAuth.js";
+const readJsonFile = async <T>(filePath: string): Promise<T> =>
+  JSON.parse(await readFile(filePath, "utf8")) as T;
+
+const readPiAuth = async (piAuthPath: string): Promise<Record<string, unknown>> => {
+  try {
+    return await readJsonFile<Record<string, unknown>>(piAuthPath);
+  } catch (error) {
+    if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
+      return {};
+    }
+    throw error;
+  }
+};
+
+const writePiAuth = async (
+  piAuthPath: string,
+  next: Record<string, unknown>
+): Promise<void> => {
+  await mkdir(path.dirname(piAuthPath), { recursive: true });
+  await writeFile(piAuthPath, `${JSON.stringify(next, null, 2)}\n`, { mode: 0o600 });
+};
+
+
+import { seedPiOpenAICodexAuthFromCodex as seedCodexPiAuth } from "../engines/codex/piAuth.js";
+
+export { createPiOpenAICodexAuthFromCodexToken } from "../engines/codex/piAuth.js";
+
+export async function seedPiOpenAICodexAuthFromCodex(input: { codexAuthPath: string; piAuthPath: string }): Promise<void> {
+  await seedCodexPiAuth(input, { readJsonFile, readPiAuth, writePiAuth });
+}
 
 interface ClaudeCodeAuthFile {
   claudeAiOauth?: {

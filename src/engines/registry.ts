@@ -13,11 +13,14 @@ import { agyConfigHooks } from "./agy/configHooks.js";
 import { agyPiHooks } from "./agy/piHooks.js";
 import { agyRuntimeHooks } from "./agy/runtimeHooks.js";
 
-const handlers: Record<EngineKind, EngineHandler> = {
+let handlers: Record<EngineKind, EngineHandler> | undefined;
+// Engine hooks call generic adapters, which in turn resolve handlers. Compose only
+// after module initialization so direct imports of any hook/barrel are safe.
+const registeredHandlers = (): Record<EngineKind, EngineHandler> => handlers ??= {
   codex: { id: ENGINE_DESCRIPTORS.codex.id, descriptor: ENGINE_DESCRIPTORS.codex, ...codexAuthHooks, ...codexConfigHooks, ...codexPiHooks, ...codexRuntimeHooks },
   grok: { id: ENGINE_DESCRIPTORS.grok.id, descriptor: ENGINE_DESCRIPTORS.grok, ...grokAuthHooks, ...grokConfigHooks, ...grokPiHooks, ...grokRuntimeHooks },
   agy: { id: ENGINE_DESCRIPTORS.agy.id, descriptor: ENGINE_DESCRIPTORS.agy, ...agyAuthHooks, ...agyConfigHooks, ...agyPiHooks, ...agyRuntimeHooks }
 };
 
-export const getEngineHandler = (id: EngineKind): EngineHandler => handlers[id];
-export const engineHandlers = (): readonly EngineHandler[] => Object.values(handlers);
+export const getEngineHandler = (id: EngineKind): EngineHandler => registeredHandlers()[id];
+export const engineHandlers = (): readonly EngineHandler[] => Object.values(registeredHandlers());

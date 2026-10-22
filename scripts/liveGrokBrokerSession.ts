@@ -1,3 +1,4 @@
+import { ENGINE_DESCRIPTORS } from "../src/engines/descriptors.js";
 import assert from "node:assert/strict";
 import { spawn } from "../src/runtime/taskClockProcess.ts";
 import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -52,7 +53,7 @@ try {
       // argv as the native launcher with the built-in strict profile.
       const args = [...renderGrokBrokerWorkerArgs(prompt, home)].map((value) => value === "daimon-strict" ? "strict" : value);
       args[args.indexOf("--max-turns") + 1] = "1";
-      const child = trackCliChild(spawn("grok", args, {
+      const child = trackCliChild(spawn(ENGINE_DESCRIPTORS.grok.id, args, {
         cwd: home, detached: process.platform !== "win32",
         env: { PATH: process.env.PATH, HOME: home, GROK_HOME: home, LANG: "C", LC_ALL: "C", TZ: "UTC", [GROK_BROKER_PROVIDER_CAPABILITY_ENV]: capability },
         stdio: ["ignore", "pipe", "pipe"],

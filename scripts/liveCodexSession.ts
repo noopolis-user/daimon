@@ -1,3 +1,4 @@
+import { ENGINE_DESCRIPTORS } from "../src/engines/descriptors.js";
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -36,7 +37,7 @@ const lookup = defineTool({
 
 try {
   const { session } = await createCliSessionFactory({
-    engine: "codex",
+    engine: ENGINE_DESCRIPTORS.codex.id,
     maxToolTurns: 3,
     timeoutMs: 120_000,
     onToolsMounted: (tools) => process.stderr.write(`mounted tools: ${tools.map((tool) => tool.name).join(", ")}\n`),

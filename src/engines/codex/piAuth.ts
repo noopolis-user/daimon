@@ -1,4 +1,8 @@
-import { readJsonFile, readPiAuth, writePiAuth } from "../../pi/authFiles.js";
+type PiAuthFiles = Readonly<{
+  readJsonFile<T>(filePath: string): Promise<T>;
+  readPiAuth(filePath: string): Promise<Record<string, unknown>>;
+  writePiAuth(filePath: string, next: Record<string, unknown>): Promise<void>;
+}>;
 
 interface CodexAuthFile {
   tokens?: {
@@ -29,7 +33,7 @@ const resolveExpires = (accessToken: string): number => {
 export async function seedPiOpenAICodexAuthFromCodex(input: {
   codexAuthPath: string;
   piAuthPath: string;
-}): Promise<void> {
+}, { readJsonFile, readPiAuth, writePiAuth }: PiAuthFiles): Promise<void> {
   const codex = await readJsonFile<CodexAuthFile>(input.codexAuthPath);
   const access = codex.tokens?.access_token;
   const refresh = codex.tokens?.refresh_token;

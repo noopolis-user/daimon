@@ -48,7 +48,7 @@
     "verify:contract-manifest": "node --import tsx scripts/emitRuntimeContractManifest.ts --check",
     "verify:native": "node --experimental-strip-types src/engines/grok/broker/native/verifyArtifacts.ts",
     "verify:production-closure": "node --experimental-strip-types scripts/verifyProductionClosure.ts",
-    "test": "npm run test:engine-boundary && node --import tsx --test \"src/**/*.test.ts\" scripts/scriptSourcePolicy.test.ts",
+    "test": "npm run test:engine-boundary && node --import tsx --test --test-concurrency=4 \"src/**/*.test.ts\" scripts/scriptSourcePolicy.test.ts",
     "emit-causal-fixture": "tsx src/observability/emitCausalFixture.ts",
     "emit-causal-fixture:spoof": "tsx src/observability/emitCausalFixture.ts --spoof",
     "live:codex-session": "node --import tsx scripts/liveCodexSession.ts",
