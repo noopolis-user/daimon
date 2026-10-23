@@ -64,6 +64,25 @@ removing `engines` and restoring the v5 version reproduces the released v5 diges
 `sha256:e39551277c6727c8807b1247e759f57addcee3f17f1405ebc927179647d64de6`.
 Package version 0.2.8 is unchanged here; release and consumer re-pinning are
 separate steps.
+
+Cross-repo conformance uses the unchanged Spawnfile parser and its complete local
+import closure from `origin/main` commit
+`c7d97dc9b6c5905189cbaecff167a1abcf81206c` (after PR #114). Like the existing
+adjacent contract fixtures, it is checked-in test data. The snapshot records
+source paths, commit and SHA-256 hashes in
+`src/runtime/fixtures/spawnfile-contract-parser.json`; tests materialize it in an
+ignored temporary directory, invoke the real emitter there, and run Spawnfile's
+canonical-byte/digest verifier and v6 parser against the resulting files.
+Negative cases cover inventory, schema, credential, realm and broker drift.
+It requires neither a sibling checkout nor network access during tests and adds
+no Spawnfile runtime dependency or packaged parser code.
+
+`scripts/vendorSpawnfileContractParser.ts` refreshes the snapshot from an absolute
+Spawnfile checkout and Git ref, using only committed Git objects, following
+Spawnfile's descriptor-mirror generation pattern. Its optional `--check` compares
+the fixture byte-for-byte with that exact Git revision. Refreshes require a
+deliberate commit-pin update and review of the upstream source changes.
+
 Tests compare descriptors with configuration parsing, rendered worker/grant
 pins, omitted defaults, limit enforcement, credential readers and isolation
 hooks. A transitive AST boundary test rejects executable imports in the static
