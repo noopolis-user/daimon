@@ -42,7 +42,9 @@ test("a real FIFO is rejected promptly; deleting nonblocking open makes the subp
     const run = (modulePath: string) => execute(process.execPath, ["--import", "tsx", "--input-type=module", "-e", child, modulePath, root], { timeout: 3000, killSignal: "SIGKILL" });
     assert.equal((await run(reader)).stdout, "MATERIALIZATION_REFUSED");
     const original = await readFile(reader, "utf8");
-    const mutated = original.replace(" | constants.O_NONBLOCK", "").replace('"../../runtime/contractManifest.js"', JSON.stringify(fileURLToPath(new URL("./contractManifest.ts", import.meta.url))));
+    const mutated = original.replace(" | constants.O_NONBLOCK", "")
+      .replace('"../descriptors.js"', JSON.stringify(fileURLToPath(new URL("../engines/descriptors.ts", import.meta.url))))
+      .replace('"../../runtime/contractManifest.js"', JSON.stringify(fileURLToPath(new URL("./contractManifest.ts", import.meta.url))));
     assert.notEqual(mutated, original);
     await writeFile(`${root}/package.json`, '{"type":"module"}');
     const mutant = `${root}/mutant.ts`; await writeFile(mutant, mutated);
