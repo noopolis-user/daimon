@@ -1,3 +1,5 @@
+import { ENGINE_DESCRIPTORS } from "../../descriptors.js";
+
 /**
  * Fixed operating contract every broker-launched Grok worker receives through
  * `--system-prompt-override`.
@@ -76,20 +78,9 @@ export const grokMountedToolNamingRule = (mountedToolNames: readonly string[]): 
     + "A bare name is not a valid MCP tool name and reaches nothing.";
 };
 
-/** Closed declared-model vocabulary; defaults are `grok-4.6` at `low`. */
-export const GROK_BROKER_MODELS = Object.freeze(["grok-4.6", "grok-4.5", "grok-build"] as const);
-export const GROK_BROKER_REASONING_EFFORTS = Object.freeze(["low", "medium", "high"] as const);
-
-/** `--tools` input ids. These are NOT the model-visible names (see below). */
-export const GROK_WORKER_TOOL_IDS = Object.freeze(["run_terminal_cmd", "read_file", "grep", "list_dir", "search_tool", "use_tool"] as const);
-
-/**
- * The exact tool names a lean worker request body must carry.
- *
- * Grok 1.0.34 fails open on an unmappable `--tools` entry and ships all 19
- * tools, so the proxy compares every upstream body against this set.
- */
-export const GROK_WORKER_VISIBLE_TOOLS = Object.freeze(["grep", "list_dir", "read_file", "run_terminal_command", "search_tool", "use_tool"] as const);
-
-/** `--max-turns` backstop compiled into the launcher; per-wake ceilings belong to the broker. */
-export const GROK_WORKER_MAX_TURNS = 48 as const;
+/** Released aliases of the static broker inventory. */
+export const GROK_BROKER_MODELS = ENGINE_DESCRIPTORS.grok.modelSelection.models.values;
+export const GROK_BROKER_REASONING_EFFORTS = ENGINE_DESCRIPTORS.grok.modelSelection.reasoningEfforts;
+export const GROK_WORKER_TOOL_IDS = ENGINE_DESCRIPTORS.grok.broker.worker.toolIds;
+export const GROK_WORKER_VISIBLE_TOOLS = ENGINE_DESCRIPTORS.grok.broker.worker.visibleTools;
+export const GROK_WORKER_MAX_TURNS = ENGINE_DESCRIPTORS.grok.broker.worker.maxTurns;

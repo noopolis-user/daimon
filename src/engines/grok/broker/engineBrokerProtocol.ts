@@ -1,3 +1,4 @@
+import { ENGINE_DESCRIPTORS } from "../../descriptors.js";
 import { parseBrokerProcessClock, type BrokerClockObservation } from "./grokBrokerTaskClock.js";
 import { parseGrokBrokerProviderClockObservation } from "./grokBrokerProviderClock.js";
 import { isEngineBrokerInferenceRequestKind, isEngineBrokerInferenceResponseKind, parseEngineBrokerInferenceRequest, parseEngineBrokerInferenceResponse, type EngineBrokerInferenceRequest, type EngineBrokerInferenceResponse } from "./engineBrokerInferenceProtocol.js";
@@ -10,7 +11,7 @@ import { parseEngineBrokerTurnAccounting, parseEngineBrokerTurnLimitOverrides, t
  * retain those record formats. A missing slot is allowed only for a unique
  * agent registration (unclocked production compatibility).
  */
-const VERSION = "noopolis.daimon.engine-broker.v4" as const;
+const VERSION = ENGINE_DESCRIPTORS.grok.broker.controlProtocolVersion;
 export const ENGINE_BROKER_VERSION = VERSION;
 const V1 = "noopolis.daimon.engine-broker.v1" as const;
 export const ENGINE_BROKER_MAX_FRAME_BYTES = 1_048_576;

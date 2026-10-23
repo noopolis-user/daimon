@@ -1,3 +1,4 @@
+import { ENGINE_DESCRIPTORS } from "../../descriptors.js";
 import { brokerTaskClockFileFor } from "./grokBrokerSlot.js";
 import { GROK_BROKER_TASK_CLOCK, type GrokWorkerConfigVariant } from "./grokBrokerTaskClockContract.js";
 import { createHash } from "node:crypto";
@@ -143,7 +144,7 @@ export function resolveOrganizationGrokBrokerProjection(config: unknown, agentId
   const artifact = GROK_ENGINE_BROKER.grokCliArtifacts[options.architecture];
   if (artifact === undefined) throw new Error("Grok broker projection requires a pinned architecture");
   const skills = parseAgentSkills(options.skills ?? []);
-  const profilePath = path.posix.join(options.workerHomePath, ".grok", "sandbox.toml");
+  const profilePath = path.posix.join(options.workerHomePath, ENGINE_DESCRIPTORS.grok.homeDirectory, "sandbox.toml");
   const projection: OrganizationGrokBrokerProjection = {
     version: GROK_BROKER_PROJECTION_VERSION, agentId, workspacePath: agent.workspacePath, runtimeHomePath: agent.runtimeHomePath,
     workerUid: options.workerUid, slot: options.slot, profilePath, profileSha256, denyPaths, workerConfigSha256, workerConfigVariant,

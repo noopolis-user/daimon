@@ -10,7 +10,6 @@ export { verifyAgySubscriptionEnrollment } from "../engines/agy/authHooks.js";
 import type { OrganizationRuntimeAgentConfig } from "./organizationRuntime.js";
 import { hasRefreshablePortableCredential, portableCredentialSecretValues } from "./portableCredentialAuth.js";
 
-const MAX_AUTH_BYTES = 64 * 1024;
 const MAX_PROBE_BYTES = 8 * 1024;
 
 export type EngineReadiness = Readonly<{
@@ -80,8 +79,8 @@ export function engineHomeName(engine: PortableEngineKind): string {
   return ENGINE_DESCRIPTORS[engine].homeDirectory;
 }
 
-export function engineAuthFile(_engine: PortableEngineKind, engineHomePath: string): string {
-  return path.join(engineHomePath, "auth.json");
+export function engineAuthFile(engine: PortableEngineKind, engineHomePath: string): string {
+  return path.join(engineHomePath, ENGINE_DESCRIPTORS[engine].auth.fileName);
 }
 
 async function resolveExecutable(agentId: string, engine: EngineKind): Promise<string> {
@@ -141,18 +140,18 @@ export async function verifyPortableEngineAuth(agentId: string, engine: Portable
   let buffer: Buffer | undefined;
   try {
     const home = await lstat(engineHomePath);
-    if (!home.isDirectory() || home.isSymbolicLink() || home.uid !== process.getuid?.() || (home.mode & 0o777) !== 0o700) {
+    if (!home.isDirectory() || home.isSymbolicLink() || home.uid !== process.getuid?.() || (home.mode & 0o777) !== ENGINE_DESCRIPTORS[engine].auth.directoryMode) {
       throw new Error("unsafe engine home");
     }
     const entry = await lstat(authPath);
-    assertPrivateAuthEntry(entry);
+    assertPrivateAuthEntry(entry, engine);
     handle = await open(authPath, constants.O_RDONLY | noFollow());
     const opened = await handle.stat();
-    assertPrivateAuthEntry(opened);
+    assertPrivateAuthEntry(opened, engine);
     if (!sameIdentity(identity(entry), identity(opened))) throw new Error("auth artifact changed");
     buffer = await handle.readFile();
     const after = await handle.stat();
-    assertPrivateAuthEntry(after);
+    assertPrivateAuthEntry(after, engine);
     if (!sameIdentity(identity(opened), identity(after))) throw new Error("auth artifact changed");
     if (!hasRefreshablePortableCredential(engine, buffer)) throw new Error("unsupported auth artifact");
   } catch {
@@ -174,13 +173,13 @@ export async function readPortableEngineCredentialSecrets(
   let buffer: Buffer | undefined;
   try {
     const home = await lstat(engineHomePath);
-    if (!home.isDirectory() || home.isSymbolicLink() || home.uid !== process.getuid?.() || (home.mode & 0o777) !== 0o700) throw new Error("unsafe");
-    const before = await lstat(authPath); assertPrivateAuthEntry(before);
+    if (!home.isDirectory() || home.isSymbolicLink() || home.uid !== process.getuid?.() || (home.mode & 0o777) !== ENGINE_DESCRIPTORS[engine].auth.directoryMode) throw new Error("unsafe");
+    const before = await lstat(authPath); assertPrivateAuthEntry(before, engine);
     handle = await open(authPath, constants.O_RDONLY | noFollow());
-    const opened = await handle.stat(); assertPrivateAuthEntry(opened);
+    const opened = await handle.stat(); assertPrivateAuthEntry(opened, engine);
     if (!sameIdentity(identity(before), identity(opened))) throw new Error("changed");
     buffer = await handle.readFile();
-    const after = await handle.stat(); assertPrivateAuthEntry(after);
+    const after = await handle.stat(); assertPrivateAuthEntry(after, engine);
     if (!sameIdentity(identity(opened), identity(after)) || !hasRefreshablePortableCredential(engine, buffer)) throw new Error("changed");
     return portableCredentialSecretValues(engine, buffer);
   } catch {
@@ -191,10 +190,10 @@ export async function readPortableEngineCredentialSecrets(
   }
 }
 
-function assertPrivateAuthEntry(entry: Awaited<ReturnType<typeof lstat>>): void {
+function assertPrivateAuthEntry(entry: Awaited<ReturnType<typeof lstat>>, engine: PortableEngineKind): void {
   if (!entry.isFile() || entry.isSymbolicLink() || Number(entry.uid) !== process.getuid?.()
-    || Number(entry.nlink) !== 1 || (Number(entry.mode) & 0o777) !== 0o600
-    || Number(entry.size) < 1 || Number(entry.size) > MAX_AUTH_BYTES) {
+    || Number(entry.nlink) !== 1 || (Number(entry.mode) & 0o777) !== ENGINE_DESCRIPTORS[engine].auth.fileMode
+    || Number(entry.size) < 1 || Number(entry.size) > ENGINE_DESCRIPTORS[engine].auth.maxCredentialBytes) {
     throw new Error("unsafe auth artifact");
   }
 }

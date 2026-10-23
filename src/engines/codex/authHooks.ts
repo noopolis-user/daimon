@@ -1,9 +1,10 @@
+import { ENGINE_DESCRIPTORS } from "../descriptors.js";
 import path from "node:path";
 import { credentialJson, credentialPairSecrets, firstNonBlankString, object, type AuthEngineHooks } from "../authHooks.js";
 import { verifyPortableEngineAuth } from "../../runtime/engineReadiness.js";
 
 export const codexAuthHooks: AuthEngineHooks = {
-  engineHomePath: (runtimeHomePath) => path.join(runtimeHomePath, ".codex"),
+  engineHomePath: (runtimeHomePath) => path.join(runtimeHomePath, ENGINE_DESCRIPTORS.codex.homeDirectory),
   verifyAuth: ({ agentId, engineHomePath }) => verifyPortableEngineAuth(agentId, "codex", engineHomePath),
   hasRefreshableCredential(bytes) {
     const pair = tokenPair(credentialJson(bytes));
@@ -14,9 +15,9 @@ export const codexAuthHooks: AuthEngineHooks = {
 
 function tokenPair(value: unknown): { access?: string; refresh?: string } {
   const source = object(value);
-  const nested = object(source?.tokens) ?? source;
+  const nested = object(source?.[ENGINE_DESCRIPTORS.codex.auth.format.containerKey]) ?? (ENGINE_DESCRIPTORS.codex.auth.format.fallbackToRoot ? source : undefined);
   return {
-    access: firstNonBlankString(nested, ["access_token", "accessToken", "token"]),
-    refresh: firstNonBlankString(nested, ["refresh_token", "refreshToken"])
+    access: firstNonBlankString(nested, ENGINE_DESCRIPTORS.codex.auth.format.accessTokenKeys),
+    refresh: firstNonBlankString(nested, ENGINE_DESCRIPTORS.codex.auth.format.refreshTokenKeys)
   };
 }

@@ -1,3 +1,4 @@
+import { ENGINE_DESCRIPTORS } from "../../descriptors.js";
 import { brokerTaskClockFileFor } from "./grokBrokerSlot.js";
 import { createHash } from "node:crypto";
 import path from "node:path";
@@ -23,7 +24,7 @@ export const GROK_1_0_34_BUNDLED_SKILLS = Object.freeze([
 ] as const);
 
 /** The worker's only model id; the argv selects it and the proxy never sees another. */
-export const GROK_BROKER_WORKER_MODEL_ID = "daimon-broker-grok" as const;
+export const GROK_BROKER_WORKER_MODEL_ID = GROK_ENGINE_BROKER.worker.modelId;
 
 /**
  * Grok 1.0.34 sends a `session_title` model request before every headless
@@ -156,7 +157,7 @@ export function grokBrokerWorkerConfigPins(policy: GrokBrokerModelPolicy, slot =
 export const renderGrokBrokerWorkerArgs = (promptFile: string, cwd: string): readonly string[] => {
   if (!path.posix.isAbsolute(promptFile) || !path.posix.isAbsolute(cwd)) throw new TypeError("invalid Grok broker worker path");
   return [
-    "--sandbox", "daimon-strict", "--always-approve", "--no-subagents", "--prompt-file", promptFile,
+    "--sandbox", ENGINE_DESCRIPTORS.grok.sandbox.profile, "--always-approve", "--no-subagents", "--prompt-file", promptFile,
     "--no-memory", "--disable-web-search", "--no-plan", "--verbatim",
     "--system-prompt-override", DAIMON_GROK_SYSTEM_PROMPT,
     "--tools", GROK_WORKER_TOOL_IDS.join(","),

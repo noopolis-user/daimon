@@ -1,3 +1,4 @@
+import { ENGINE_DESCRIPTORS } from "../descriptors.js";
 import { codexTaskClockArgs } from "./piTaskClock.js";
 import { codexFilesystemRules } from "./codexFilesystemRules.js";
 import type { CliEngineOptions } from "../../pi/cliSession.js";
@@ -32,7 +33,7 @@ export const renderCodexArgs = (
   if (options.codexProjectDocMaxBytes !== undefined && (options.codexProjectDocMaxBytes !== 0 || strictPolicy === undefined)) {
     throw new Error("Disabling Codex ambient instructions requires the strict policy and an exact zero byte limit");
   }
-  if (strictPolicy !== undefined && (strictPolicy.mode !== "workspace-write" || strictPolicy.networkAccess !== false || strictPolicy.webSearch !== "disabled" || Object.keys(strictPolicy).length !== 3)) {
+  if (strictPolicy !== undefined && (strictPolicy.mode !== ENGINE_DESCRIPTORS.codex.sandbox.policy.mode || strictPolicy.networkAccess !== ENGINE_DESCRIPTORS.codex.sandbox.policy.networkAccess || strictPolicy.webSearch !== ENGINE_DESCRIPTORS.codex.sandbox.policy.webSearch || Object.keys(strictPolicy).length !== 3)) {
     throw new Error("Codex sandbox policy is Daimon-owned and must be workspace-write with network and web search disabled");
   }
   const effectiveSandbox = strictPolicy?.mode ?? sandbox;
