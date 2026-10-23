@@ -17,7 +17,8 @@ export const grokConfigHooks: ConfigEngineHooks = {
  * closed broker lists, never one of them with the other inherited. Omitting
  * both keeps a config parseable by pre-declaration producers; the brokered
  * paths that need a model (`grokBrokerProjection.ts`, `service.json` v2)
- * require it there instead of defaulting it here.
+ * require it there instead of defaulting it here. Legacy v1 service registrations
+ * still use the broker defaults; v2/v3 require an explicit declaration.
  */
 function grokEngine(input: EngineConfigRecord, label: string, { string }: EngineConfigParsers): OrganizationRuntimeEngineIntent {
   if ((input.model === undefined) !== (input.reasoningEffort === undefined)) throw new TypeError(`${label}.model and ${label}.reasoningEffort must be declared together for grok`);

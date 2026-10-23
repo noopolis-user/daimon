@@ -1,3 +1,4 @@
+import { ENGINE_DESCRIPTORS } from "../../descriptors.js";
 import { randomUUID } from "node:crypto";
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
@@ -11,7 +12,7 @@ import { BROKER_CREDENTIAL_MAX_ANCESTORS, parseBrokerCredentialJournal, recoverB
 export class DurableGrokBrokerCredentialAuthority {
   private readonly flight = new EngineBrokerSingleflight<string>(); private readonly fence = new EngineBrokerGenerationFence(); private stale = false;private initialized=false;private staleWrite:Promise<void>|undefined;private lastDigest:string|undefined;private generation=0;
   private ancestorDigests: readonly string[] = [];
-  constructor(private readonly command: string, private readonly home: string, private readonly authFile = path.join(home, "auth.json")) {}
+  constructor(private readonly command: string, private readonly home: string, private readonly authFile = path.join(home, ENGINE_DESCRIPTORS.grok.auth.fileName)) {}
   async initialize(): Promise<void> {
     if (this.initialized) return;
     const credential = await readGrokBrokerCredential(this.authFile);

@@ -1,3 +1,4 @@
+import { ENGINE_DESCRIPTORS } from "../../descriptors.js";
 import { createHash, randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import { spawnRealTime as spawn, type ChildProcess } from "../../../runtime/taskClockProcess.js";
@@ -14,7 +15,7 @@ import type {
   GrokSubscriptionRealmOptions
 } from "./grokSubscriptionRealmTypes.js";
 export type { GrokSubscriptionRealm, GrokSubscriptionRealmOptions } from "./grokSubscriptionRealmTypes.js";
-const AUTH_FILE = "auth.json";
+const AUTH_FILE = ENGINE_DESCRIPTORS.grok.auth.fileName;
 const JOURNAL_FILE = "lease.json";
 const STALE_FILE = "stale.json";
 const BOOTSTRAP_FILE = "bootstrap.json";

@@ -1,3 +1,4 @@
+import { ENGINE_DESCRIPTORS } from "../descriptors.js";
 import type { PiEngineHooks } from "../piHooks.js";
 import { resolveCodexPiProvider } from "./piModel.js";
 import { createCodexOutputRetention } from "./piOutput.js";
@@ -8,7 +9,7 @@ export const codexPiHooks: PiEngineHooks = {
   resolvePiProvider: resolveCodexPiProvider,
   createOutputRetention: createCodexOutputRetention,
   environmentIntent: () => ({}),
-  environmentVariables: ({ engineHomePath }) => engineHomePath === undefined ? {} : { CODEX_HOME: engineHomePath },
+  environmentVariables: ({ engineHomePath }) => engineHomePath === undefined ? {} : { [ENGINE_DESCRIPTORS.codex.homeEnvironment]: engineHomePath },
   spawnPlan: (options, prompt, input, endpoint) => ({ args: renderCodexArgs(options, input.cwd, endpoint), stdin: prompt }),
   registerMcp: async () => undefined,
   brokerTurn: () => undefined,

@@ -1,3 +1,4 @@
+import { ENGINE_DESCRIPTORS } from "../descriptors.js";
 import type { PiEngineHooks } from "../piHooks.js";
 import { cliChildEnvironment } from "../../pi/cliEnvironment.js";
 import { registerCliMcpServer } from "../../pi/cliMcpRegistration.js";
@@ -13,7 +14,7 @@ export const agyPiHooks: PiEngineHooks = {
   environmentIntent: (options) => ({ dbusSessionBusAddress: options.engine === "agy" ? options.dbusSessionBusAddress : undefined }),
   environmentVariables: ({ engineHomePath, dbusSessionBusAddress }) => {
     const bus = localSecretServiceBus(dbusSessionBusAddress);
-    return { ...(engineHomePath === undefined ? {} : { ANTIGRAVITY_CLI_HOME: engineHomePath }), ...(bus === undefined ? {} : { DBUS_SESSION_BUS_ADDRESS: bus }) };
+    return { ...(engineHomePath === undefined ? {} : { [ENGINE_DESCRIPTORS.agy.homeEnvironment]: engineHomePath }), ...(bus === undefined ? {} : { [ENGINE_DESCRIPTORS.agy.auth.busEnvironment]: bus }) };
   },
   spawnPlan: (options, prompt) => ({ args: renderAgyArgs(options, prompt) }),
   registerMcp: async ({ options, input, endpoint, onChild, onChildSettled, secretValues }) => {

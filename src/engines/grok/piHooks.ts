@@ -1,3 +1,4 @@
+import { ENGINE_DESCRIPTORS } from "../descriptors.js";
 import type { PiEngineHooks } from "../piHooks.js";
 import { GROK_STRICT_SANDBOX_PROFILE, renderGrokSandboxArgs } from "./piArgs.js";
 import { decodeGrokHeadlessResult } from "./grokHeadlessResult.js";
@@ -6,7 +7,7 @@ import { asGrokAuthenticationRejected, classifyGrokAuthenticationDiagnostic, Gro
 
 export const grokPiHooks: PiEngineHooks = {
   environmentIntent: () => ({}),
-  environmentVariables: ({ engineHomePath }) => engineHomePath === undefined ? {} : { GROK_HOME: engineHomePath },
+  environmentVariables: ({ engineHomePath }) => engineHomePath === undefined ? {} : { [ENGINE_DESCRIPTORS.grok.homeEnvironment]: engineHomePath },
   spawnPlan: (options, prompt, input) => ({ args: [
     ...renderGrokSandboxArgs(options.commandArgs, options.grokSandboxProfile ?? GROK_STRICT_SANDBOX_PROFILE),
     "--always-approve", "--no-subagents", "--single", prompt, "--no-memory", "--disable-web-search", "--cwd", input.cwd,

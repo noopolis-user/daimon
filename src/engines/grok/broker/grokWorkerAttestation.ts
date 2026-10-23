@@ -1,3 +1,4 @@
+import { ENGINE_DESCRIPTORS } from "../../descriptors.js";
 import type { GrokWorkerConfigVariant } from "./grokBrokerTaskClockContract.js";
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
@@ -187,7 +188,7 @@ export function locateGrokWorkerProfileApplied(bytes:Uint8Array,workspace:string
     try{const parsed=JSON.parse(line) as unknown;if(parsed===null||typeof parsed!=="object"||Array.isArray(parsed))continue;event=parsed as Record<string,unknown>;}catch{continue;}
     if(event.event_type!=="ProfileApplied")continue;
     const observed=Array.isArray(event.deny_paths)?event.deny_paths.filter((entry):entry is string=>typeof entry==="string").sort():[];
-    if(event.profile==="daimon-strict"&&event.enforced===true&&event.restrict_network===true&&event.platform==="linux/landlock"&&event.workspace===workspace&&JSON.stringify(observed)===expected)return{offset:lineOffset,length:end-lineOffset};
+    if(event.profile===ENGINE_DESCRIPTORS.grok.sandbox.profile&&event.enforced===true&&event.restrict_network===true&&event.platform==="linux/landlock"&&event.workspace===workspace&&JSON.stringify(observed)===expected)return{offset:lineOffset,length:end-lineOffset};
   }
   throw new Error("Grok worker isolation attestation unavailable");
 }

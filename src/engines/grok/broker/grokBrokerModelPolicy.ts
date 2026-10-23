@@ -1,3 +1,4 @@
+import { ENGINE_DESCRIPTORS } from "../../descriptors.js";
 /**
  * The closed model and reasoning-effort vocabulary a Grok broker worker may be
  * declared with.
@@ -17,7 +18,7 @@ export type GrokBrokerModel = (typeof GROK_BROKER_MODELS)[number];
 export type GrokBrokerReasoningEffort = (typeof GROK_BROKER_REASONING_EFFORTS)[number];
 export type GrokBrokerModelPolicy = Readonly<{ model: GrokBrokerModel; reasoningEffort: GrokBrokerReasoningEffort }>;
 
-export const DEFAULT_GROK_BROKER_MODEL_POLICY: GrokBrokerModelPolicy = Object.freeze({ model: "grok-4.6", reasoningEffort: "low" });
+export const DEFAULT_GROK_BROKER_MODEL_POLICY: GrokBrokerModelPolicy = Object.freeze(ENGINE_DESCRIPTORS.grok.modelSelection.defaults);
 
 export function parseGrokBrokerModelPolicy(value: unknown = {}): GrokBrokerModelPolicy {
   if (value === null || typeof value !== "object" || Array.isArray(value)) throw new TypeError("invalid Grok broker model policy");

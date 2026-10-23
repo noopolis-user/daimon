@@ -1,10 +1,11 @@
+import { ENGINE_DESCRIPTORS } from "../../descriptors.js";
 import { createHash } from "node:crypto";
 import path from "node:path";
 
 import { assertGrokWorkerDenyPathShape } from "./grokWorkerDenyPlacement.js";
 
-export const GROK_WORKER_SANDBOX_PROFILE = "daimon-strict" as const;
-export const GROK_WORKER_SANDBOX_EVENTS_RELATIVE_PATH = "sessions/sandbox-events.jsonl" as const;
+export const GROK_WORKER_SANDBOX_PROFILE = ENGINE_DESCRIPTORS.grok.sandbox.profile;
+export const GROK_WORKER_SANDBOX_EVENTS_RELATIVE_PATH = ENGINE_DESCRIPTORS.grok.broker.worker.home.sandboxEvents.relativePath;
 
 /**
  * The only source of `daimon-strict` sandbox profile bytes.
@@ -27,17 +28,18 @@ export const GROK_WORKER_SANDBOX_EVENTS_RELATIVE_PATH = "sessions/sandbox-events
  * direct path, before every turn.
  */
 export function renderGrokWorkerSandboxProfile(denyPaths: readonly string[] = []): string {
+  const rules = ENGINE_DESCRIPTORS.grok.sandbox.denyPaths;
   const denied = [...new Set(denyPaths)].sort();
   for (const entry of denied) {
-    if (!path.posix.isAbsolute(entry) || path.posix.normalize(entry) !== entry || entry === "/" || entry.endsWith("/") || /["\\\u0000-\u001f\u007f*?[\]]/u.test(entry)) {
+    if ((rules.canonicalAbsolute && (!path.posix.isAbsolute(entry) || path.posix.normalize(entry) !== entry)) || (!rules.rootAllowed && entry === "/") || (!rules.trailingSlashAllowed && entry.endsWith("/")) || new RegExp(rules.forbiddenCharacterPattern, "u").test(entry)) {
       throw new TypeError("invalid Grok worker sandbox deny path");
     }
     assertGrokWorkerDenyPathShape(entry);
   }
   return [
     `[profiles.${GROK_WORKER_SANDBOX_PROFILE}]`,
-    'extends = "strict"',
-    "restrict_network = true",
+    `extends = "${ENGINE_DESCRIPTORS.grok.sandbox.baseProfile}"`,
+    `restrict_network = ${ENGINE_DESCRIPTORS.grok.sandbox.restrictNetwork}`,
     `deny = [${denied.map((entry) => JSON.stringify(entry)).join(", ")}]`,
     ""
   ].join("\n");

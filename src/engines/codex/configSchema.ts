@@ -1,3 +1,5 @@
+import { ENGINE_DESCRIPTORS } from "../descriptors.js";
+
 /**
  * Codex's own `model_reasoning_effort` values (`codex-rs/protocol/src/openai_models.rs`,
  * `ReasoningEffort::as_str`), verified against the installed `codex` CLI
@@ -8,5 +10,5 @@
  * not extend that far; an unrecognized value is rejected as a likely
  * misconfiguration rather than silently forwarded to the model.
  */
-export const ORGANIZATION_RUNTIME_CODEX_REASONING_EFFORTS = ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra", "persistent"] as const;
-export const ORGANIZATION_RUNTIME_CODEX_WORKSPACE_NO_NETWORK_POLICY = { mode: "workspace-write", networkAccess: false, webSearch: "disabled" } as const;
+export const ORGANIZATION_RUNTIME_CODEX_REASONING_EFFORTS = ENGINE_DESCRIPTORS.codex.modelSelection.reasoningEfforts;
+export const ORGANIZATION_RUNTIME_CODEX_WORKSPACE_NO_NETWORK_POLICY = ENGINE_DESCRIPTORS.codex.sandbox.policy;
