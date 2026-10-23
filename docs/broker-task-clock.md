@@ -128,7 +128,7 @@ release check **after** awaiting the turn (or catching its failure).
 
 ## Spawnfile provisioning
 
-1. Re-vendor manifest **v5**, its emitted digest, the clocked config bytes and
+1. Re-vendor manifest **v6**, its emitted digest, the clocked config bytes and
    projection **v3**; build with `npm run build`, then run
    `npm run verify:contract-manifest`. Training projections pass
    `workerConfigVariant: "clocked"`; production keeps the default.
