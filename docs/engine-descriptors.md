@@ -52,8 +52,18 @@ roots, launch receipts, adapter registration, scheduling and budgets chosen
 within Daimon's limits. Standalone judge-provider tuning that bypasses Daimon's
 runtime/broker is also consumer policy, not a Daimon model guarantee.
 
-The manifest remains v5. Its legacy fields alias this inventory without adding
-fields or changing the released bytes/digest. A manifest v6 is a separate change.
+The manifest now emits `noopolis.daimon.runtime-contract-manifest.v6`: every v5
+section is retained and `engines: { <id>: descriptor }` directly aliases this
+inventory. `supportedEngineKinds` is the sorted inventory, and retained credential,
+realm and broker sections canonically agree with their owning descriptors.
+
+The canonical UTF-8 JSON plus trailing newline now hashes to
+`sha256:9f91388983cc5308137ba0259302b9faec75a9f0e032b2a031b6a774ff3f409f`.
+The digest changes because the version is v6 and the descriptors are included;
+removing `engines` and restoring the v5 version reproduces the released v5 digest
+`sha256:e39551277c6727c8807b1247e759f57addcee3f17f1405ebc927179647d64de6`.
+Package version 0.2.8 is unchanged here; release and consumer re-pinning are
+separate steps.
 Tests compare descriptors with configuration parsing, rendered worker/grant
 pins, omitted defaults, limit enforcement, credential readers and isolation
 hooks. A transitive AST boundary test rejects executable imports in the static

@@ -9,7 +9,7 @@ test("runtime contract manifest is data-only and deterministic", () => {
   assert.equal(first, canonicalJson(RUNTIME_CONTRACT_MANIFEST));
   assert.deepEqual(Object.keys(ENGINE_CREDENTIAL_MATERIAL), ["codex"]);
   assert.deepEqual(RUNTIME_CONTRACT_MANIFEST.supportedEngineKinds, ["agy", "codex", "grok"]);
-  assert.equal(RUNTIME_CONTRACT_MANIFEST_VERSION, "noopolis.daimon.runtime-contract-manifest.v5");
+  assert.equal(RUNTIME_CONTRACT_MANIFEST_VERSION, "noopolis.daimon.runtime-contract-manifest.v6");
   assert.equal(RUNTIME_CONTRACT_MANIFEST.organizationRuntimeConfigV2Schema.$id, "noopolis.daimon.organization-runtime.v2");
   assert.deepEqual(RUNTIME_CONTRACT_MANIFEST.wakeAcceptanceTypes, ["manual", "message", "schedule", "external"]);
   assert.deepEqual(RUNTIME_CONTRACT_MANIFEST.deliverySemantics, {
@@ -25,7 +25,15 @@ test("runtime contract manifest is data-only and deterministic", () => {
   assert.equal(AGY_SUBSCRIPTION_REALM.directoryMode, 0o700);
   assert.equal(AGY_SUBSCRIPTION_REALM.fileMode, 0o600);
   assert.doesNotMatch(first, /antigravity-oauth-token|agy-auth/);
-  assert.doesNotMatch(first, /DBUS_SESSION_BUS_ADDRESS|gnome-keyring|dbus-daemon|argv|credential value/i);
+  assert.doesNotMatch(first, /argv|credential value/i);
+  // v6 declares AGY's required binaries and bus variable as static capability data.
+  // Keep the exclusion everywhere except those exact, intentional fields.
+  const data = JSON.parse(first);
+  assert.equal(data.engines.agy.auth.busEnvironment, "DBUS_SESSION_BUS_ADDRESS");
+  assert.deepEqual(data.engines.agy.requiredBinaries, ["agy", "dbus-daemon", "gnome-keyring-daemon"]);
+  delete data.engines.agy.auth.busEnvironment;
+  delete data.engines.agy.requiredBinaries;
+  assert.doesNotMatch(canonicalJson(data), /DBUS_SESSION_BUS_ADDRESS|gnome-keyring|dbus-daemon/i);
   for (const rule of Object.values(ENGINE_CREDENTIAL_MATERIAL)) {
     assert.equal(rule.directoryMode, 0o700);
     assert.equal(rule.fileMode, 0o600);
