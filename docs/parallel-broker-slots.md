@@ -2,7 +2,7 @@
 
 The control protocol is `noopolis.daimon.engine-broker.v4`, service configuration
 is `noopolis.daimon.engine-broker-service.v3`, runtime manifest is
-`noopolis.daimon.runtime-contract-manifest.v5`, projection is
+`noopolis.daimon.runtime-contract-manifest.v6`, projection is
 `noopolis.daimon.grok-broker-projection.v3`, and the clock contract is
 `noopolis.daimon.grok-broker-task-clock.v2`. Native ABI **2**, native artifacts,
 preflight receipt **v2**, and usage/request/seal ledger versions are unchanged.

@@ -8,7 +8,7 @@ import {
   ORGANIZATION_RUNTIME_MAX_STRING_CODEPOINTS
 } from "./organizationRuntimeContract.js";
 
-export const RUNTIME_CONTRACT_MANIFEST_VERSION = "noopolis.daimon.runtime-contract-manifest.v5" as const;
+export const RUNTIME_CONTRACT_MANIFEST_VERSION = "noopolis.daimon.runtime-contract-manifest.v6" as const;
 export const ORGANIZATION_RUNTIME_ACTIVITY_V2_VERSION = "noopolis.daimon.organization-runtime-activity.v2" as const;
 export const ENGINE_CREDENTIAL_MATERIAL = {
   codex: ENGINE_DESCRIPTORS.codex.credentialMaterial
@@ -43,6 +43,7 @@ export const RUNTIME_CONTRACT_MANIFEST = {
   workBlockedSchema: WORK_BLOCKED_SCHEMA,
   operatorDrain: OPERATOR_DRAIN,
   supportedEngineKinds: SORTED_ENGINE_IDS,
+  engines: ENGINE_DESCRIPTORS,
   engineCredentialMaterial: ENGINE_CREDENTIAL_MATERIAL,
   grokSubscriptionRealm: GROK_SUBSCRIPTION_REALM,
   grokEngineBroker: GROK_ENGINE_BROKER,

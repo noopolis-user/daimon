@@ -19,6 +19,8 @@ void [manifestVersion, codexCredentialSlot];
 function manifestConstantsAreReadonly(): void {
   // @ts-expect-error The exported manifest remains deeply immutable.
   RUNTIME_CONTRACT_MANIFEST.supportedEngineKinds[0] = "codex";
+  // @ts-expect-error Engine descriptors remain deeply immutable.
+  RUNTIME_CONTRACT_MANIFEST.engines.codex.authKinds[0] = "subscription";
   // @ts-expect-error Credential material remains deeply immutable.
   ENGINE_CREDENTIAL_MATERIAL.codex.sourceSlot = "codex-auth";
 }

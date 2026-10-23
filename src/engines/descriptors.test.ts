@@ -206,11 +206,18 @@ test("descriptor sandbox capabilities correspond to the real config and rendered
   assert.throws(() => getEngineHandler("grok").assertRuntimeLaunch(agent, undefined), /requires the engine broker/);
 });
 
-test("descriptor extraction preserves released manifest v5 bytes and digest", () => {
-  assert.equal(RUNTIME_CONTRACT_MANIFEST.version, "noopolis.daimon.runtime-contract-manifest.v5");
-  assert.equal(sha256(`${canonicalJson(RUNTIME_CONTRACT_MANIFEST)}\n`), "e39551277c6727c8807b1247e759f57addcee3f17f1405ebc927179647d64de6");
+test("manifest v6 emits the static inventory and preserves legacy aliases", () => {
+  assert.equal(RUNTIME_CONTRACT_MANIFEST.version, "noopolis.daimon.runtime-contract-manifest.v6");
+  assert.equal(sha256(`${canonicalJson(RUNTIME_CONTRACT_MANIFEST)}\n`), "9f91388983cc5308137ba0259302b9faec75a9f0e032b2a031b6a774ff3f409f");
+  assert.equal(RUNTIME_CONTRACT_MANIFEST.engines, ENGINE_DESCRIPTORS);
   assert.equal(RUNTIME_CONTRACT_MANIFEST.grokEngineBroker, grok.broker);
   assert.equal(RUNTIME_CONTRACT_MANIFEST.grokSubscriptionRealm, grok.auth.realm);
   assert.equal(RUNTIME_CONTRACT_MANIFEST.agySubscriptionRealm, ENGINE_DESCRIPTORS.agy.auth.realm);
   assert.equal(RUNTIME_CONTRACT_MANIFEST.engineCredentialMaterial.codex, ENGINE_DESCRIPTORS.codex.credentialMaterial);
+});
+
+test("manifest v6 retains every released v5 section byte-for-byte canonically", () => {
+  const { engines: _engines, ...legacy } = RUNTIME_CONTRACT_MANIFEST;
+  const v5 = { ...legacy, version: "noopolis.daimon.runtime-contract-manifest.v5" };
+  assert.equal(sha256(`${canonicalJson(v5)}\n`), "e39551277c6727c8807b1247e759f57addcee3f17f1405ebc927179647d64de6");
 });
