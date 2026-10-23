@@ -1,3 +1,4 @@
+import { ENGINE_DESCRIPTORS } from "../../descriptors.js";
 import type { Stats } from "node:fs";
 import { lstat } from "node:fs/promises";
 import path from "node:path";
@@ -63,6 +64,6 @@ export async function verifyGrokWorkerTmp(workers: readonly GrokWorkerTmpWorker[
 
 /** A registration's worker home is the parent of its `<home>/.grok/sandbox.toml`. */
 export const grokWorkerHomeForProfile = (profilePath: string): string | undefined =>
-  path.basename(path.dirname(profilePath)) === ".grok" ? path.dirname(path.dirname(profilePath)) : undefined;
+  path.basename(path.dirname(profilePath)) === ENGINE_DESCRIPTORS.grok.homeDirectory ? path.dirname(path.dirname(profilePath)) : undefined;
 
 const unavailable = (): Error => new Error("Grok worker temp isolation attestation unavailable");

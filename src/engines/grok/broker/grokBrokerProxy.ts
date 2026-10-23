@@ -41,7 +41,7 @@ export type GrokBrokerUpstream = (request: ReturnType<typeof authorizeGrokBroker
  */
 export async function startGrokBrokerProxy(
   authority: GrokBrokerCredentialAuthority, upstream: GrokBrokerUpstream = defaultUpstream,
-  policy: GrokBrokerModelPolicy = DEFAULT_GROK_BROKER_MODEL_POLICY, listenPort = 43_123,
+  policy: GrokBrokerModelPolicy = DEFAULT_GROK_BROKER_MODEL_POLICY, listenPort: number = GROK_ENGINE_BROKER.providerProxy.port,
   grants?: GrokInferenceGrants, runBudget?: GrokBrokerRunBudget
 ) {
   const handler = createGrokBrokerProxyHandler(authority, upstream, policy, grants, runBudget);

@@ -1,3 +1,4 @@
+import { ENGINE_DESCRIPTORS } from "../../descriptors.js";
 import { createHash } from "node:crypto";
 import { constants, type Stats } from "node:fs";
 import { lstat, open, readdir } from "node:fs/promises";
@@ -97,7 +98,7 @@ export const GROK_WORKER_FOREIGN_SKILL_ROOTS = Object.freeze({
  * launcher's layout, so `<home>` is its parent.
  */
 export async function verifyGrokWorkerForeignSkillRoots(grokHome: string, rootUid: number = HOME.directory.uid): Promise<void> {
-  if (path.basename(grokHome) !== ".grok") throw unavailable();
+  if (path.basename(grokHome) !== ENGINE_DESCRIPTORS.grok.homeDirectory) throw unavailable();
   const home = path.dirname(grokHome);
   const roots = [...GROK_WORKER_FOREIGN_SKILL_ROOTS.grokHome.map((root) => path.join(grokHome, root)), ...GROK_WORKER_FOREIGN_SKILL_ROOTS.home.map((root) => path.join(home, root))];
   for (const root of roots) {

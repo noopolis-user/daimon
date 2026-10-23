@@ -1,3 +1,4 @@
+import { ENGINE_DESCRIPTORS } from "../descriptors.js";
 type PiAuthFiles = Readonly<{
   readJsonFile<T>(filePath: string): Promise<T>;
   readPiAuth(filePath: string): Promise<Record<string, unknown>>;
@@ -35,6 +36,8 @@ export async function seedPiOpenAICodexAuthFromCodex(input: {
   piAuthPath: string;
 }, { readJsonFile, readPiAuth, writePiAuth }: PiAuthFiles): Promise<void> {
   const codex = await readJsonFile<CodexAuthFile>(input.codexAuthPath);
+  // Pi OAuth bridging requires account_id in the native nested token format.
+  // The portable refreshability probe also accepts legacy root-level aliases.
   const access = codex.tokens?.access_token;
   const refresh = codex.tokens?.refresh_token;
   const accountId = codex.tokens?.account_id;
@@ -44,7 +47,7 @@ export async function seedPiOpenAICodexAuthFromCodex(input: {
   }
 
   const piAuth = await readPiAuth(input.piAuthPath);
-  piAuth["openai-codex"] = {
+  piAuth[ENGINE_DESCRIPTORS.codex.piProvider] = {
     type: "oauth",
     access,
     refresh,
@@ -60,7 +63,7 @@ export function createPiOpenAICodexAuthFromCodexToken(input: {
   refresh: string;
 }): Record<string, unknown> {
   return {
-    "openai-codex": {
+    [ENGINE_DESCRIPTORS.codex.piProvider]: {
       type: "oauth",
       access: input.access,
       refresh: input.refresh,

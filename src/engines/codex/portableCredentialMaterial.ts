@@ -1,3 +1,4 @@
+import { ENGINE_DESCRIPTORS } from "../descriptors.js";
 import { constants, type Stats } from "node:fs";
 import { chmod, lstat, mkdir, open, rename, unlink } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
@@ -6,7 +7,7 @@ import path from "node:path";
 import { ENGINE_CREDENTIAL_MATERIAL } from "../../runtime/contractManifest.js";
 import type { OrganizationRuntimeAgentConfig } from "../../runtime/organizationRuntime.js";
 
-const MAX_CREDENTIAL_BYTES = 64 * 1024;
+const MAX_CREDENTIAL_BYTES = ENGINE_DESCRIPTORS.codex.auth.maxCredentialBytes;
 type PortableAgent = OrganizationRuntimeAgentConfig & { engine: { kind: "codex" } };
 type FileIdentity = Readonly<{
   dev: number;

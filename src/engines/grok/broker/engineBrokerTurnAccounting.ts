@@ -39,7 +39,7 @@ export const ENGINE_BROKER_LIMIT_BOUNDS = GROK_ENGINE_BROKER.turnLimits.bounds;
 /** What a v1 `service.json` registration gets; equal to the Codex per-wake defaults. */
 export const DEFAULT_GROK_BROKER_TURN_LIMITS: EngineBrokerTurnLimits = Object.freeze({ ...GROK_ENGINE_BROKER.turnLimits.v1Defaults });
 
-const LIMIT_KEYS = ["maxRequests", "maxTokens", "timeoutMs"] as const;
+const LIMIT_KEYS = GROK_ENGINE_BROKER.turnLimits.keys;
 type JsonRecord = Record<string, unknown>;
 const plain = (value: unknown): value is JsonRecord =>
   value !== null && typeof value === "object" && !Array.isArray(value) && (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null);
