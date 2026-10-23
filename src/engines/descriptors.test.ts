@@ -133,13 +133,14 @@ test("auth homes, environment names, provider mapping and credential formats fol
   }
   const codex = ENGINE_DESCRIPTORS.codex;
   assert.equal(getEngineHandler("codex").resolvePiProvider!({ provider: codex.auth.provider, name: "any", auth: { method: codex.auth.method } }), codex.piProvider);
+  assert.equal(codex.auth.format.fallbackToRoot, true);
   assert.equal(DEFAULT_PI_MODEL.provider, codex.auth.provider);
   const check = (id: "codex" | "grok", source: object, expected = true) =>
     assert.equal(getEngineHandler(id).hasRefreshableCredential(Buffer.from(JSON.stringify(source))), expected);
   for (const access of codex.auth.format.accessTokenKeys) for (const refresh of codex.auth.format.refreshTokenKeys) {
     const pair = { [access]: "access", [refresh]: "refresh" };
     check("codex", { [codex.auth.format.containerKey]: pair });
-    check("codex", pair, codex.auth.format.fallbackToRoot);
+    check("codex", pair);
   }
   const format = grok.auth.format, entry = { [format.accessTokenKeys[0]]: "access", [format.refreshTokenKeys[0]]: "refresh", [format.expiresAtKey]: "2026-10-23T00:00:00Z" };
   assert.ok(new RegExp(format.entryKeyPattern, "u").test("https://auth.x.ai::test"));
@@ -148,6 +149,16 @@ test("auth homes, environment names, provider mapping and credential formats fol
   check("grok", { "https://evil.test::test": entry }, false);
   check("codex", { access_token: "access" }, false);
   assert.equal(getEngineHandler("agy").hasRefreshableCredential(Buffer.from("{}")), false);
+});
+
+test("readiness accepts legacy root-level Codex credentials", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "descriptor-legacy-auth-"));
+  try {
+    const home = path.join(directory, ENGINE_DESCRIPTORS.codex.homeDirectory);
+    await mkdir(home, { mode: 0o700 });
+    await writeFile(engineAuthFile("codex", home), JSON.stringify({ access_token: "legacy-access", refresh_token: "legacy-refresh" }), { mode: 0o600 });
+    await verifyPortableEngineAuth("test", "codex", home);
+  } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
 test("portable auth readers enforce the descriptor filenames and exact byte ceilings", async () => {
