@@ -2,7 +2,7 @@ import { realpath } from "node:fs/promises";
 import path from "node:path";
 import { ENGINE_DESCRIPTORS, type EngineKind } from "../engines/descriptors.js";
 import type { OrganizationRuntimeAgentConfig } from "./organizationRuntime.js";
-import { pathsOverlap } from "./organizationRuntimeRecording.js";
+import { createSubscriptionPathIsolation } from "./subscriptionPathIsolation.js";
 import { assertNoSymlinkComponents } from "./physicalReadiness.js";
 
 export type SubscriptionRealmPathPair = Readonly<{ bootstrapPath: string; durablePath: string }>;
@@ -22,11 +22,12 @@ export async function prepareSubscriptionRealmPaths(
 ): Promise<Partial<Record<EngineKind, SubscriptionRealmPathPair>>> {
   if (input !== undefined && (input === null || typeof input !== "object" || Array.isArray(input))) throw new Error("unsupported subscription realm paths");
   const resolved: Partial<Record<EngineKind, SubscriptionRealmPathPair>> = {};
-  const claimed: string[] = [];
+  if (Object.keys(input ?? {}).length === 0) return Object.freeze(resolved);
   const mutableRoots = agents.flatMap(agent => [agent.workspacePath, agent.runtimeHomePath,
     ...(agent.memory === undefined ? [] : [agent.memory.runtimeHomePath]),
     ...(agent.recording === undefined ? [] : [agent.recording.directory, ...agent.recording.snapshots.map(source => source.path)])]);
   const forbiddenRoots = await Promise.all([...mutableRoots, ...protectedStores].map(root => canonicalFuturePath(root)));
+  const isolation = await createSubscriptionPathIsolation(forbiddenRoots);
   for (const [name, pair] of Object.entries(input ?? {})) {
     const descriptor = ENGINE_DESCRIPTORS[name as EngineKind];
     if (!Object.hasOwn(ENGINE_DESCRIPTORS, name) || descriptor.auth.staging !== "portable-realm"
@@ -38,10 +39,7 @@ export async function prepareSubscriptionRealmPaths(
         || path.normalize(configured) !== configured) throw new Error("subscription realm paths must be canonical absolute paths");
       await assertNoSymlinkComponents(configured);
       const canonical = await realpath(configured);
-      if ([...forbiddenRoots, ...claimed].some(root => pathsOverlap(canonical, root))) {
-        throw new Error("subscription realm paths overlap agent or protected runtime state");
-      }
-      claimed.push(canonical);
+      await isolation.claim(canonical);
       result.push(canonical);
     }
     resolved[name as EngineKind] = Object.freeze({ bootstrapPath: result[0]!, durablePath: result[1]! });
