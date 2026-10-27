@@ -49,13 +49,17 @@ test("CLI strictly authenticates and routes a production Daimon engine", async (
   // one. The fuse stays armed (DAIMON_WAKE_FUSE is never set), so the
   // provisioning probe and its fail-closed behaviour remain under test.
   await mkdir(wakeFuseDirectory, { recursive: true, mode: 0o700 });
-  await mkdir(path.join(runtimeHome, ".daimon-inbound"), { recursive: true, mode: 0o700 });
-  const inboundAuth = path.join(runtimeHome, ".daimon-inbound", "codex-auth");
+  const realmPath = path.join(root, "codex-realm");
+  await mkdir(realmPath, { mode: 0o700 });
+  const inboundAuth = path.join(root, "codex-bootstrap-auth");
+  const preload = path.join(root, "realm-mounts.mjs");
+  await writeFile(preload, `import { CODEX_SUBSCRIPTION_REALM } from ${JSON.stringify(new URL("../contracts/runtimeContractManifest.ts", import.meta.url).href)}; Object.assign(CODEX_SUBSCRIPTION_REALM, ${JSON.stringify({ durableMountPath: realmPath, bootstrapMountPath: inboundAuth })});`);
+  if (process.platform !== "linux") await writeFile(path.join(root, "flock"), "#!/bin/sh\nexit 0\n", { mode: 0o700 });
   const runtimeAuth = path.join(runtimeHome, ".codex", "auth.json");
   const readinessReceipt = path.join(root, "state", "runtime-readiness.json");
   await writeFile(inboundAuth, JSON.stringify({ tokens: { access_token: "test-access", refresh_token: "test-refresh" } }), { mode: 0o600 });
   await chmod(inboundAuth, 0o600);
-  await writeFile(program, `#!/usr/bin/env node\nif (process.argv.includes('--version')) process.stdout.write('test'); else { process.stdin.resume(); process.stdin.on('end', () => { const text = process.env.${tokenEnv} ?? 'absent'; process.stdout.write([{ type: 'item.completed', item: { type: 'agent_message', text } }, { type: 'turn.completed' }].map(JSON.stringify).join('\\n')); }); }`);
+  await writeFile(program, `#!/usr/bin/env node\nif (process.argv.includes('--version')) process.stdout.write('test'); else { require('node:fs').readFileSync(process.env.CODEX_HOME + '/auth.json'); process.stdin.resume(); process.stdin.on('end', () => { const text = process.env.${tokenEnv} ?? 'absent'; process.stdout.write([{ type: 'item.completed', item: { type: 'agent_message', text } }, { type: 'turn.completed' }].map(JSON.stringify).join('\\n')); }); }`);
   await chmod(program, 0o700);
   await writeFile(configPath, JSON.stringify({
     version: ORGANIZATION_RUNTIME_VERSION,
@@ -65,7 +69,7 @@ test("CLI strictly authenticates and routes a production Daimon engine", async (
       engine: { kind: "codex" }
     }]
   }));
-  const child = spawn(process.execPath, ["--import", "tsx", "src/runtime/cli.ts", "run", "--config", configPath], {
+  const child = spawn(process.execPath, ["--import", "tsx", "--import", preload, "src/runtime/cli.ts", "run", "--config", configPath], {
     cwd: process.cwd(), env: { ...process.env, PATH: `${root}${path.delimiter}${process.env.PATH ?? ""}`, [tokenEnv]: token, DAIMON_RUNTIME_READINESS_RECEIPT: readinessReceipt, ...(supportsC0 ? { DAIMON_RUNTIME_ACCEPTANCE_STORE: acceptanceStore, DAIMON_WAKE_FUSE_DIRECTORY: wakeFuseDirectory, DAIMON_TURN_USAGE_LEDGER_PATH: path.join(wakeFuseDirectory, "usage.jsonl") } : {}), NOOPOLIS_RUN_ID: "runtime-cli-test" }, stdio: ["ignore", "pipe", "pipe"]
   });
   const output: Buffer[] = [];
@@ -74,9 +78,10 @@ test("CLI strictly authenticates and routes a production Daimon engine", async (
   try {
     await waitForHealth(t, port, token, child, output);
     assert.deepEqual(JSON.parse(await readFile(readinessReceipt, "utf8")), { version: "noopolis.daimon.readiness-receipt.v1", agents: [{ agent_id: "agent", engine: "codex" }] });
-    assert.equal(await readFile(runtimeAuth, "utf8"), await readFile(inboundAuth, "utf8"));
+    assert.equal(await readFile(path.join(realmPath, "auth.json"), "utf8"), await readFile(inboundAuth, "utf8"));
+    await assert.rejects(lstat(runtimeAuth), { code: "ENOENT" });
     assert.equal((await lstat(path.dirname(runtimeAuth))).mode & 0o777, 0o700);
-    assert.equal((await lstat(runtimeAuth)).mode & 0o777, 0o600);
+    assert.equal((await lstat(path.join(realmPath, "auth.json"))).mode & 0o777, 0o600);
     const readiness = await fetch(`http://127.0.0.1:${port}/healthz`);
     assert.equal(readiness.status, 200);
     assert.deepEqual(await readiness.json(), { status: "ok" });
@@ -102,6 +107,7 @@ test("CLI strictly authenticates and routes a production Daimon engine", async (
     const response = await requestWake(port, token, "agent", "valid-wake");
     assert.equal(response.status, 200);
     assert.equal((await response.json() as { text: string }).text, "absent");
+    await assert.rejects(lstat(runtimeAuth), { code: "ENOENT" });
     const accepted = await fetch(`http://127.0.0.1:${port}/v2/wakes`, {
       method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify({ agent_id: "agent", delivery_id: "delivery-1", event: {
         version: "noopolis.daimon.wake.v2", kind: "manual", text: "wake", occurred_at: "2026-08-17T00:00:00.000Z"

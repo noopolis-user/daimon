@@ -676,14 +676,21 @@ in `deny` (verified: `/tmp`, `/var/tmp`, `/run`, `/etc`, `sessions` all fail;
   the launcher refuses the slot otherwise.
 
 `agySubscriptionRealm.ts` owns the one host-level private D-Bus/Secret Service
-realm, durable keyring lease, bounded unlock stdin, and cleanup.
-`agySubscriptionBootstrap.ts` owns only the interactive first-enrollment AGY
-child; normal engine dispatch remains in `engineDispatcher.ts`.
-`portableCredentialMaterial.ts` imports bounded Codex ingress into its
-runtime-writable home without clobbering a newer CLI-refreshed credential.
-`grokSubscriptionRealm.ts` owns the single durable rotating Grok credential,
-the lifetime lease, crash journal, stale fence, and serialized per-turn
-stage/promote cycle while each agent retains private non-auth home state.
+realm, durable keyring lease, bounded unlock stdin, and cleanup. Enrollment
+probes, interactive bootstrap, and complete CLI turns use its account gate;
+AGY credentials remain in the native encrypted keyring.
+`portableSubscriptionRealm.ts` owns portable stage/turn/promote/remove,
+crash journals and stale fences. Codex production uses this shared authority;
+`grokSubscriptionRealm.ts` is its compatibility wrapper for the older direct
+Grok path. Current production Grok uses its broker's single-flight refresh
+and durable generation authority. `portableCredentialMaterial.ts` remains
+an isolated caller-owned credential import, never production host preparation.
+`subscriptionAuthority.ts` requires a descriptor-keyed realm or broker before
+any production agent starts, so a new subscription engine cannot silently
+bypass ownership. `subscriptionTurnGate.ts` bounds waits to 128 pending and
+30 minutes outside the CLI turn timeout; stop cancels waiting admissions and
+close drains the active operation. The owner retains the inherited flock file
+descriptor until that drain completes, even if its lease helper exits.
 `../pi/grokSandbox.ts` owns the direct (non-broker) Grok process boundary: it
 replaces the provider's fail-open built-in profile with an exact custom profile
 denying the realm, bootstrap, and peer roots, and requires a kernel-enforcement
@@ -698,10 +705,10 @@ while preserving Codex's own helper files, the workspace's prepared resource
 symlink reads, and the current agent's `tool-output/` spill reads. Codex
 provider traffic and trusted MCP/provider processes stay outside that native
 command sandbox and must keep their own auth.
-`organizationRuntimeReadiness.ts` composes portable credential preparation,
+`organizationRuntimeReadiness.ts` composes portable account authority,
 AGY realm readiness, and physical path authority before any agent starts. AGY
 fails closed on enrolment: `verifyAgySubscriptionEnrollment` runs there at host
-start and again through `prepareEngineReadiness` before and after every wake,
+start and inside the account gate before and after every wake,
 so an unenrolled realm or an unopenable keyring refuses the agent with "run the
 Daimon AGY bootstrap command" rather than producing credential-less turns.
 

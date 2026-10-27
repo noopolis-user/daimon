@@ -1,5 +1,5 @@
 import path from "node:path";
-import { mkdir } from "node:fs/promises";
+import { ensureRuntimeHomeDirectory } from "../../runtime/runtimeHomeLayout.js";
 import { resolveCodexWakeTimeoutMs, resolveCodexWakeTokenCeiling } from "../../pi/cliSession.js";
 import { prepareEngineExecutable, prepareEngineReadiness, readPortableEngineCredentialSecrets, verifyPortableEngineAuth } from "../../runtime/engineReadiness.js";
 import { recordTurnUsage, resolveTurnUsageLedgerPath } from "../../runtime/turnUsageLedger.js";
@@ -15,7 +15,7 @@ export const codexRuntimeHooks: RuntimeEngineHooks = {
     for (const agent of agents) {
       const canonical = paths.forAgent(agent);
       await canonical.verify();
-      await mkdir(path.join(canonical.runtimeHomePath, ".codex"), { mode: 0o700, recursive: true });
+      await ensureRuntimeHomeDirectory(canonical.runtimeHomePath, ".codex");
       await canonical.verify();
     }
     resources.credentialRealms ??= {};
