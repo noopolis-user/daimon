@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { appendFile, chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -55,11 +55,20 @@ test("runs interactive enrollment and the models proof only as AGY children", as
     let closed = 0;
     await runAgySubscriptionBootstrap(config, async () => ({
       busAddress: "unix:path=/private/realm/bus",
+      async withCredential(agent, operation) {
+        assert.equal(agent.id, "agent:agy");
+        await appendFile(observation, `${JSON.stringify({ args: ["lease-enter"] })}\n`);
+        const result = await operation();
+        await appendFile(observation, `${JSON.stringify({ args: ["lease-exit"] })}\n`);
+        return result;
+      },
       close: async () => { closed += 1; }
     }));
-    const records = (await readFile(observation, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as {
+    const allRecords = (await readFile(observation, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as {
       args: string[]; bus?: string; home?: string; ssh: boolean;
     });
+    assert.deepEqual(allRecords.map((record) => record.args), [["--version"], ["lease-enter"], [], ["--version"], ["models"], ["lease-exit"]]);
+    const records = allRecords.filter((record) => !record.args[0]?.startsWith("lease-"));
     assert.deepEqual(records.map((record) => record.args), [["--version"], [], ["--version"], ["models"]]);
     assert.equal(records.find((record) => record.args.length === 0)?.ssh, false);
     assert.equal(records.find((record) => record.args.includes("models"))?.ssh, false);

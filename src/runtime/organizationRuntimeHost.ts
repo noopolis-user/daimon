@@ -58,17 +58,19 @@ export function createOrganizationRuntimeHostWithAttention(config: unknown, opti
   const parsed = parseOrganizationRuntimeConfig(config);
   let agyBusAddress: string | undefined;
   let grokBroker: OrganizationRuntimeHostReadiness["grokBroker"];
+  let credentialRealms: OrganizationRuntimeHostReadiness["credentialRealms"];
   return createHost(
     parsed,
-    (agent, paths) => startOrganizationRuntimeEngine(agent, parsed.host.controlTokenEnv, paths, agyBusAddress, grokBroker, parsed.agents, options.sharedProtectedPaths, attention),
+    (agent, paths) => startOrganizationRuntimeEngine(agent, parsed.host.controlTokenEnv, paths, agyBusAddress, grokBroker, parsed.agents, options.sharedProtectedPaths, attention, credentialRealms?.[agent.engine.kind]),
     async () => {
       const ready = await prepareProductionReadiness(parsed);
       agyBusAddress = ready.agyRealm?.busAddress;
       grokBroker = ready.grokBroker;
+      credentialRealms = ready.credentialRealms;
       return {
         ...ready,
         async close() {
-          try { await ready.close(); } finally { agyBusAddress = undefined; grokBroker = undefined; }
+          try { await ready.close(); } finally { agyBusAddress = undefined; grokBroker = undefined; credentialRealms = undefined; }
         }
       };
     }

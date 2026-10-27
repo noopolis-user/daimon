@@ -28,7 +28,8 @@ export async function startOrganizationRuntimeEngine(
   grokBroker?: EngineBrokerTurnClient,
   organizationAgents?: readonly OrganizationRuntimeAgentConfig[],
   sharedProtectedPaths: readonly string[] = [],
-  attention?: AttentionRegistry
+  attention?: AttentionRegistry,
+  credentialRealm?: import("./portableSubscriptionRealmTypes.js").PortableSubscriptionRealm
 ): Promise<AgentHandle> {
   const clock = readTaskClock();
   reportEngineTaskClockGap(agent.engine.kind);
@@ -37,7 +38,7 @@ export async function startOrganizationRuntimeEngine(
   handler.assertRuntimeLaunch(agent, grokBroker);
   await paths?.verify();
   const canonicalAgent = paths === undefined ? agent : { ...agent, workspacePath: paths.workspacePath, runtimeHomePath: paths.runtimeHomePath };
-  const readiness = await handler.prepareRuntimeReadiness(canonicalAgent, agyBusAddress, grokBroker);
+  const readiness = await handler.prepareRuntimeReadiness(canonicalAgent, agyBusAddress, grokBroker, credentialRealm);
   const wakeContext: import("../pi/piAgentWakeSupport.js").PiWakeEnvironmentContextRef = {};
   const sandbox = handler.runtimeSandbox({ agent: canonicalAgent, readiness, paths, organizationAgents, sharedProtectedPaths });
   const mountedTools = [...await createProductionAgentTools(canonicalAgent, wakeContext), ...(agent.attention !== undefined && attention !== undefined ? attentionTools(agent.id, attention) : [])];
@@ -50,14 +51,18 @@ export async function startOrganizationRuntimeEngine(
     workspacePath: canonicalAgent.workspacePath
   });
   await paths?.verify();
+  const stopping = new AbortController();
   const result: AgentHandle = {
     ...handle,
     async wake(event) {
-      await paths?.verify();
-      await readiness.verify();
-      try { return await handle.wake(event); } finally { await paths?.verify(); await readiness.verify(); }
+      const run = async () => {
+        await paths?.verify();
+        await readiness.verify();
+        try { return await handle.wake(event); } finally { await paths?.verify(); await readiness.verify(); }
+      };
+      return credentialRealm === undefined ? run() : credentialRealm.withCredential(canonicalAgent, run, stopping.signal);
     },
-    async stop() { await handle.stop(); },
+    async stop() { stopping.abort(); await handle.stop(); },
     status: () => handle.status()
   };
   return result;

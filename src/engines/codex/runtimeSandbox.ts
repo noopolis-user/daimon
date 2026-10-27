@@ -1,4 +1,5 @@
 import path from "node:path";
+import { CODEX_SUBSCRIPTION_REALM } from "../../runtime/contractManifest.js";
 import type { OrganizationRuntimeAgentConfig } from "../../runtime/organizationRuntime.js";
 import { engineAuthFile } from "../../runtime/engineReadiness.js";
 import { grokSandboxProtectedPaths } from "../grok/runtimeSandbox.js";
@@ -13,6 +14,8 @@ export function codexSandboxProtectedPaths(
   return [...new Set([
     engineAuthFile("codex", currentEngineHomePath),
     path.join(currentAgent.runtimeHomePath, ".daimon-inbound"),
+    CODEX_SUBSCRIPTION_REALM.bootstrapMountPath,
+    CODEX_SUBSCRIPTION_REALM.durableMountPath,
     "/proc",
     "/run",
     ...grokSandboxProtectedPaths(currentAgentId, organizationAgents, sharedProtectedPaths)

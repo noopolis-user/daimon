@@ -1,24 +1,36 @@
+import path from "node:path";
+import { mkdir } from "node:fs/promises";
 import { resolveCodexWakeTimeoutMs, resolveCodexWakeTokenCeiling } from "../../pi/cliSession.js";
-import { prepareEngineReadiness, readPortableEngineCredentialSecrets } from "../../runtime/engineReadiness.js";
+import { prepareEngineExecutable, prepareEngineReadiness, readPortableEngineCredentialSecrets, verifyPortableEngineAuth } from "../../runtime/engineReadiness.js";
 import { recordTurnUsage, resolveTurnUsageLedgerPath } from "../../runtime/turnUsageLedger.js";
 import { recordCodexTurnRequests } from "../../runtime/turnRequestLedger.js";
 import { bareMountedToolNamingRule, type RuntimeEngineHooks } from "../runtimeHooks.js";
-import { materializePortableCredential } from "./portableCredentialMaterial.js";
+import { startCodexSubscriptionRealm } from "./codexSubscriptionRealm.js";
 import { codexSandboxProtectedPaths, codexSandboxReadablePaths } from "./runtimeSandbox.js";
 
 export const codexRuntimeHooks: RuntimeEngineHooks = {
   runtimeHomeShape: "private",
   hostReadinessOrder: 0,
-  async prepareHostReadiness(agents, paths) {
+  async prepareHostReadiness(agents, paths, resources) {
     for (const agent of agents) {
       const canonical = paths.forAgent(agent);
       await canonical.verify();
-      await materializePortableCredential(agent, canonical.runtimeHomePath);
+      await mkdir(path.join(canonical.runtimeHomePath, ".codex"), { mode: 0o700, recursive: true });
       await canonical.verify();
     }
+    resources.credentialRealms ??= {};
+    resources.credentialRealms.codex = await startCodexSubscriptionRealm(agents.map((agent) => ({ ...agent, runtimeHomePath: paths.forAgent(agent).runtimeHomePath })));
   },
   assertRuntimeLaunch() {},
-  prepareRuntimeReadiness: (agent, bus) => prepareEngineReadiness(agent, agent.runtimeHomePath, bus),
+  async prepareRuntimeReadiness(agent, bus, _broker, credentialRealm) {
+    if (credentialRealm === undefined) return prepareEngineReadiness(agent, agent.runtimeHomePath, bus);
+    const executable = await prepareEngineExecutable(agent.id, "codex");
+    const engineHomePath = path.join(agent.runtimeHomePath, ".codex");
+    return { executablePath: executable.executablePath, engineHomePath, async verify() {
+      await executable.verify();
+      await verifyPortableEngineAuth(agent.id, "codex", engineHomePath);
+    } };
+  },
   runtimeSandbox({ agent, readiness, organizationAgents, sharedProtectedPaths }) {
     return agent.engine.codexSandbox === undefined ? {} : { codexSandboxPaths: {
       protectedPaths: codexSandboxProtectedPaths(agent.id, agent, readiness.engineHomePath, organizationAgents ?? [agent], sharedProtectedPaths),

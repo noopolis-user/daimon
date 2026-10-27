@@ -91,6 +91,96 @@ test("rejects a concurrent durable-volume holder", async (context) => {
   }
 });
 
+const testAgent = { id: "agent:agy", runtimeHomePath: "/unused" };
+
+test("serializes AGY native credential users and drains the active user before close", async () => {
+  const fixture = await createRealmFixture();
+  const realm = await startAgySubscriptionRealm(fixture.options);
+  const events: string[] = [];
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  try {
+    const first = realm.withCredential(testAgent, async () => { events.push("first"); await held; events.push("finished"); });
+    const abort = new AbortController();
+    const cancelled = realm.withCredential(testAgent, async () => { events.push("cancelled"); }, abort.signal);
+    const second = realm.withCredential(testAgent, async () => { events.push("second"); throw new Error("native failure"); });
+    abort.abort();
+    await assert.rejects(cancelled, /aborted/);
+    assert.deepEqual(events, ["first"]);
+    release();
+    await first;
+    await assert.rejects(second, /native failure/);
+    assert.equal(await realm.withCredential(testAgent, async () => "next"), "next");
+    assert.deepEqual(events, ["first", "finished", "second"]);
+
+    const draining = new Promise<void>((resolve) => { release = resolve; });
+    const active = realm.withCredential(testAgent, async () => draining);
+    const queued = realm.withCredential(testAgent, async () => assert.fail("closed queued operation ran"));
+    let closed = false;
+    const closing = realm.close().then(() => { closed = true; });
+    await assert.rejects(queued, /stopped/);
+    await access(realm.busAddress.slice("unix:path=".length));
+    assert.equal(closed, false);
+    release();
+    await active;
+    await closing;
+    await assert.rejects(realm.withCredential(testAgent, async () => undefined), /stopped/);
+  } finally {
+    release();
+    await realm.close();
+    await fixture.close();
+  }
+});
+
+test("loss of a lease, bus, or keyring rejects active results and later credential users", async () => {
+  for (const role of ["lease", "bus", "keyring"] as const) {
+    const fixture = await createRealmFixture();
+    const realm = await startAgySubscriptionRealm(fixture.options);
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    const active = realm.withCredential(testAgent, async () => held);
+    try {
+      await fixture.kill(role);
+      await assert.rejects(Promise.race([
+        realm.withCredential(testAgent, async () => assert.fail("dead authority admitted work")),
+        new Promise((_, reject) => setTimeout(() => reject(new Error("dead authority did not reject")), 200))
+      ]), /lost its credential authority/);
+      release();
+      await assert.rejects(active, /lost its credential authority/);
+    } finally {
+      release();
+      await active.catch(() => undefined);
+      await realm.close();
+      await fixture.close();
+    }
+  }
+});
+
+test("a dead lease child cannot release the native account while an AGY turn is active", async (context) => {
+  if (process.platform !== "linux") { context.skip("util-linux flock integration is Linux-only"); return; }
+  const fixture = await createRealmFixture({ realFlock: true });
+  const realm = await startAgySubscriptionRealm(fixture.options);
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  const active = realm.withCredential(testAgent, async () => held);
+  let unexpected: Awaited<ReturnType<typeof startAgySubscriptionRealm>> | undefined;
+  try {
+    await fixture.kill("lease");
+    await assert.rejects(async () => { unexpected = await startAgySubscriptionRealm(fixture.options); }, /already in use or cannot be leased/);
+    release();
+    await assert.rejects(active, /lost its credential authority/);
+    await realm.close();
+    const replacement = await startAgySubscriptionRealm(fixture.options);
+    await replacement.close();
+  } finally {
+    release();
+    await active.catch(() => undefined);
+    await unexpected?.close();
+    await realm.close();
+    await fixture.close();
+  }
+});
+
 test("real Linux Secret Service realm unlocks the same encrypted keyring after restart", async (context) => {
   if (process.platform !== "linux" || !await commandsAvailable(["dbus-daemon", "dbus-send", "flock", "gnome-keyring-daemon"])) {
     context.skip("real D-Bus, Secret Service, and flock integration is unavailable");
@@ -146,6 +236,7 @@ async function loginCollectionLocked(busAddress: string): Promise<boolean> {
 
 async function createRealmFixture(input: { realFlock?: boolean } = {}): Promise<{
   close(): Promise<void>;
+  kill(role: "lease" | "bus" | "keyring"): Promise<void>;
   durablePath: string;
   options: Parameters<typeof startAgySubscriptionRealm>[0];
   unlockObservation: string;
@@ -158,6 +249,7 @@ async function createRealmFixture(input: { realFlock?: boolean } = {}): Promise<
   const bus = path.join(root, "fake-dbus.mjs");
   const keyring = path.join(root, "fake-keyring.mjs");
   const lease = path.join(root, "fake-flock.mjs");
+  const shell = path.join(root, "lease-shell");
   await Promise.all([
     mkdir(durablePath, { mode: 0o700 }),
     mkdir(temporaryRoot, { mode: 0o700 })
@@ -168,6 +260,7 @@ async function createRealmFixture(input: { realFlock?: boolean } = {}): Promise<
   await writeFile(bus, [
     "#!/usr/bin/env node",
     "import { writeFileSync } from 'node:fs';",
+    `writeFileSync(${JSON.stringify(path.join(root, "bus.pid"))}, String(process.pid));`,
     "const address = process.argv.find((value) => value.startsWith('--address=unix:path='));",
     "const socket = address.slice('--address=unix:path='.length); writeFileSync(socket, 'socket');",
     "process.on('SIGTERM', () => process.exit(0)); setInterval(() => undefined, 1000);"
@@ -175,6 +268,7 @@ async function createRealmFixture(input: { realFlock?: boolean } = {}): Promise<
   await writeFile(keyring, [
     "#!/usr/bin/env node",
     "import { writeFileSync } from 'node:fs';",
+    `writeFileSync(${JSON.stringify(path.join(root, "keyring.pid"))}, String(process.pid));`,
     "const control = process.argv.find((value) => value.startsWith('--control-directory=')).slice('--control-directory='.length);",
     "const chunks=[]; for await (const chunk of process.stdin) chunks.push(chunk);",
     `writeFileSync(${JSON.stringify(unlockObservation)}, 'stdin-only:' + Buffer.concat(chunks).length);`,
@@ -185,15 +279,26 @@ async function createRealmFixture(input: { realFlock?: boolean } = {}): Promise<
     "#!/usr/bin/env node",
     "process.exit(0);"
   ].join("\n"), { mode: 0o700 });
-  await Promise.all([chmod(bus, 0o700), chmod(keyring, 0o700), chmod(lease, 0o700)]);
+  await writeFile(shell, `#!/bin/sh\nprintf '%s' "$$" > '${path.join(root, "lease.pid")}'\nexec /bin/sh "$@"\n`, { mode: 0o700 });
+  await Promise.all([chmod(bus, 0o700), chmod(keyring, 0o700), chmod(lease, 0o700), chmod(shell, 0o700)]);
   return {
     close: async () => rm(root, { recursive: true, force: true }),
+    async kill(role) {
+      const pid = Number(await readFile(path.join(root, `${role}.pid`), "utf8"));
+      process.kill(pid, "SIGKILL");
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        try { process.kill(pid, 0); } catch { await new Promise((resolve) => setImmediate(resolve)); return; }
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      throw new Error("fixture child did not terminate");
+    },
     durablePath,
     options: {
       dbusDaemon: bus,
       durablePath,
       ...(input.realFlock ? {} : { flock: lease }),
       gnomeKeyringDaemon: keyring,
+      shell,
       socketReady: async (socketPath) => { await access(socketPath); return true; },
       temporaryRoot: `${temporaryRoot}${path.sep}`,
       unlockSecretPath

@@ -11,7 +11,7 @@ export type GrokCredentialJournal = Readonly<{
 }>;
 
 export type GrokSubscriptionRealm = Readonly<{
-  withCredential<T>(agent: GrokAgent, operation: () => Promise<T>): Promise<T>;
+  withCredential<T>(agent: GrokAgent, operation: () => Promise<T>, signal?: AbortSignal): Promise<T>;
   close(): Promise<void>;
 }>;
 

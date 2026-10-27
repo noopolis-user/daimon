@@ -53,20 +53,18 @@ export async function runAgySubscriptionBootstrap(
       runtimeHomePath: canonical.runtimeHomePath,
       workspacePath: canonical.workspacePath
     });
-    const child = spawn(invocation.command, invocation.args, {
-      cwd: invocation.cwd,
-      env: invocation.env,
-      stdio: "inherit"
+    const busAddress = realm.busAddress;
+    await realm.withCredential({ id: agy.id, runtimeHomePath: canonical.runtimeHomePath }, async () => {
+      const child = spawn(invocation.command, invocation.args, {
+        cwd: invocation.cwd,
+        env: invocation.env,
+        stdio: "inherit"
+      });
+      const code = await waitForInteractiveChild(child);
+      if (code !== 0) throw new Error("AGY interactive subscription enrollment did not complete");
+      await executable.verify();
+      await verifyAgySubscriptionEnrollment(agy.id, executable.executablePath, canonical.runtimeHomePath, busAddress);
     });
-    const code = await waitForInteractiveChild(child);
-    if (code !== 0) throw new Error("AGY interactive subscription enrollment did not complete");
-    await executable.verify();
-    await verifyAgySubscriptionEnrollment(
-      agy.id,
-      executable.executablePath,
-      canonical.runtimeHomePath,
-      realm.busAddress
-    );
     await canonical.verify();
   } catch (error) { failure = error; }
   const cleanup = await Promise.allSettled([
