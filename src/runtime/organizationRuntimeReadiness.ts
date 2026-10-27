@@ -1,4 +1,6 @@
+import { prepareSubscriptionRealmPaths, type SubscriptionRealmHostOptions } from "./subscriptionRealmPaths.js";
 import { reportEngineTaskClockGap } from "../pi/engineTaskClock.js";
+import { assertSubscriptionAuthority } from "./subscriptionAuthority.js";
 import { getEngineHandler } from "../engines/registry.js";
 import type { RuntimeHostResources } from "../engines/runtimeHooks.js";
 import { readTaskClock } from "./taskClock.js";
@@ -8,11 +10,12 @@ import { prepareOrganizationRuntimePaths, type OrganizationRuntimePathAuthority 
 
 export type OrganizationRuntimeHostReadiness = Readonly<RuntimeHostResources & {
   paths: OrganizationRuntimePathAuthority;
+  subscriptionProtectedPaths: readonly string[];
   close(): Promise<void>;
 }>;
 
 export async function prepareProductionReadiness(
-  config: OrganizationRuntimeConfig
+  config: OrganizationRuntimeConfig, options: SubscriptionRealmHostOptions = {}
 ): Promise<OrganizationRuntimeHostReadiness> {
   const clock = readTaskClock();
   for (const agent of config.agents) reportEngineTaskClockGap(agent.engine.kind);
@@ -20,20 +23,24 @@ export async function prepareProductionReadiness(
   const paths = await prepareOrganizationRuntimePaths(config.agents);
   const resources: RuntimeHostResources = {};
   try {
+    const realmPaths = await prepareSubscriptionRealmPaths(options.subscriptionRealmPaths, config.agents.map(agent => ({ ...agent, ...paths.forAgent(agent) })), options.sharedProtectedPaths);
+    const subscriptionProtectedPaths = Object.values(realmPaths).flatMap(pair => [pair.bootstrapPath, pair.durablePath]);
     const handlers = [...new Set(config.agents.map((agent) => getEngineHandler(agent.engine.kind)))];
     handlers.sort((left, right) => left.hostReadinessOrder - right.hostReadinessOrder);
     for (const handler of handlers) {
-      await handler.prepareHostReadiness(config.agents.filter((agent) => getEngineHandler(agent.engine.kind) === handler), paths, resources);
+      const agents = config.agents.filter((agent) => getEngineHandler(agent.engine.kind) === handler);
+      await handler.prepareHostReadiness(agents, paths, resources, realmPaths[agents[0]!.engine.kind]);
     }
+    for (const agent of config.agents) assertSubscriptionAuthority(agent.engine.kind, resources);
     let closed = false;
     return {
       ...resources,
-      paths,
+      paths, subscriptionProtectedPaths,
       async close() {
         if (closed) return;
         closed = true;
         const results = await Promise.allSettled(
-          [resources.agyRealm?.close(), paths.close()].filter((value): value is Promise<void> => value !== undefined)
+          [resources.agyRealm?.close(), ...Object.values(resources.credentialRealms ?? {}).map((realm) => realm?.close()), paths.close()].filter((value): value is Promise<void> => value !== undefined)
         );
         const failures = results.flatMap((result) => result.status === "rejected" ? [result.reason] : []);
         if (failures.length > 0) {
@@ -43,7 +50,7 @@ export async function prepareProductionReadiness(
     };
   } catch (error) {
     const cleanup = await Promise.allSettled(
-      [resources.agyRealm?.close(), paths.close()].filter((value): value is Promise<void> => value !== undefined)
+      [resources.agyRealm?.close(), ...Object.values(resources.credentialRealms ?? {}).map((realm) => realm?.close()), paths.close()].filter((value): value is Promise<void> => value !== undefined)
     );
     const failures = cleanup.flatMap((result) => result.status === "rejected" ? [result.reason] : []);
     if (failures.length > 0) {

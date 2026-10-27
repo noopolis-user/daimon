@@ -21,7 +21,7 @@ interface SpawnfileParser {
   readVerifiedDaimonContractManifest(root: string): Promise<{ digest: string; manifest: Manifest }>;
 }
 
-test("emitted v6 artifacts conform to the pinned Spawnfile parser and reject contract drift", async () => {
+test("emitted v7 artifacts conform to the pinned Spawnfile parser and reject contract drift", async () => {
   // Raw upstream sources stay JSON test data, outside the production module graph.
   // Materialize the unchanged closure only for this test; no sibling checkout/network needed.
   const fixture: Fixture = JSON.parse(await readFile(new URL("./fixtures/spawnfile-contract-parser.json", import.meta.url), "utf8"));
@@ -49,7 +49,7 @@ test("emitted v6 artifacts conform to the pinned Spawnfile parser and reject con
     const bytes = await readFile(path.join(output, "contract-manifest.json"), "utf8");
     assert.equal(bytes, `${canonicalRuntimeContractManifest()}\n`);
     const emitted: Manifest = JSON.parse(bytes);
-    assert.equal(emitted.version, "noopolis.daimon.runtime-contract-manifest.v6");
+    assert.equal(emitted.version, "noopolis.daimon.runtime-contract-manifest.v7");
     assert.deepEqual(emitted.engines, ENGINE_DESCRIPTORS);
     const verified = await parser.readVerifiedDaimonContractManifest(output);
     assert.equal(verified.digest, `sha256:${createHash("sha256").update(bytes).digest("hex")}`);
@@ -62,9 +62,12 @@ test("emitted v6 artifacts conform to the pinned Spawnfile parser and reject con
       mutate(changed);
       assert.throws(() => parser.parseDaimonContractManifest(changed), /Daimon runtime contract manifest/, label);
     };
+    rejects("missing Codex realm", m => { delete m.codexSubscriptionRealm; });
+    rejects("Codex realm drift", m => { m.codexSubscriptionRealm.fileMode = 0o644; });
+    rejects("Codex staging drift", m => { m.engines.codex.auth.staging = "portable-file"; });
     rejects("missing inventory", m => { delete m.engines; });
     rejects("missing v5 section", m => { delete m.healthResponseSchema; });
-    rejects("unsupported version", m => { m.version = "noopolis.daimon.runtime-contract-manifest.v7"; });
+    rejects("unsupported version", m => { m.version = "noopolis.daimon.runtime-contract-manifest.v8"; });
     rejects("unsorted supported kinds", m => { m.supportedEngineKinds.reverse(); });
     rejects("descriptor key/id mismatch", m => { m.engines.codex.id = "other"; });
     rejects("unknown descriptor member", m => { m.engines.codex.unknown = true; });

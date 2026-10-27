@@ -1,3 +1,4 @@
+export type { SubscriptionRealmPaths, SubscriptionRealmPathPair, SubscriptionRealmHostOptions } from "./subscriptionRealmPaths.js";
 export { brokerTaskClockFileFor } from "../engines/grok/broker/grokBrokerSlot.js";
 export { GROK_BROKER_TASK_CLOCK, GROK_BROKER_TASK_CLOCK_PRELOAD_PATH, GROK_BROKER_TASK_CLOCK_FILE_PATH, type GrokWorkerConfigVariant } from "../engines/grok/broker/grokBrokerTaskClockContract.js";
 export * from "./organizationRuntime.js";
@@ -5,6 +6,7 @@ export { relocateRuntimeConfig, type RuntimeConfigLocation } from "./relocateRun
 export { parseTaskClock, TASK_CLOCK_VERSION } from "./taskClock.js";
 export * from "./contractManifest.js";
 export * from "../engines/agy/agySubscriptionRealm.js";
+export * from "../engines/codex/codexSubscriptionRealm.js";
 export { createOrganizationRuntimeHost } from "./organizationRuntimeHost.js";
 export { createOrganizationRuntimeControlHost } from "./organizationRuntimeControl.js";
 export { CODEX_SANDBOX_PROJECTION_VERSION, resolveOrganizationCodexSandboxProjection,

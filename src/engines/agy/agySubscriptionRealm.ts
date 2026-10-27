@@ -1,3 +1,4 @@
+import { waitForSubscriptionLeaseReady } from "../../runtime/subscriptionLeaseReady.js";
 import { constants } from "node:fs";
 import { spawnRealTime as spawn, type ChildProcess } from "../../runtime/taskClockProcess.js";
 import { chmod, lstat, mkdir, mkdtemp, open, realpath, rm } from "node:fs/promises";
@@ -6,11 +7,13 @@ import path from "node:path";
 
 import { terminateChild, trackCliChild } from "../../pi/cliProcess.js";
 import { AGY_SUBSCRIPTION_REALM } from "../../runtime/contractManifest.js";
+import { createSubscriptionTurnGate } from "../../runtime/subscriptionTurnGate.js";
 
 const START_TIMEOUT_MS = 5_000;
 
 export type AgySubscriptionRealm = Readonly<{
   busAddress: string;
+  withCredential<T>(agent: { id: string; runtimeHomePath: string }, operation: () => Promise<T>, signal?: AbortSignal): Promise<T>;
   close(): Promise<void>;
 }>;
 
@@ -86,9 +89,11 @@ export async function startAgySubscriptionRealm(
   });
   const children: ChildProcess[] = [];
   let closePromise: Promise<void> | undefined;
+  let releaseLease: (() => Promise<void>) | undefined;
   try {
     const lease = await acquireLease(durablePath, commands.lease);
-    children.push(lease);
+    releaseLease = lease.close;
+    children.push(lease.child);
     const bus = ownedSpawn(commands.bus.command, commands.bus.args, realmEnvironment(durablePath, ephemeralPath), ["ignore", "ignore", "ignore"]);
     children.push(bus);
     await waitForSocket(busSocketPath, bus, options.socketReady);
@@ -99,11 +104,32 @@ export async function startAgySubscriptionRealm(
     await deliverUnlockSecret(keyring, unlockBytes);
     await waitForSocket(path.join(controlDirectory, "control"), keyring, options.socketReady);
 
-    const close = (): Promise<void> => closePromise ??= cleanup(children, ephemeralPath);
-    return { busAddress, close };
+    let failed = false;
+    for (const child of children) {
+      child.once("close", () => { failed = true; });
+      child.once("error", () => { failed = true; });
+    }
+    const assertLive = (): void => {
+      if (failed || children.some((child) => child.exitCode !== null || child.signalCode !== null)) {
+        throw new Error("AGY subscription realm lost its credential authority");
+      }
+    };
+    const gate = createSubscriptionTurnGate({ assertLive });
+    const close = (): Promise<void> => closePromise ??= (async () => {
+      await gate.close();
+      try { await cleanup(children, ephemeralPath); } finally { await releaseLease?.(); }
+    })();
+    return {
+      busAddress, close,
+      withCredential: (_agent, operation, signal) => gate.run(async () => {
+        const result = await operation();
+        assertLive();
+        return result;
+      }, signal)
+    };
   } catch (error) {
     try {
-      await cleanup(children, ephemeralPath);
+      try { await cleanup(children, ephemeralPath); } finally { await releaseLease?.(); }
     } catch (cleanupError) {
       throw redactRealmFailure(new AggregateError([error, cleanupError], "AGY subscription realm startup cleanup failed"));
     }
@@ -151,7 +177,7 @@ async function verifyPrivateDirectory(directory: string): Promise<void> {
 async function acquireLease(
   durablePath: string,
   command: { command: string; args: string[] }
-): Promise<ChildProcess> {
+): Promise<{ child: ChildProcess; close(): Promise<void> }> {
   const lockPath = path.join(durablePath, ".daimon-lease");
   let lock: Awaited<ReturnType<typeof open>> | undefined;
   try {
@@ -161,8 +187,12 @@ async function acquireLease(
       || entry.nlink !== 1 || (entry.mode & 0o777) !== 0o600) throw new Error("unsafe lease");
     const child = ownedSpawn(command.command, command.args, leaseEnvironment(), ["pipe", "pipe", "ignore", lock.fd]);
     try {
-      await waitForReady(child);
-      return child;
+      await waitForSubscriptionLeaseReady(child);
+      // flock owns the inherited open-file description. Retain our copy until
+      // active native turns drain, even if the lease child unexpectedly exits.
+      const retained = lock;
+      lock = undefined;
+      return { child, close: () => retained.close() };
     } catch (error) {
       try { await terminateChild(child); } catch (cleanupError) {
         throw new AggregateError([error, cleanupError], "lease acquisition cleanup failed");
@@ -224,18 +254,6 @@ async function waitForSocket(
 async function defaultSocketReady(socketPath: string): Promise<boolean> {
   const entry = await lstat(socketPath);
   return entry.isSocket() && entry.uid === process.getuid?.();
-}
-
-function waitForReady(child: ChildProcess): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error("lease startup timed out")), START_TIMEOUT_MS);
-    child.stdout?.once("data", (chunk: Buffer) => {
-      clearTimeout(timer);
-      if (chunk.toString("utf8") === "ready\n") resolve(); else reject(new Error("lease response invalid"));
-    });
-    child.once("close", () => { clearTimeout(timer); reject(new Error("lease rejected")); });
-    child.once("error", () => { clearTimeout(timer); reject(new Error("lease failed")); });
-  });
 }
 
 async function cleanup(children: ChildProcess[], ephemeralPath: string): Promise<void> {

@@ -18,6 +18,8 @@ export const grokRuntimeHooks: RuntimeEngineHooks = {
   async prepareHostReadiness(_agents, _paths, resources) {
     resources.grokBroker = new EngineBrokerControlClient();
     await resources.grokBroker.ready();
+    resources.subscriptionBrokers ??= {};
+    resources.subscriptionBrokers.grok = resources.grokBroker;
   },
   assertRuntimeLaunch(agent, broker) {
     if (agent.engine.model !== undefined && broker === undefined) throw new Error(`Agent ${agent.id} declares a Grok model, which requires the engine broker`);

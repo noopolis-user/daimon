@@ -5,7 +5,7 @@ import path from "node:path";
 import test from "node:test";
 
 import { codexSandboxProtectedPaths, codexSandboxReadablePaths, grokSandboxProtectedPaths, startOrganizationRuntimeEngine } from "./engineDispatcher.js";
-import { AGY_SUBSCRIPTION_REALM, GROK_SUBSCRIPTION_REALM } from "./contractManifest.js";
+import { AGY_SUBSCRIPTION_REALM, CODEX_SUBSCRIPTION_REALM, GROK_SUBSCRIPTION_REALM } from "./contractManifest.js";
 import type { EngineBrokerTurnClient } from "../engines/grok/broker/engineBrokerControlClient.js";
 import { ORGANIZATION_RUNTIME_VERSION, type OrganizationRuntimeAgentConfig } from "./organizationRuntime.js";
 
@@ -31,6 +31,8 @@ test("Grok sandbox protects the shared realm and every peer agent root", () => {
     GROK_SUBSCRIPTION_REALM.durableMountPath,
     AGY_SUBSCRIPTION_REALM.unlockMountPath,
     AGY_SUBSCRIPTION_REALM.durableMountPath,
+    CODEX_SUBSCRIPTION_REALM.bootstrapMountPath,
+    CODEX_SUBSCRIPTION_REALM.durableMountPath,
     acceptanceStore,
     peer.runtimeHomePath,
     peer.workspacePath,
@@ -56,6 +58,8 @@ test("Codex strict sandbox protects current credentials, ingress, shared roots, 
   assert.deepEqual(codexSandboxProtectedPaths(current.id, current, path.join(current.runtimeHomePath, ".codex"), [current, peer, agy], [acceptanceStore]), [
     path.join(current.runtimeHomePath, ".codex", "auth.json"),
     path.join(current.runtimeHomePath, ".daimon-inbound"),
+    CODEX_SUBSCRIPTION_REALM.bootstrapMountPath,
+    CODEX_SUBSCRIPTION_REALM.durableMountPath,
     "/proc",
     "/run",
     GROK_SUBSCRIPTION_REALM.bootstrapMountPath,

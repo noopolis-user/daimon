@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { GROK_ENGINE_BROKER, GROK_SUBSCRIPTION_REALM } from "../../../contracts/runtimeContractManifest.js";
+import { CODEX_SUBSCRIPTION_REALM, GROK_ENGINE_BROKER, GROK_SUBSCRIPTION_REALM } from "../../../contracts/runtimeContractManifest.js";
 import { parseEngineBrokerServiceConfig } from "./engineBrokerServiceConfig.js";
 import { grokBrokerProjectionSha256, grokBrokerServiceRegistrationFor, resolveOrganizationGrokBrokerProjection, verifyGrokBrokerRegistrationMatchesProjection } from "./grokBrokerProjection.js";
 import { grokBrokerWorkerConfigSha256 } from "./grokBrokerWorkerConfig.js";
@@ -27,7 +27,7 @@ test("clocked projection binds the alternate config pin and the slot provisionin
 
 test("the projection is Daimon's own renderers and collectors, fully declared and deterministic", () => {
   const projection = resolveOrganizationGrokBrokerProjection(config, "foreman", options);
-  const denyPaths = [GROK_SUBSCRIPTION_REALM.bootstrapMountPath, GROK_SUBSCRIPTION_REALM.durableMountPath, "/run/paideia/control", "/var/lib/spawnfile/instance/homes/peer", "/var/lib/spawnfile/instance/workspace/agents/peer", "/run/paideia", "/run/training/inputs"].sort();
+  const denyPaths = [CODEX_SUBSCRIPTION_REALM.bootstrapMountPath, CODEX_SUBSCRIPTION_REALM.durableMountPath, GROK_SUBSCRIPTION_REALM.bootstrapMountPath, GROK_SUBSCRIPTION_REALM.durableMountPath, "/run/paideia/control", "/var/lib/spawnfile/instance/homes/peer", "/var/lib/spawnfile/instance/workspace/agents/peer", "/run/paideia", "/run/training/inputs"].sort();
   assert.deepEqual(projection, {
     version: "noopolis.daimon.grok-broker-projection.v3", agentId: "foreman",
     workspacePath: "/var/lib/spawnfile/instance/workspace/agents/foreman", runtimeHomePath: "/var/lib/spawnfile/instance/homes/foreman",

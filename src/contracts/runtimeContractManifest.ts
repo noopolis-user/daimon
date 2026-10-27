@@ -8,11 +8,12 @@ import {
   ORGANIZATION_RUNTIME_MAX_STRING_CODEPOINTS
 } from "./organizationRuntimeContract.js";
 
-export const RUNTIME_CONTRACT_MANIFEST_VERSION = "noopolis.daimon.runtime-contract-manifest.v6" as const;
+export const RUNTIME_CONTRACT_MANIFEST_VERSION = "noopolis.daimon.runtime-contract-manifest.v7" as const;
 export const ORGANIZATION_RUNTIME_ACTIVITY_V2_VERSION = "noopolis.daimon.organization-runtime-activity.v2" as const;
 export const ENGINE_CREDENTIAL_MATERIAL = {
   codex: ENGINE_DESCRIPTORS.codex.credentialMaterial
 } as const;
+export const CODEX_SUBSCRIPTION_REALM = ENGINE_DESCRIPTORS.codex.auth.realm;
 export const GROK_SUBSCRIPTION_REALM = ENGINE_DESCRIPTORS.grok.auth.realm;
 export const GROK_ENGINE_BROKER = ENGINE_DESCRIPTORS.grok.broker;
 export const AGY_SUBSCRIPTION_REALM = ENGINE_DESCRIPTORS.agy.auth.realm;
@@ -45,6 +46,7 @@ export const RUNTIME_CONTRACT_MANIFEST = {
   supportedEngineKinds: SORTED_ENGINE_IDS,
   engines: ENGINE_DESCRIPTORS,
   engineCredentialMaterial: ENGINE_CREDENTIAL_MATERIAL,
+  codexSubscriptionRealm: CODEX_SUBSCRIPTION_REALM,
   grokSubscriptionRealm: GROK_SUBSCRIPTION_REALM,
   grokEngineBroker: GROK_ENGINE_BROKER,
   agySubscriptionRealm: AGY_SUBSCRIPTION_REALM,

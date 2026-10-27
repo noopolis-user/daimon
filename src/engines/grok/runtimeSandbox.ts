@@ -1,5 +1,5 @@
 import type { OrganizationRuntimeAgentConfig } from "../../runtime/organizationRuntime.js";
-import { AGY_SUBSCRIPTION_REALM, GROK_SUBSCRIPTION_REALM } from "../../runtime/contractManifest.js";
+import { AGY_SUBSCRIPTION_REALM, CODEX_SUBSCRIPTION_REALM, GROK_SUBSCRIPTION_REALM } from "../../runtime/contractManifest.js";
 
 export function grokSandboxProtectedPaths(
   currentAgentId: string,
@@ -13,6 +13,7 @@ export function grokSandboxProtectedPaths(
       AGY_SUBSCRIPTION_REALM.unlockMountPath,
       AGY_SUBSCRIPTION_REALM.durableMountPath
     ] : []),
+    ...(organizationAgents.some((peer) => peer.engine.kind === "codex") ? [CODEX_SUBSCRIPTION_REALM.bootstrapMountPath, CODEX_SUBSCRIPTION_REALM.durableMountPath] : []),
     ...sharedProtectedPaths,
     ...organizationAgents.filter((peer) => peer.id !== currentAgentId)
       .flatMap((peer) => [peer.runtimeHomePath, peer.workspacePath])

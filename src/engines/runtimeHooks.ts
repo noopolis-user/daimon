@@ -9,7 +9,12 @@ import type { EngineBrokerControlClient, EngineBrokerTurnClient } from "./grok/b
 export type RuntimeDirectoryEntry = Readonly<{ uid: number; gid: number; mode: number }>;
 export type RuntimeDirectoryIdentity = Readonly<{ uid: number; gid: number; firstWorkerUid?: number }>;
 
-export type RuntimeHostResources = { agyRealm?: AgySubscriptionRealm; grokBroker?: EngineBrokerControlClient };
+export type RuntimeHostResources = {
+  agyRealm?: AgySubscriptionRealm;
+  grokBroker?: EngineBrokerControlClient;
+  subscriptionBrokers?: Partial<Record<import("./descriptors.js").EngineKind, EngineBrokerTurnClient>>;
+  credentialRealms?: Partial<Record<import("./descriptors.js").EngineKind, import("../runtime/portableSubscriptionRealmTypes.js").PortableSubscriptionRealm>>;
+};
 export type RuntimeSandbox = Readonly<{
   verifyGrokSandbox?: () => Promise<void>;
   codexSandboxPaths?: { readonly protectedPaths: readonly string[]; readonly readablePaths: readonly string[] };
@@ -41,9 +46,9 @@ export interface RuntimeEngineHooks {
   assertRuntimeHomeDirectory?(entry: RuntimeDirectoryEntry, label: string, runtime: RuntimeDirectoryIdentity): void;
   /** Preserve credential materialization, broker readiness, then realm startup order. */
   readonly hostReadinessOrder: number;
-  prepareHostReadiness(agents: readonly OrganizationRuntimeAgentConfig[], paths: OrganizationRuntimePathAuthority, resources: RuntimeHostResources): Promise<void>;
+  prepareHostReadiness(agents: readonly OrganizationRuntimeAgentConfig[], paths: OrganizationRuntimePathAuthority, resources: RuntimeHostResources, realmPaths?: import("../runtime/subscriptionRealmPaths.js").SubscriptionRealmPathPair): Promise<void>;
   assertRuntimeLaunch(agent: OrganizationRuntimeAgentConfig, broker: EngineBrokerTurnClient | undefined): void;
-  prepareRuntimeReadiness(agent: OrganizationRuntimeAgentConfig, busAddress: string | undefined, broker: EngineBrokerTurnClient | undefined): Promise<EngineReadiness>;
+  prepareRuntimeReadiness(agent: OrganizationRuntimeAgentConfig, busAddress: string | undefined, broker: EngineBrokerTurnClient | undefined, credentialRealm?: import("../runtime/portableSubscriptionRealmTypes.js").PortableSubscriptionRealm): Promise<EngineReadiness>;
   runtimeSandbox(context: RuntimeSandboxContext): RuntimeSandbox;
   runtimeSessionOptions(context: RuntimeSessionContext): Partial<CliEngineOptions>;
   runtimeToolName(name: string): string;

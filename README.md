@@ -283,19 +283,48 @@ not be group/other writable. Daimon never creates or removes these roots.
 
 For a production CLI engine, Daimon resolves the engine from `PATH` once,
 pins its canonical executable identity, probes only `--version`, and rechecks
-that identity before every child process. Codex uses a caller-provisioned
-private `.codex/auth.json` refresh credential beneath each agent's
-`runtimeHomePath`. Grok instead uses one host-wide durable subscription realm:
-a read-only operator bootstrap seeds the authority, and Daimon serializes
-turns while staging and reconciling the rotating credential into each private
-agent home. Sessions and non-auth state remain isolated per agent. Engine
-children receive only the matching engine home, runtime/XDG paths,
-locale/timezone, and a PATH sufficient for the already pinned executable.
-Before every Grok process, Daimon rewrites its exact custom sandbox profile and
-requires a fresh kernel-enforcement receipt covering the durable realm,
-read-only bootstrap, and every peer workspace/runtime home. A fail-open
-Landlock/Seatbelt warning, missing deny path, or profile mutation fails the
-wake before cognition.
+that identity before every child process. Every subscription engine must have a
+shared credential owner before the production host becomes ready. Codex uses a
+private durable authority at `/var/lib/spawnfile/daimon/codex-subscription-realm`
+(`0700`, runtime uid), seeded from the read-only `0600` mount
+`/var/lib/spawnfile/daimon/codex-bootstrap-auth`. One account lease stages a
+regular `0600` `.codex/auth.json` into the selected agent home, runs its complete
+turn, atomically promotes any rotation, then removes the staged file. Sessions
+and other state remain private to each agent. A journal recovers interrupted
+promotion; rejected or missing credentials fence the authority until the
+operator supplies a changed bootstrap. Startup never overwrites newer durable
+auth from an unchanged bootstrap.
+
+Grok uses its existing shared engine broker: workers never receive the provider
+refresh credential, and the broker owns single-flight refresh, durable generation
+journaling, stale fencing, and its exclusive account lease. Its sandbox receipt
+must protect the bootstrap, durable credential homes, and every peer workspace.
+
+Codex and AGY serialize their CLI turns per account because their CLIs do not
+provide a verified cross-process OAuth refresh lock. Account waiting is bounded
+to 128 pending operations and 30 minutes, is cancelled when the agent stops, and
+happens before the CLI turn timeout starts. Owner shutdown rejects pending work
+and drains the active operation before releasing its lease. A broker/native
+keyring adapter remains responsible for its own credential representation.
+
+Upgrade with the runtime stopped: preserve the latest account credential as the
+bootstrap, remove old per-agent credential files or symlinks, and provision the
+private durable mount. Existing links are never accepted or silently repaired.
+The low-level one-agent harness and isolated training interfaces remain
+caller-owned: the caller must exclusively own that account for the run. A
+production organization always uses the shared owner lifecycle above.
+
+Trusted embedding hosts may provide `subscriptionRealmPaths: { codex:
+{ bootstrapPath, durablePath } }` to either public host constructor. The paths
+must be real, outside agent mutable roots and other protected runtime stores,
+and retain the same private file/directory checks. Daimon adds both resolved
+paths to native sandbox denials. Pass the same option to the public sandbox
+projection to obtain the exact runtime policy. A training container must reuse one pair and
+serialize complete child-host lifetimes; separate per-trial realm copies are
+not an account ownership mechanism. This option is not agent configuration.
+
+Engine children receive only their matching engine home, runtime/XDG paths,
+locale/timezone, and a PATH sufficient for the pinned executable.
 They never inherit arbitrary host variables. Missing, replaced, malformed,
 stale, or unsafe engine authority prevents startup or fails the affected wake
 without publishing credential contents or file paths.
@@ -306,7 +335,8 @@ AGY agents on the host, holds an exclusive lease on its durable encrypted
 keyring volume, and unlocks it from an independent caller-owned `0600`
 read-only mount through bounded stdin. Only AGY children receive that realm's
 exact bus address. Normal startup proves enrollment with `agy models` before
-any agent starts.
+any agent starts. Enrollment probes and all AGY CLI turns pass through the same
+account gate; the native encrypted keyring remains the only credential store.
 
 Enroll an empty realm once from an interactive terminal:
 

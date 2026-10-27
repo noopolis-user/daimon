@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { AGY_SUBSCRIPTION_REALM, canonicalJson, canonicalRuntimeContractManifest, ENGINE_CREDENTIAL_MATERIAL, GROK_SUBSCRIPTION_REALM, RUNTIME_CONTRACT_MANIFEST, RUNTIME_CONTRACT_MANIFEST_VERSION } from "./contractManifest.js";
+import { AGY_SUBSCRIPTION_REALM, CODEX_SUBSCRIPTION_REALM, canonicalJson, canonicalRuntimeContractManifest, ENGINE_CREDENTIAL_MATERIAL, GROK_SUBSCRIPTION_REALM, RUNTIME_CONTRACT_MANIFEST, RUNTIME_CONTRACT_MANIFEST_VERSION } from "./contractManifest.js";
 
 test("runtime contract manifest is data-only and deterministic", () => {
   const first = canonicalRuntimeContractManifest();
@@ -9,7 +9,7 @@ test("runtime contract manifest is data-only and deterministic", () => {
   assert.equal(first, canonicalJson(RUNTIME_CONTRACT_MANIFEST));
   assert.deepEqual(Object.keys(ENGINE_CREDENTIAL_MATERIAL), ["codex"]);
   assert.deepEqual(RUNTIME_CONTRACT_MANIFEST.supportedEngineKinds, ["agy", "codex", "grok"]);
-  assert.equal(RUNTIME_CONTRACT_MANIFEST_VERSION, "noopolis.daimon.runtime-contract-manifest.v6");
+  assert.equal(RUNTIME_CONTRACT_MANIFEST_VERSION, "noopolis.daimon.runtime-contract-manifest.v7");
   assert.equal(RUNTIME_CONTRACT_MANIFEST.organizationRuntimeConfigV2Schema.$id, "noopolis.daimon.organization-runtime.v2");
   assert.deepEqual(RUNTIME_CONTRACT_MANIFEST.wakeAcceptanceTypes, ["manual", "message", "schedule", "external"]);
   assert.deepEqual(RUNTIME_CONTRACT_MANIFEST.deliverySemantics, {
@@ -21,6 +21,9 @@ test("runtime contract manifest is data-only and deterministic", () => {
   assert.equal("maximum" in RUNTIME_CONTRACT_MANIFEST.wakeResultSchema.oneOf[0].properties.durationMs, false);
   assert.equal(RUNTIME_CONTRACT_MANIFEST.agySubscriptionRealm, AGY_SUBSCRIPTION_REALM);
   assert.equal(RUNTIME_CONTRACT_MANIFEST.grokSubscriptionRealm, GROK_SUBSCRIPTION_REALM);
+  assert.equal(RUNTIME_CONTRACT_MANIFEST.codexSubscriptionRealm, CODEX_SUBSCRIPTION_REALM);
+  assert.equal(CODEX_SUBSCRIPTION_REALM.agentCredentialRelativePath, ".codex/auth.json");
+  assert.equal(RUNTIME_CONTRACT_MANIFEST.engines.codex.auth.staging, "portable-realm");
   assert.equal(GROK_SUBSCRIPTION_REALM.agentCredentialRelativePath, ".grok/auth.json");
   assert.equal(AGY_SUBSCRIPTION_REALM.directoryMode, 0o700);
   assert.equal(AGY_SUBSCRIPTION_REALM.fileMode, 0o600);
