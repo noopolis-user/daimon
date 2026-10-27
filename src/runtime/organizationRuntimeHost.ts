@@ -31,7 +31,7 @@ type OrganizationRuntimeEngineFactory = (
   paths?: ReturnType<OrganizationRuntimePathAuthority["forAgent"]>
 ) => Promise<AgentHandle>;
 type HostReadiness = OrganizationRuntimeHostReadiness;
-type ProductionHostOptions = Readonly<{ sharedProtectedPaths?: readonly string[] }>;
+type ProductionHostOptions = import("./subscriptionRealmPaths.js").SubscriptionRealmHostOptions;
 type WakeJob = {
   readonly request: OrganizationRuntimeWakeRequest;
   readonly resolve: (result: OrganizationRuntimeWakeResult) => void;
@@ -56,14 +56,16 @@ export function createOrganizationRuntimeHost(config: unknown, options: Producti
 /** @internal Control-owned attention registry, never a caller-supplied config hook. */
 export function createOrganizationRuntimeHostWithAttention(config: unknown, options: ProductionHostOptions, attention: AttentionRegistry): OrganizationRuntimeHost {
   const parsed = parseOrganizationRuntimeConfig(config);
+  let sharedProtectedPaths = options.sharedProtectedPaths ?? [];
   let agyBusAddress: string | undefined;
   let grokBroker: OrganizationRuntimeHostReadiness["grokBroker"];
   let credentialRealms: OrganizationRuntimeHostReadiness["credentialRealms"];
   return createHost(
     parsed,
-    (agent, paths) => startOrganizationRuntimeEngine(agent, parsed.host.controlTokenEnv, paths, agyBusAddress, grokBroker, parsed.agents, options.sharedProtectedPaths, attention, credentialRealms?.[agent.engine.kind]),
+    (agent, paths) => startOrganizationRuntimeEngine(agent, parsed.host.controlTokenEnv, paths, agyBusAddress, grokBroker, parsed.agents, sharedProtectedPaths, attention, credentialRealms?.[agent.engine.kind]),
     async () => {
-      const ready = await prepareProductionReadiness(parsed);
+      const ready = await prepareProductionReadiness(parsed, options);
+      sharedProtectedPaths = [...(options.sharedProtectedPaths ?? []), ...ready.subscriptionProtectedPaths];
       agyBusAddress = ready.agyRealm?.busAddress;
       grokBroker = ready.grokBroker;
       credentialRealms = ready.credentialRealms;
@@ -76,7 +78,6 @@ export function createOrganizationRuntimeHostWithAttention(config: unknown, opti
     }
   );
 }
-
 /** @internal Test-only construction seam; it is intentionally not package-exported. */
 export function createOrganizationRuntimeHostForTest(
   config: unknown,
@@ -85,10 +86,9 @@ export function createOrganizationRuntimeHostForTest(
 ): OrganizationRuntimeHost {
   return createHost(parseOrganizationRuntimeConfig(config), factory, preflight === undefined ? undefined : async () => {
     const paths = await preflight();
-    return { paths, close: () => paths.close() };
+    return { paths, subscriptionProtectedPaths: [], close: () => paths.close() };
   });
 }
-
 function createHost(
   config: OrganizationRuntimeConfig,
   factory: OrganizationRuntimeEngineFactory,

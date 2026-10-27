@@ -314,6 +314,15 @@ The low-level one-agent harness and isolated training interfaces remain
 caller-owned: the caller must exclusively own that account for the run. A
 production organization always uses the shared owner lifecycle above.
 
+Trusted embedding hosts may provide `subscriptionRealmPaths: { codex:
+{ bootstrapPath, durablePath } }` to either public host constructor. The paths
+must be real, outside agent mutable roots and other protected runtime stores,
+and retain the same private file/directory checks. Daimon adds both resolved
+paths to native sandbox denials. Pass the same option to the public sandbox
+projection to obtain the exact runtime policy. A training container must reuse one pair and
+serialize complete child-host lifetimes; separate per-trial realm copies are
+not an account ownership mechanism. This option is not agent configuration.
+
 Engine children receive only their matching engine home, runtime/XDG paths,
 locale/timezone, and a PATH sufficient for the pinned executable.
 They never inherit arbitrary host variables. Missing, replaced, malformed,

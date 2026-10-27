@@ -1,3 +1,4 @@
+export type { SubscriptionRealmPaths, SubscriptionRealmPathPair, SubscriptionRealmHostOptions } from "./subscriptionRealmPaths.js";
 export { brokerTaskClockFileFor } from "../engines/grok/broker/grokBrokerSlot.js";
 export { GROK_BROKER_TASK_CLOCK, GROK_BROKER_TASK_CLOCK_PRELOAD_PATH, GROK_BROKER_TASK_CLOCK_FILE_PATH, type GrokWorkerConfigVariant } from "../engines/grok/broker/grokBrokerTaskClockContract.js";
 export * from "./organizationRuntime.js";

@@ -1,15 +1,17 @@
+import { resolveOrganizationCodexSandboxProjection } from "./codexSandboxProjection.js";
 import assert from "node:assert/strict";
 import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { CODEX_SUBSCRIPTION_REALM } from "../../contracts/runtimeContractManifest.js";
+import { createOrganizationRuntimeControlHost } from "../../runtime/organizationRuntimeControl.js";
 import { createOrganizationRuntimeHost } from "../../runtime/organizationRuntimeHost.js";
 import type { OrganizationRuntimeAgentConfig } from "../../runtime/organizationRuntime.js";
 
 const credential = (generation: number) => JSON.stringify({ tokens: { access_token: `access-${generation}`, refresh_token: `refresh-${generation}` }, generation });
 
-test("production Codex wakes stage before readiness, serialize rotation, and remove credentials afterward", async () => {
+for (const overridePaths of [false, true]) test(`production Codex wakes own rotation through ${overridePaths ? "trusted host paths" : "default mounts"}`, async () => {
   const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "codex-realm-dispatch-")));
   const prior = { ...process.env };
   const durablePath = path.join(root, "realm");
@@ -18,7 +20,7 @@ test("production Codex wakes stage before readiness, serialize rotation, and rem
   const executable = path.join(root, "codex");
   const eventsPath = path.join(root, "events.jsonl");
   const agents: OrganizationRuntimeAgentConfig[] = ["first", "second"].map((id) => ({
-    id, name: id, instructions: "Reply.", engine: { kind: "codex" },
+    id, name: id, instructions: "Reply.", engine: { kind: "codex", ...(overridePaths ? { codexSandbox: { mode: "workspace-write" as const, networkAccess: false as const, webSearch: "disabled" as const } } : {}) },
     runtimeHomePath: path.join(root, "homes", id), workspacePath: path.join(root, "workspaces", id)
   }));
   await mkdir(durablePath, { mode: 0o700 });
@@ -27,6 +29,8 @@ test("production Codex wakes stage before readiness, serialize rotation, and rem
   await writeFile(executable, `#!/usr/bin/env node
 const fs = require('node:fs');
 if (process.argv.includes('--version')) { console.log('codex-realm-test'); process.exit(0); }
+if (${overridePaths} && (!process.argv.join(' ').includes(${JSON.stringify(durablePath)}) || !process.argv.join(' ').includes(${JSON.stringify(bootstrapPath)}))) throw new Error('missing sandbox realm protection');
+if (${overridePaths}) { const expected = JSON.parse(fs.readFileSync(${JSON.stringify(path.join(root, 'permissions.json'))}, 'utf8'))[process.env.CODEX_HOME]; if (process.argv.find(arg => arg.startsWith('permissions=')) !== expected) throw new Error('runtime permission projection differs'); }
 const auth = process.env.CODEX_HOME + '/auth.json';
 const before = JSON.parse(fs.readFileSync(auth, 'utf8'));
 fs.appendFileSync(${JSON.stringify(eventsPath)}, JSON.stringify({phase:'start', generation:before.generation})+'\\n');
@@ -50,8 +54,19 @@ setTimeout(() => {
   const originalContract = { ...CODEX_SUBSCRIPTION_REALM };
   // Replace only the deployer-owned mount locations; exercise the real host,
   // registry, readiness hook, descriptor and dispatcher, with no owner injected.
-  Object.assign(CODEX_SUBSCRIPTION_REALM, { durableMountPath: durablePath, bootstrapMountPath: bootstrapPath });
-  const host = createOrganizationRuntimeHost({ version: "noopolis.daimon.organization-runtime.v1", host: { bindHost: "127.0.0.1", port: 4318, controlTokenEnv: "TEST_CONTROL" }, agents });
+  if (!overridePaths) Object.assign(CODEX_SUBSCRIPTION_REALM, { durableMountPath: durablePath, bootstrapMountPath: bootstrapPath });
+  const config = { version: "noopolis.daimon.organization-runtime.v1", host: { bindHost: "127.0.0.1", port: 4318, controlTokenEnv: "TEST_CONTROL" }, agents };
+  const options = overridePaths ? { subscriptionRealmPaths: { codex: { durablePath, bootstrapPath } } } : {};
+  const acceptanceStorePath = path.join(root, "acceptance");
+  await mkdir(acceptanceStorePath, { mode: 0o700 });
+  if (overridePaths) {
+    const projections = await Promise.all(agents.map(agent => resolveOrganizationCodexSandboxProjection(config, agent.id, { ...options, acceptanceStorePath })));
+    await writeFile(path.join(root, "permissions.json"), JSON.stringify(Object.fromEntries(projections.map(projection => [projection.engineHomePath, projection.permissionConfig]))));
+  }
+  process.env.DAIMON_WAKE_FUSE = "off";
+  const host = overridePaths && process.platform === "linux"
+    ? createOrganizationRuntimeControlHost(config, { ...options, acceptanceStorePath })
+    : createOrganizationRuntimeHost(config, { ...options, ...(overridePaths ? { sharedProtectedPaths: [acceptanceStorePath] } : {}) });
   try {
     await host.start();
     const results = await Promise.all(agents.map((agent, index) => host.wake({ token: "realm-test-control", agentId: agent.id, event: { version: "noopolis.daimon.wake.v1", id: `wake-${index}`, kind: "manual", text: "probe", occurredAt: new Date().toISOString() } })));

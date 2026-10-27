@@ -11,7 +11,7 @@ import { codexSandboxProtectedPaths, codexSandboxReadablePaths } from "./runtime
 export const codexRuntimeHooks: RuntimeEngineHooks = {
   runtimeHomeShape: "private",
   hostReadinessOrder: 0,
-  async prepareHostReadiness(agents, paths, resources) {
+  async prepareHostReadiness(agents, paths, resources, realmPaths) {
     for (const agent of agents) {
       const canonical = paths.forAgent(agent);
       await canonical.verify();
@@ -19,7 +19,7 @@ export const codexRuntimeHooks: RuntimeEngineHooks = {
       await canonical.verify();
     }
     resources.credentialRealms ??= {};
-    resources.credentialRealms.codex = await startCodexSubscriptionRealm(agents.map((agent) => ({ ...agent, runtimeHomePath: paths.forAgent(agent).runtimeHomePath })));
+    resources.credentialRealms.codex = await startCodexSubscriptionRealm(agents.map((agent) => ({ ...agent, runtimeHomePath: paths.forAgent(agent).runtimeHomePath })), realmPaths);
   },
   assertRuntimeLaunch() {},
   async prepareRuntimeReadiness(agent, bus, _broker, credentialRealm) {
