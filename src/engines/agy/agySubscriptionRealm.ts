@@ -1,3 +1,4 @@
+import { waitForSubscriptionLeaseReady } from "../../runtime/subscriptionLeaseReady.js";
 import { constants } from "node:fs";
 import { spawnRealTime as spawn, type ChildProcess } from "../../runtime/taskClockProcess.js";
 import { chmod, lstat, mkdir, mkdtemp, open, realpath, rm } from "node:fs/promises";
@@ -186,7 +187,7 @@ async function acquireLease(
       || entry.nlink !== 1 || (entry.mode & 0o777) !== 0o600) throw new Error("unsafe lease");
     const child = ownedSpawn(command.command, command.args, leaseEnvironment(), ["pipe", "pipe", "ignore", lock.fd]);
     try {
-      await waitForReady(child);
+      await waitForSubscriptionLeaseReady(child);
       // flock owns the inherited open-file description. Retain our copy until
       // active native turns drain, even if the lease child unexpectedly exits.
       const retained = lock;
@@ -253,18 +254,6 @@ async function waitForSocket(
 async function defaultSocketReady(socketPath: string): Promise<boolean> {
   const entry = await lstat(socketPath);
   return entry.isSocket() && entry.uid === process.getuid?.();
-}
-
-function waitForReady(child: ChildProcess): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error("lease startup timed out")), START_TIMEOUT_MS);
-    child.stdout?.once("data", (chunk: Buffer) => {
-      clearTimeout(timer);
-      if (chunk.toString("utf8") === "ready\n") resolve(); else reject(new Error("lease response invalid"));
-    });
-    child.once("close", () => { clearTimeout(timer); reject(new Error("lease rejected")); });
-    child.once("error", () => { clearTimeout(timer); reject(new Error("lease failed")); });
-  });
 }
 
 async function cleanup(children: ChildProcess[], ephemeralPath: string): Promise<void> {

@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { startCodexSubscriptionRealm } from "./codexSubscriptionRealm.js";
+import { codexAuthenticationRejected, startCodexSubscriptionRealm } from "./codexSubscriptionRealm.js";
 import type { OrganizationRuntimeAgentConfig } from "../../runtime/organizationRuntime.js";
 
 type CodexAgent = OrganizationRuntimeAgentConfig & { engine: { kind: "codex" } };
@@ -356,3 +356,8 @@ async function prepareAgents(agents: readonly CodexAgent[]): Promise<void> {
 }
 function authPath(configured: CodexAgent): string { return path.join(configured.runtimeHomePath, ".codex", "auth.json"); }
 async function writePrivate(file: string, value: string): Promise<void> { await writeFile(file, value, { mode: 0o600 }); await chmod(file, 0o600); }
+
+test("auth rejection classification does not fence ordinary ended sessions or quota errors", () => {
+  for (const message of ["refresh_token_reused", "refresh_token_expired", "token_revoked", "Your refresh token has already been used"]) assert.equal(codexAuthenticationRejected(new Error(message)), true);
+  for (const message of ["session has ended", "usage limit reached", "provider timeout"]) assert.equal(codexAuthenticationRejected(new Error(message)), false);
+});

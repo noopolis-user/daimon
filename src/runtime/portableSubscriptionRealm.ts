@@ -1,3 +1,5 @@
+import { cleanupSubscriptionCredentialTemporaries } from "./subscriptionCredentialCleanup.js";
+import { waitForSubscriptionLeaseReady } from "./subscriptionLeaseReady.js";
 import { createSubscriptionTurnGate } from "./subscriptionTurnGate.js";
 import { createHash, randomUUID } from "node:crypto";
 import { constants } from "node:fs";
@@ -28,6 +30,7 @@ async function startSubscriptionRealm(
   let closePromise: Promise<void> | undefined;
   let bootstrapDigest: string;
   try {
+    for (const directory of [durablePath, ...configuredAgents.map((agent) => path.dirname(path.join(agent.runtimeHomePath, profile.contract.agentCredentialRelativePath)))]) await cleanupSubscriptionCredentialTemporaries(directory);
     bootstrapDigest = await initializeRealm(durablePath, bootstrapPath, agents);
   } catch (error) {
     await terminateChild(lease).catch(() => undefined);
@@ -183,7 +186,7 @@ async function recoverJournal(
     return;
   }
   if (journal.state === "preparing") {
-    if (target !== undefined) await unlink(target).catch(ignoreMissing);
+    if (target !== undefined) { await unlink(target).catch(ignoreMissing); await syncDirectory(path.dirname(target)); }
     await unlink(path.join(durablePath, JOURNAL_FILE)).catch(ignoreMissing);
     await syncDirectory(durablePath);
     return;
@@ -199,6 +202,8 @@ async function recoverJournal(
   }
   try {
     if (journal.state === "promoting" && candidate.digest !== journal.promoted_digest) {
+      await unlink(target!).catch(ignoreMissing);
+      await syncDirectory(path.dirname(target!));
       await markStale(durablePath, bootstrapDigest);
       return;
     }
@@ -352,22 +357,14 @@ async function acquireRealmLease(durablePath: string, options: PortableSubscript
     const entry = await lock.stat();
     if (!entry.isFile() || entry.uid !== process.getuid?.() || entry.nlink !== 1 || (entry.mode & 0o777) !== 0o600) throw new Error("unsafe");
     child = trackCliChild(spawn(options.shell ?? "/bin/sh", ["-c", "\"$1\" --exclusive --nonblock --conflict-exit-code 73 3 || exit 73; printf 'ready\\n'; IFS= read -r _hold || :", `daimon-${profile.engine}-lease`, options.flock ?? "flock"], { detached: process.platform !== "win32", env: { LANG: "C", LC_ALL: "C", PATH: process.env.PATH }, stdio: ["pipe", "pipe", "ignore", lock.fd] }));
-    await waitForReady(child); return { child, lock };
+    await waitForSubscriptionLeaseReady(child); return { child, lock };
   } catch {
     if (child !== undefined) await terminateChild(child).catch(() => undefined);
     await lock?.close().catch(() => undefined);
     throw redact();
   }
 }
-async function waitForReady(child: ChildProcess): Promise<void> {
-  await new Promise<void>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error("timeout")), 5_000);
-    child.stdout?.once("data", (value: Buffer) => { clearTimeout(timer); value.toString("utf8") === "ready\n" ? resolve() : reject(new Error("invalid")); });
-    child.once("close", () => { clearTimeout(timer); reject(new Error("closed")); });
-    child.once("error", () => { clearTimeout(timer); reject(new Error("failed")); });
-  });
-}
-async function syncDirectory(directory: string): Promise<void> { const handle = await open(directory, constants.O_RDONLY); try { await handle.sync(); } finally { await handle.close(); } }
+async function syncDirectory(directory: string): Promise<void> { const handle = await open(directory, constants.O_RDONLY | noFollow() | constants.O_DIRECTORY); try { await handle.sync(); } finally { await handle.close(); } }
 const ignoreMissing = (error: unknown): void => { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; };
 const noFollow = (): number => (constants as typeof constants & { O_NOFOLLOW?: number }).O_NOFOLLOW ?? 0;
 const sameIdentity = (left: Awaited<ReturnType<typeof lstat>>, right: Awaited<ReturnType<typeof lstat>>): boolean => left.dev === right.dev && left.ino === right.ino && left.mode === right.mode && left.nlink === right.nlink && left.size === right.size && left.uid === right.uid && left.mtimeMs === right.mtimeMs;
