@@ -11,6 +11,16 @@ export const CODEX_CREDENTIAL_MATERIAL = {
   destinationRelativePath: `${CODEX_HOME_DIRECTORY}/${PORTABLE_AUTH_FILE_NAME}`, directoryMode: 0o700, fileMode: 0o600
 } as const;
 
+export const CODEX_SUBSCRIPTION_REALM = {
+  agentCredentialRelativePath: `${CODEX_HOME_DIRECTORY}/${PORTABLE_AUTH_FILE_NAME}`,
+  bootstrapMountPath: "/var/lib/spawnfile/daimon/codex-bootstrap-auth",
+  bootstrapSourceSlot: "codex-auth",
+  directoryMode: 0o700,
+  durableMountPath: "/var/lib/spawnfile/daimon/codex-subscription-realm",
+  fileMode: 0o600,
+  maxCredentialBytes: 64 * 1024
+} as const;
+
 /** Closed declared-model vocabulary; defaults are `grok-4.6` at `low`. */
 export const GROK_BROKER_MODELS = Object.freeze(["grok-4.6", "grok-4.5", "grok-build"] as const);
 export const GROK_BROKER_REASONING_EFFORTS = Object.freeze(["low", "medium", "high"] as const);

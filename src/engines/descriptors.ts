@@ -1,12 +1,12 @@
 /** Static engine inventory. This module must never import executable handlers. */
-import { CODEX_HOME_DIRECTORY, GROK_HOME_DIRECTORY, PORTABLE_AUTH_FILE_NAME, CODEX_SUBSCRIPTION_INTENT, CODEX_CREDENTIAL_MATERIAL, AGY_SUBSCRIPTION_REALM, GROK_ENGINE_BROKER, GROK_SUBSCRIPTION_REALM } from "./descriptorContracts.js";
+import { CODEX_HOME_DIRECTORY, GROK_HOME_DIRECTORY, PORTABLE_AUTH_FILE_NAME, CODEX_SUBSCRIPTION_INTENT, CODEX_CREDENTIAL_MATERIAL, CODEX_SUBSCRIPTION_REALM, AGY_SUBSCRIPTION_REALM, GROK_ENGINE_BROKER, GROK_SUBSCRIPTION_REALM } from "./descriptorContracts.js";
 
 export const ENGINE_DESCRIPTORS = {
   codex: {
     id: "codex", piAuthMethod: CODEX_SUBSCRIPTION_INTENT.method, piProvider: CODEX_SUBSCRIPTION_INTENT.piProvider, piSourceProvider: CODEX_SUBSCRIPTION_INTENT.provider, authKinds: ["subscription"],
     credentialMaterial: CODEX_CREDENTIAL_MATERIAL,
     auth: {
-      method: CODEX_SUBSCRIPTION_INTENT.method, provider: CODEX_SUBSCRIPTION_INTENT.provider, staging: "portable-file", realm: null,
+      method: CODEX_SUBSCRIPTION_INTENT.method, provider: CODEX_SUBSCRIPTION_INTENT.provider, staging: "portable-realm", realm: CODEX_SUBSCRIPTION_REALM,
       fileName: PORTABLE_AUTH_FILE_NAME, maxCredentialBytes: 64 * 1024,
       directoryMode: CODEX_CREDENTIAL_MATERIAL.directoryMode, fileMode: CODEX_CREDENTIAL_MATERIAL.fileMode,
       format: { containerKey: "tokens", fallbackToRoot: true, accessTokenKeys: ["access_token", "accessToken", "token"], refreshTokenKeys: ["refresh_token", "refreshToken"] }
