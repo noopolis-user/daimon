@@ -102,7 +102,7 @@ export class WakeAcceptanceStore {
   /** Internal availability view; diagnostics never enter the public receipt wire. */
   async activityWithExecutionErrors(): Promise<readonly ActivityRow[]> { return await this.activityRows(true); }
   private async activityRows(includeExecutionErrors: boolean): Promise<readonly ActivityRow[]> {
-    const records = await Promise.all((await this.files()).map(async (file) => await this.read(path.join(this.root, file))));
+    const records = (await Promise.all((await this.files()).map(async (file) => await this.readOptional(path.join(this.root, file))))).filter((record): record is Stored => record !== undefined);
     records.sort((left, right) => left.accepted_at.localeCompare(right.accepted_at) || left.acceptance_id.localeCompare(right.acceptance_id));
     const queued = new Map<string, number>();
     const activeExecutions = new Set<string>();
@@ -118,7 +118,8 @@ export class WakeAcceptanceStore {
   async recoverable(agentIds: ReadonlySet<string>, onStale?: (record: Stored) => void): Promise<readonly Stored[]> {
     const result: Stored[] = [];
     for (const file of await this.files()) {
-      const record = await this.read(path.join(this.root, file));
+      const record = await this.readOptional(path.join(this.root, file));
+      if (record === undefined) continue;
       if (!agentIds.has(record.agent_id)) throw new Error("wake acceptance store contains an unknown agent authority");
       if (record.state === "accepted" || record.state === "running") {
         const claim = await this.readClaimOptional(this.claimFor(record));
@@ -304,7 +305,8 @@ export class WakeAcceptanceStore {
     return files;
   }
   private async claimFiles(): Promise<readonly string[]> { return (await readdir(this.root)).filter((entry) => /^[a-f0-9]{64}\.agent-claim$/.test(entry)); }
-  private async readOptional(file: string): Promise<Stored | undefined> { try { return await this.read(file); } catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined; throw error; } }
+  // Compaction may remove an enumerated terminal receipt; a missing or replaced store is never an empty inbox.
+  private async readOptional(file: string): Promise<Stored | undefined> { try { return await this.read(file); } catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") { await this.verify(); return undefined; } throw error; } }
   private async read(file: string): Promise<Stored> {
     const entry = await lstat(file);
     if (!entry.isFile() || entry.isSymbolicLink() || entry.uid !== process.getuid?.() || (entry.mode & 0o777) !== 0o600 || entry.size > MAX_WAKE_ACCEPTANCE_RECORD_BYTES) throw new Error("wake acceptance record is unsafe");
