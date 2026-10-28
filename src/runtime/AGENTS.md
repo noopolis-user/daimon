@@ -1012,6 +1012,13 @@ to still carry the id, so a stale binding can at worst cost a false miss,
 never serve the wrong record. `wakeAcceptanceIndex.test.ts` counts record
 reads to pin this.
 
+Inbox and activity scans tolerate a terminal receipt disappearing between
+enumeration and reading: ordinary acceptance may compact it concurrently.
+Only `ENOENT` is optional, and the store root is reverified before treating it
+as absence. Malformed records, unsafe permissions, and changed root authority
+still fail. `wakeAcceptanceCompaction.test.ts` overlaps the real compaction path
+with those scans and requires the dispatcher to execute the surviving work.
+
 A failed inbox execution is retried **once, at once, under a fresh execution
 id** (`daimon: wake requeued once …` on stderr). Keeping the failed execution's
 id made every retry the same broker turn — a sealed failure replays forever, a
