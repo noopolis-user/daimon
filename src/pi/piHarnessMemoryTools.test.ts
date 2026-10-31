@@ -49,7 +49,8 @@ const seedRoomMemory = async (runtimeHomePath: string): Promise<void> => {
   });
 };
 
-test("Pi sessions receive provider-safe memory custom tools with active wake context", async () => {
+// Organization wakes carry a bare id; memory authority needs the prefixed parent.
+for (const wakeId of ["daimon:wake-tool-search", "7e099e6f-bdec-492e-9478-6fabbfc0d275"]) test(`Pi sessions receive provider-safe memory custom tools with active wake context (${wakeId})`, async () => {
   const root = await tempDir();
   const runtimeHomePath = path.join(root, "runtime");
   const workspacePath = path.join(root, "workspace");
@@ -124,7 +125,7 @@ test("Pi sessions receive provider-safe memory custom tools with active wake con
   assert.ok(toolNames.includes("memory_register"));
 
   await handle.wake({
-    id: "daimon:wake-tool-search",
+    id: wakeId,
     kind: "manual",
     text: "Use memory_search for room context.",
     context: { networkId: "noopolis", roomId: "agora", teamId: "ops" }
