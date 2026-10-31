@@ -192,7 +192,7 @@ export class PiAgentHandle implements AgentHandle {
             mode: selectedSession.mode,
             prepared,
             threadId: selectedSession.threadId,
-            wakeId: event.id
+            wakeId: request.eventId
           });
         }
       }
