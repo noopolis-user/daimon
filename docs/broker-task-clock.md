@@ -178,6 +178,5 @@ the deployment's actual bubblewrap mounts to verify these assertions:
 This tests provisioning and libfaketime. Testing Grok's application of its shell
 policy additionally requires the pinned binary against a local scripted provider
 stub that requests `run_terminal_command` (CLI id `run_terminal_cmd`); no upstream/model request is needed.
-Do not use `live:grok-broker` for this check: that existing script spends provider
-quota. Unit tests exercise rendering, pins, attestation, protocol, publication,
+Unit tests exercise rendering, pins, attestation, protocol, publication,
 reset, gap reporting, observability and replay without model calls.

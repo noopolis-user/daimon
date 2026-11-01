@@ -8,7 +8,6 @@ import { readChild } from "../pi/cliChildOutput.js";
 import { prepareEngineExecutable, verifyAgySubscriptionEnrollment } from "./engineReadiness.js";
 import { registerCliMcpServer } from "../pi/cliMcpRegistration.js";
 import { runNativeBrokerTurn } from "../engines/grok/broker/engineBrokerNativeClient.js";
-import { acquireGrokBrokerRealmLease } from "../engines/grok/broker/grokBrokerRealmLease.js";
 import { refreshGrokBrokerCredential } from "../gateway/grokRefresh.js";
 
 async function fixture(t: TestContext) {
@@ -58,14 +57,4 @@ test("native broker transport is unshifted even when its parent has the task con
   await assert.rejects(runNativeBrokerTurn(f.command, { slot: 0, prompt: "prompt", providerCapability: "provider.Token-1", mcpCapability: "mcp.Token-2", requestId: "request-1", turnId: "turn-1", agentId: "agent-1", wakeId: "wake-1" }));
   const records = await f.records(); assert.equal(records.length, 1);
   assert.deepEqual(records[0].args, ["--client"]); assert.deepEqual(records[0].clock, {});
-});
-
-
-test("broker lease helpers stay real independently of agent clock readiness", async (t) => {
-  const f = await fixture(t);
-  await writeFile(f.command, (await readFile(f.command, "utf8")).replace("console.log('engine-ready');", ""));
-  const lease = await acquireGrokBrokerRealmLease(f.root, f.command);
-  await lease.close();
-  const records = await f.records(); assert.equal(records.length, 1);
-  assert.deepEqual(records[0].clock, {});
 });

@@ -13,9 +13,10 @@ const MAX_CONFIG_BYTES=65_536;
 export async function runEngineBrokerServiceCli():Promise<void>{
   if(process.getuid?.()!==2100)throw new Error("engine broker service requires broker identity");
   const config=parseEngineBrokerServiceConfig(await readRootConfig(ENGINE_BROKER_SERVICE_CONFIG));
-  // DAIMON_GATEWAY_URL + DAIMON_GATEWAY_KEY: the gateway owns the Grok login; without them the broker owns its realm as before.
+  // DAIMON_GATEWAY_URL + DAIMON_GATEWAY_KEY: the auth gateway is the sole holder of the Grok login.
   const gateway=gatewayFromEnvironment();
-  const broker=await startGrokEngineBroker({grokCommand:"/usr/local/bin/grok",nativeClient:"/opt/daimon/bin/daimon-engine-broker",credentialHome:config.credentialHome,turnStore:config.turnStore,registrations:config.registrations,maxRunRequests:config.maxRunRequests,runRequestStore:config.runRequestStore,...(config.inferenceLedgerPath===undefined?{}:{inferenceLedgerPath:config.inferenceLedgerPath}),...(gateway===undefined?{}:{gateway})});
+  if(gateway===undefined)throw new Error("engine broker service requires the auth gateway");
+  const broker=await startGrokEngineBroker({nativeClient:"/opt/daimon/bin/daimon-engine-broker",turnStore:config.turnStore,registrations:config.registrations,maxRunRequests:config.maxRunRequests,runRequestStore:config.runRequestStore,...(config.inferenceLedgerPath===undefined?{}:{inferenceLedgerPath:config.inferenceLedgerPath}),gateway});
   const service=await startEngineBrokerService(broker);let stopping:Promise<void>|undefined;
   const stop=()=>{stopping??=service.close();return stopping;};
   const onSignal=()=>{void stop().catch(()=>{process.exitCode=1;});};process.once("SIGINT",onSignal);process.once("SIGTERM",onSignal);

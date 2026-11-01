@@ -60,14 +60,7 @@ async function fixture(t: TestContext, count = 1, variant: GrokWorkerConfigVaria
   }
   const events: string[] = [];
   const dependencies: GrokEngineBrokerDependencies = {
-    acquireLease: async () => {
-      events.push("lease");
-      return { close: async () => { events.push("lease:close"); } };
-    },
-    createAuthority: () => ({
-      initialize: async () => { events.push("authority"); },
-      accessToken: async () => "unused", markRejected: async () => {}, isStale: () => false
-    }),
+    gatewayFetch: async () => { events.push("authority"); return new Response(JSON.stringify({ status: "ok", engines: ["grok"] }), { status: 200 }); },
     prepareAttestation: async () => {
       events.push(`attest:${variant}`);
       return { configVariant: variant, dev: 1, ino: 1, size: 0, denyPaths: [] };
@@ -123,7 +116,7 @@ async function fixture(t: TestContext, count = 1, variant: GrokWorkerConfigVaria
     async variant(value: GrokWorkerConfigVariant) { variant = value; await provisionConfig(); },
     start: async (overrides: Partial<GrokEngineBrokerDependencies> = {}) => {
       const broker = await startGrokEngineBroker({
-        grokCommand: "unused", nativeClient: "unused", credentialHome: root,
+        nativeClient: "unused", gateway: { url: "http://127.0.0.1:9", key: "test-gateway-key-0123456789" },
         turnStore: path.join(root, "turns"), registrations
       }, { ...dependencies, ...overrides });
       t.after(() => broker.close());
@@ -132,12 +125,11 @@ async function fixture(t: TestContext, count = 1, variant: GrokWorkerConfigVaria
   };
 }
 
-test("production startup reconciles a stale clock after leasing and reaping, before serving", async (t) => {
+test("production startup reconciles a stale clock after reaping, before serving", async (t) => {
   const f = await fixture(t);
   const broker = await f.start();
   assert.equal(await readFile(f.file, "utf8"), "+0\n");
   const written = f.events.indexOf("write:+0");
-  assert.ok(written > f.events.indexOf("lease"));
   assert.ok(written > f.events.lastIndexOf("reap"));
   assert.ok(f.events.indexOf("proxy:+0") > written);
   await broker.close();
@@ -161,11 +153,11 @@ for (const provisioning of ["pinned", "missing", "invalid"] as const) {
     assert.equal(attestations, 0, "unclocked startup must not run full worker attestation");
     assert.equal(broker.readiness().registrations, 2);
     assert.equal(broker.readiness().workerIsolation, true);
-    assert.deepEqual(f.events, ["lease", "authority", "proxy:absent"]);
+    assert.deepEqual(f.events, ["authority", "proxy:absent"]);
     await assert.rejects(broker.turn("agent-0", "bad", "work", "http://127.0.0.1:1/mcp"), /engine broker turn failed/u);
     assert.equal(attestations, 1, "the mis-provisioned worker still fails its own turn");
     assert.equal(f.events.includes("launch"), false);
-    assert.equal(f.events.includes("lease:close"), false);
+    assert.equal(f.events.includes("proxy:close"), false);
     await assert.rejects(readFile(f.file), { code: "ENOENT" });
   });
 }
@@ -179,7 +171,7 @@ for (const [variant, directory] of [["clocked", false], ["clocked", true], ["unc
       throw new Error("clock slot attestation failed");
     } }), /clock slot attestation failed/u);
     assert.equal(attestations, 1);
-    assert.deepEqual(f.events, ["lease", "lease:close"]);
+    assert.deepEqual(f.events, []);
   });
 }
 
@@ -190,12 +182,11 @@ test("an existing clock directory is reconciled even after the config becomes un
   assert.ok(f.events.indexOf("proxy:+0") > f.events.indexOf("write:+0"));
 });
 
-test("a startup reset failure refuses readiness and releases its realm lease", async (t) => {
+test("a startup reset failure refuses readiness before any service starts", async (t) => {
   const f = await fixture(t);
   await assert.rejects(f.start({
     writeTaskClock: async () => { throw new Error("reset unavailable"); }
   }), /reset unavailable/u);
-  assert.equal(f.events.at(-1), "lease:close");
   assert.equal(f.events.some((event) => event.startsWith("proxy:")), false);
 });
 

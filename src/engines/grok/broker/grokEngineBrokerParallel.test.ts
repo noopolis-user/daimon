@@ -55,8 +55,7 @@ test("four concurrent fake trials retain slot state and share one subject/judge/
     })) };
   };
   const deps: GrokEngineBrokerDependencies = {
-    acquireLease: async () => ({ close: async () => {} }),
-    createAuthority: () => ({ initialize: async () => {}, accessToken: async () => "fake", markRejected: async () => {}, isStale: () => false }),
+    gatewayFetch: async () => new Response(JSON.stringify({ status: "ok", engines: ["grok"] }), { status: 200 }),
     needsTaskClockReconciliation: async () => false,
     prepareAttestation: async () => ({ dev: 1, ino: 1, size: 0, configVariant: "unclocked", denyPaths: [] }),
     createIsolationGuard: () => async () => {}, writeTaskClock: async () => {}, workerIdentityEmpty: async () => true,
@@ -77,7 +76,7 @@ test("four concurrent fake trials retain slot state and share one subject/judge/
           exitCode: 0, termSignal: 0, workerPid: 42 + input.slot, workerUid: 2200 + input.slot, startTicks: "1" } };
     }
   };
-  const options = { grokCommand: "unused", nativeClient: "unused", credentialHome: root,
+  const options = { nativeClient: "unused", gateway: { url: "http://127.0.0.1:9", key: "test-gateway-key-0123456789" },
     turnStore: path.join(root, "turns"), runRequestStore: path.join(root, "persistent-budget"),
     registrations, inferenceLedgerPath: path.join(root, "inference.jsonl"), maxRunRequests: 6 };
   let broker = await startGrokEngineBroker(options, deps);

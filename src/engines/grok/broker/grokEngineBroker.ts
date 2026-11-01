@@ -2,7 +2,6 @@ import path from "node:path";
 import { rm } from "node:fs/promises";
 import { assertBrokerTaskClockIsolation, brokerTaskClockFileFor } from "./grokBrokerSlot.js";
 import { needsBrokerTaskClockReconciliation, writeBrokerTaskClock } from "./grokBrokerTaskClock.js";
-import { DurableGrokBrokerCredentialAuthority } from "./grokBrokerCredentialAuthority.js";
 import { runNativeBrokerTurn } from "./engineBrokerNativeClient.js";
 import type { EngineBrokerServiceRegistration } from "./engineBrokerServiceConfig.js";
 import type { EngineBrokerTurnLimitOverrides } from "./engineBrokerTurnAccounting.js";
@@ -11,7 +10,6 @@ import { EngineBrokerTurnRegistry } from "./engineBrokerTurnRegistry.js";
 import { GrokBrokerRunBudget } from "./grokBrokerRunBudget.js";
 import { startGrokBrokerProxy } from "./grokBrokerProxy.js";
 import { startEngineBrokerMcpFacade } from "./engineBrokerMcpFacade.js";
-import { acquireGrokBrokerRealmLease } from "./grokBrokerRealmLease.js";
 import { createGrokGatewayAuthority, createGrokGatewayUpstream } from "./grokBrokerGateway.js";
 import type { AgentGateway } from "../../../gateway/agentGateway.js";
 import { grokBrokerWorkerConfigPins } from "./grokBrokerWorkerConfig.js";
@@ -40,16 +38,12 @@ export type GrokEngineBroker = Awaited<ReturnType<typeof startGrokEngineBroker>>
  * proxy; their rows go only to that ledger. A stale realm refuses a grant as
  * `auth_stale`, exactly as it fails subject turns.
  *
- * With a `gateway` the broker holds no Grok token and no realm lease: its
- * upstream is the auth gateway's `/v1/grok` with its own gateway key
- * (`grokBrokerGateway.ts`). Metering, admission, budgets, slots, sandbox and
- * MCP are unchanged; `realmLease` then reports that the gateway owns the realm.
+ * The broker holds no Grok token and no realm lease: its upstream is the auth
+ * gateway's `/v1/grok` with its own gateway key (`grokBrokerGateway.ts`), and
+ * `realmLease` reports that the gateway owns the realm.
  */
 /** Internal seams exercise the production startup and per-turn admission paths. */
 export type GrokEngineBrokerDependencies = Readonly<{
-  acquireLease: typeof acquireGrokBrokerRealmLease;
-  createAuthority: (command: string, home: string) => Pick<DurableGrokBrokerCredentialAuthority,
-    "initialize" | "accessToken" | "markRejected" | "isStale">;
   startProxy: (...args: Parameters<typeof startGrokBrokerProxy>) => Promise<
     GrokEngineBrokerTurnDependencies["proxy"] & { port: number; close(): Promise<void> }>;
   startMcp: () => Promise<GrokEngineBrokerTurnDependencies["mcp"] & { close(): Promise<void> }>;
@@ -59,13 +53,11 @@ export type GrokEngineBrokerDependencies = Readonly<{
   writeTaskClock: typeof writeBrokerTaskClock;
   workerIdentityEmpty: typeof grokWorkerIdentityEmpty;
   runNative: typeof runNativeBrokerTurn;
-  /** Gateway-mode transport; production uses the global fetch. */
+  /** Gateway transport; production uses the global fetch. */
   gatewayFetch?: typeof fetch;
 }>;
 
 const brokerDependencies: GrokEngineBrokerDependencies = {
-  acquireLease: acquireGrokBrokerRealmLease,
-  createAuthority: (command, home) => new DurableGrokBrokerCredentialAuthority(command, home),
   startProxy: startGrokBrokerProxy,
   startMcp: startEngineBrokerMcpFacade,
   prepareAttestation: prepareGrokWorkerAttestation,
@@ -78,9 +70,9 @@ const brokerDependencies: GrokEngineBrokerDependencies = {
 
 export async function startGrokEngineBroker(
   options: Readonly<{
-    grokCommand: string; nativeClient: string; credentialHome: string; turnStore: string;
+    nativeClient: string; turnStore: string;
     registrations: readonly GrokEngineBrokerRegistration[]; inferenceLedgerPath?: string; maxRunRequests?: number; runRequestStore?: string;
-    gateway?: AgentGateway;
+    gateway: AgentGateway;
   }>,
   dependencies: GrokEngineBrokerDependencies = brokerDependencies
 ) {
@@ -93,17 +85,15 @@ export async function startGrokEngineBroker(
   );
   const grants = options.inferenceLedgerPath === undefined
     ? undefined : createLedgeredGrokInferenceGrants(options.inferenceLedgerPath);
-  const gatewayAuthority = options.gateway === undefined ? undefined : createGrokGatewayAuthority(options.gateway, dependencies.gatewayFetch);
-  const lease = gatewayAuthority === undefined ? await dependencies.acquireLease(options.credentialHome) : { close: async () => undefined };
-  const authority = gatewayAuthority ?? dependencies.createAuthority(options.grokCommand, options.credentialHome);
-  const upstream = gatewayAuthority === undefined ? undefined : createGrokGatewayUpstream(options.gateway!, gatewayAuthority, dependencies.gatewayFetch);
+  const authority = createGrokGatewayAuthority(options.gateway, dependencies.gatewayFetch);
+  const upstream = createGrokGatewayUpstream(options.gateway, authority, dependencies.gatewayFetch);
   let proxy: Awaited<ReturnType<GrokEngineBrokerDependencies["startProxy"]>> | undefined;
   let mcp: Awaited<ReturnType<GrokEngineBrokerDependencies["startMcp"]>> | undefined;
   let runBudget: GrokBrokerRunBudget | undefined;
   const clockedSlots = new Set<number>();
   try {
     // Reconcile before accepting traffic. A prior broker may have died after
-    // publishing an offset; its finally never ran. The realm lease excludes peers.
+    // publishing an offset; its finally never ran.
     for (const registration of registrations.values()) {
       const attestation = attestationFor(registration);
       if (!await dependencies.needsTaskClockReconciliation(registration.profilePath, attestation.configSha256, brokerTaskClockFileFor(registration.slot))) continue;
@@ -124,7 +114,6 @@ export async function startGrokEngineBroker(
   } catch (error) {
     grants?.close();
     await Promise.allSettled([mcp?.close(), proxy?.close(), runBudget?.close()]);
-    await Promise.allSettled([lease.close()]);
     throw error;
   }
   const slotStore = (slot: number) => path.join(options.turnStore, `slot-${slot}`);
@@ -200,7 +189,6 @@ export async function startGrokEngineBroker(
       for (const entry of running) entry.controller.abort();
       await Promise.allSettled([...running.map((entry) => entry.done), ...resets.values()]);
       const results = await Promise.allSettled([facade.close(), provider.close(), runBudget?.close()]);
-      results.push(...await Promise.allSettled([lease.close()]));
       const failures = results.flatMap((entry) => entry.status === "rejected" ? [entry.reason] : []);
       if (failures.length) throw new AggregateError(failures, "engine broker shutdown failed");
     },

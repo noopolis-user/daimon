@@ -87,13 +87,12 @@ then an atomic write-back of the CLI file. Only a diagnostic the CLI names as an
 authentication refusal fences; a timeout or network fault stays transient.
 Proactive refresh before `expires_at` is single-flight and at most once a minute.
 
-When the engine broker process sees `DAIMON_GATEWAY_URL` and
-`DAIMON_GATEWAY_KEY`, it takes no realm lease and reads no credential: its
-upstream is the gateway with its own key. Metering, admission, budgets, slots,
-sandbox and MCP are unchanged. A gateway 401 (its key was refused) is a named
-400 `gateway_unauthorized`, never a refresh; a gateway 403 `auth_stale` fences
-the broker exactly as a rejected local refresh does. Without both variables the
-broker owns its realm as before.
+The engine broker requires `DAIMON_GATEWAY_URL` and `DAIMON_GATEWAY_KEY`: it
+takes no realm lease and reads no credential, and its upstream is the gateway
+with its own key. A gateway 401 (its key was refused) is a named 400
+`gateway_unauthorized`, never a refresh; a gateway 403 `auth_stale` fences the
+broker until restart. The service config still carries `credentialHome`, which
+is validated but unused.
 
 ## Task clock environment
 
