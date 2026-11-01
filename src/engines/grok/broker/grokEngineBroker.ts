@@ -93,7 +93,7 @@ export async function startGrokEngineBroker(
   );
   const grants = options.inferenceLedgerPath === undefined
     ? undefined : createLedgeredGrokInferenceGrants(options.inferenceLedgerPath);
-  const gatewayAuthority = options.gateway === undefined ? undefined : createGrokGatewayAuthority(options.gateway);
+  const gatewayAuthority = options.gateway === undefined ? undefined : createGrokGatewayAuthority(options.gateway, dependencies.gatewayFetch);
   const lease = gatewayAuthority === undefined ? await dependencies.acquireLease(options.credentialHome) : { close: async () => undefined };
   const authority = gatewayAuthority ?? dependencies.createAuthority(options.grokCommand, options.credentialHome);
   const upstream = gatewayAuthority === undefined ? undefined : createGrokGatewayUpstream(options.gateway!, gatewayAuthority, dependencies.gatewayFetch);

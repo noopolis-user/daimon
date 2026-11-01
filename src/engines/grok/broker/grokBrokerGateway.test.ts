@@ -55,7 +55,7 @@ async function chain(t: TestContext, provider: Provider, options: Readonly<{ key
     });
     request.on("error", reject); request.end(body);
   });
-  return { send, seen, authority, meter, realm, refreshes: () => refreshes, gatewayCalls: () => gatewayCalls };
+  return { send, seen, authority, meter, realm, owner, gateway, refreshes: () => refreshes, gatewayCalls: () => gatewayCalls };
 }
 
 const ok: Provider = (_authorization, response) => { response.writeHead(200, { "content-type": "text/event-stream" }); response.end(answer); };
@@ -144,8 +144,42 @@ test("without a gateway the broker leases its realm and calls the provider exact
 
 test("with a gateway the broker takes no realm lease and builds no credential authority", async () => {
   const events: string[] = [];
-  const broker = await startGrokEngineBroker({ grokCommand: "unused", nativeClient: "unused", credentialHome: "/unused", turnStore: "/unused/turns", registrations: [registration], gateway: { url: "http://127.0.0.1:9", key: GATEWAY_KEY } }, brokerDependencies(events));
+  const gatewayFetch: typeof fetch = async (input) => { events.push(`health:${String(input)}`); return new Response(JSON.stringify({ status: "ok", engines: ["grok"] }), { status: 200 }); };
+  const broker = await startGrokEngineBroker({ grokCommand: "unused", nativeClient: "unused", credentialHome: "/unused", turnStore: "/unused/turns", registrations: [registration], gateway: { url: "http://127.0.0.1:9", key: GATEWAY_KEY } }, { ...brokerDependencies(events), gatewayFetch });
   assert.equal(broker.readiness().credentialStale, false);
   await broker.close();
-  assert.deepEqual(events, ["proxy:gateway"]);
+  assert.deepEqual(events, ["health:http://127.0.0.1:9/v1/health", "proxy:gateway"]);
+});
+
+test("a gateway 502 upstream_unavailable gets the broker's one transport retry", async (t) => {
+  let calls = 0;
+  const rig = await chain(t, (authorization, response) => {
+    calls += 1;
+    if (calls === 1) { response.socket?.destroy(); return; }
+    ok(authorization, response);
+  });
+  const reply = await rig.send();
+  assert.equal(reply.status, 200, reply.text);
+  assert.equal(calls, 2);
+  assert.equal(rig.gatewayCalls(), 2);
+  assert.equal(rig.meter.snapshot().requests, 2);
+});
+
+test("a relayed provider 502 is the provider's answer, not retried", async (t) => {
+  const rig = await chain(t, (_authorization, response) => { response.writeHead(502, { "content-type": "application/json" }); response.end('{"error":"bad gateway"}'); });
+  const reply = await rig.send();
+  assert.equal(reply.status, 502, reply.text);
+  assert.equal(rig.gatewayCalls(), 1);
+});
+
+test("readiness probes the gateway health route; auth_stale there fences the broker", async (t) => {
+  const rig = await chain(t, ok);
+  await rig.authority.initialize();
+  assert.equal(rig.authority.isStale(), false);
+  const wrong = createGrokGatewayAuthority({ url: rig.gateway.url, key: "synthetic-broker-gateway-key-WRONG" });
+  await assert.rejects(wrong.initialize());
+  assert.equal(wrong.isStale(), false);
+  await rig.owner.fence();
+  await assert.rejects(rig.authority.initialize());
+  assert.equal(rig.authority.isStale(), true);
 });

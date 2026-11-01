@@ -2,8 +2,11 @@ import type { AgentGateway } from "../../../gateway/agentGateway.js";
 import { ENGINE_DESCRIPTORS } from "../../descriptors.js";
 import { ENGINE_BROKER_AUTH_STALE } from "./engineBrokerProtocol.js";
 import { GrokBrokerProxyRefusal, type GrokBrokerUpstream } from "./grokBrokerProxy.js";
+import { GrokGatewayTransportFault } from "./grokBrokerUpstreamFault.js";
 
 const MAX_GATEWAY_ERROR_BYTES = 8 * 1024;
+const HEALTH_TIMEOUT_MS = 5_000;
+const TRANSPORT_CODES = new Map([[502, "upstream_unavailable"], [504, "upstream_timeout"]] as const);
 
 /**
  * The broker's credential authority in gateway mode. It holds no Grok token and
@@ -13,6 +16,10 @@ const MAX_GATEWAY_ERROR_BYTES = 8 * 1024;
  * as a token problem. A gateway `auth_stale` fences this broker exactly as a
  * rejected local refresh does (stale until restart), so turns and grants
  * refuse it by name before any further upstream call.
+ *
+ * `initialize()` is the readiness probe: the gateway's health route must
+ * answer 200 for this key with Grok among its engines. `auth_stale` there
+ * fences before the broker reports ready.
  */
 export type GrokGatewayAuthority = Readonly<{
   initialize(): Promise<void>;
@@ -23,10 +30,20 @@ export type GrokGatewayAuthority = Readonly<{
   fence(): void;
 }>;
 
-export function createGrokGatewayAuthority(gateway: AgentGateway): GrokGatewayAuthority {
+export function createGrokGatewayAuthority(gateway: AgentGateway, fetcher: typeof fetch = fetch): GrokGatewayAuthority {
   let stale = false;
   return {
-    initialize: async () => undefined,
+    async initialize() {
+      let status = 0;
+      let body: { error?: unknown; engines?: unknown } | undefined;
+      try {
+        const response = await fetcher(`${gateway.url}/v1/health`, { headers: { authorization: `Bearer ${gateway.key}` }, redirect: "error", signal: AbortSignal.timeout(HEALTH_TIMEOUT_MS) });
+        status = response.status;
+        body = await response.json().catch(() => undefined) as typeof body;
+      } catch { status = 0; }
+      if (status === 403 && body?.error === ENGINE_BROKER_AUTH_STALE) stale = true;
+      if (status !== 200 || !Array.isArray(body?.engines) || !body.engines.includes(ENGINE_DESCRIPTORS.grok.id)) throw new Error("Grok broker auth gateway is not ready");
+    },
     accessToken: async () => {
       if (stale) throw new Error("Grok broker credential authority unavailable");
       return gateway.key;
@@ -55,8 +72,15 @@ export function createGrokGatewayUpstream(gateway: AgentGateway, authority: Grok
       await result.body?.cancel().catch(() => undefined);
       throw new GrokBrokerProxyRefusal("gateway_unauthorized");
     }
+    const transport = TRANSPORT_CODES.get(result.status as 502 | 504);
+    if (transport !== undefined) {
+      // A relayed provider 502/504 keeps its own body; only the gateway's named answer is a transport fault.
+      const bytes = new Uint8Array(await result.arrayBuffer());
+      if (errorCode(bytes) === transport) throw new GrokGatewayTransportFault(transport);
+      return { status: result.status, headers: { "content-type": result.headers.get("content-type") ?? "application/json" }, body: bytes };
+    }
     if (result.status === 403) {
-      const code = await gatewayErrorCode(result);
+      const code = errorCode(new Uint8Array(await result.arrayBuffer()));
       if (code === ENGINE_BROKER_AUTH_STALE) { authority.fence(); throw new GrokBrokerProxyRefusal(ENGINE_BROKER_AUTH_STALE); }
       throw new GrokBrokerProxyRefusal("gateway_forbidden");
     }
@@ -64,11 +88,10 @@ export function createGrokGatewayUpstream(gateway: AgentGateway, authority: Grok
   };
 }
 
-async function gatewayErrorCode(response: Response): Promise<string | undefined> {
+function errorCode(bytes: Uint8Array): string | undefined {
+  if (bytes.byteLength > MAX_GATEWAY_ERROR_BYTES) return undefined;
   try {
-    const text = await response.text();
-    if (text.length > MAX_GATEWAY_ERROR_BYTES) return undefined;
-    const error = (JSON.parse(text) as { error?: unknown }).error;
+    const error = (JSON.parse(Buffer.from(bytes).toString("utf8")) as { error?: unknown }).error;
     return typeof error === "string" ? error : undefined;
   } catch { return undefined; }
 }
