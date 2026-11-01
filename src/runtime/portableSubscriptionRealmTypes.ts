@@ -1,11 +1,9 @@
 import type { PortableEngineKind } from "../engines/descriptors.js";
 
-export type PortableRealmAgent = Readonly<{ id: string; runtimeHomePath: string }>;
 export type PortableRealmProfile = Readonly<{
   engine: PortableEngineKind;
   title: string;
-  contract: Readonly<{ agentCredentialRelativePath: string; bootstrapMountPath: string; durableMountPath: string; directoryMode: number; fileMode: number; maxCredentialBytes: number }>;
-  isAuthenticationRejected(error: unknown): boolean;
+  contract: Readonly<{ bootstrapMountPath: string; durableMountPath: string; directoryMode: number; fileMode: number; maxCredentialBytes: number }>;
 }>;
 export type PortableCredentialJournal = Readonly<{
   agent_id: string; promoted_digest?: string; source_digest: string;
@@ -20,13 +18,11 @@ export type PortableRealmAuthority = Readonly<{
   /** Throws once the exclusive lease is gone. */
   assertLive(): void;
 }>;
+/** Held for life by the auth gateway, its only owner. */
 export type PortableSubscriptionRealm = Readonly<{
-  withCredential<T>(agent: PortableRealmAgent, operation: () => Promise<T>, signal?: AbortSignal): Promise<T>;
-  authority?: PortableRealmAuthority;
+  authority: PortableRealmAuthority;
   close(): Promise<void>;
 }>;
 export type PortableSubscriptionRealmOptions = Readonly<{
   bootstrapPath?: string; durablePath?: string; flock?: string; shell?: string;
-  /** @internal deterministic crash-transition test seam. */
-  onTransitionForTest?: (stage: "authority_replaced" | "promotion_prepared") => Promise<void> | void;
 }>;

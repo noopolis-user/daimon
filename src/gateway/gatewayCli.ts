@@ -36,18 +36,18 @@ export async function runGatewayCli(arguments_: readonly string[]): Promise<Runn
     let codex: Readonly<{ owner: CodexRealmOwner; upstreamBaseUrl?: string }> | undefined;
     let grok: Readonly<{ owner: GrokRealmOwner; upstreamBaseUrl?: string }> | undefined;
     if (config.codex !== undefined) {
-      const realm = await startCodexSubscriptionRealm([], realmPaths(config.codex));
+      const realm = await startCodexSubscriptionRealm(realmPaths(config.codex));
       realms.push(realm);
-      const owner = await createCodexRealmOwner({ authority: realm.authority!, refresh: createCodexRefresh(config.codex.tokenUrl === undefined ? {} : { tokenUrl: config.codex.tokenUrl }) });
+      const owner = await createCodexRealmOwner({ authority: realm.authority, refresh: createCodexRefresh(config.codex.tokenUrl === undefined ? {} : { tokenUrl: config.codex.tokenUrl }) });
       owners.push(owner);
       codex = { owner, ...upstream(config.codex) };
     }
     if (config.grok !== undefined) {
-      const realm = await startGrokSubscriptionRealm([], realmPaths(config.grok));
+      const realm = await startGrokSubscriptionRealm(realmPaths(config.grok));
       realms.push(realm);
       await sweepGrokRefreshScratch(config.grok.scratchPath);
       const refresh = createGrokRefresh({ command: config.grok.command ?? GROK_ENGINE_BROKER.grokExecutablePath, ...(config.grok.scratchPath === undefined ? {} : { scratchRoot: config.grok.scratchPath }) });
-      const owner = await createGrokRealmOwner({ authority: realm.authority!, refresh });
+      const owner = await createGrokRealmOwner({ authority: realm.authority, refresh });
       owners.push(owner);
       grok = { owner, ...upstream(config.grok) };
     }

@@ -5,8 +5,7 @@ import type { AuthEngineHooks } from "../authHooks.js";
 export const agyAuthHooks: AuthEngineHooks = {
   engineHomePath: (runtimeHomePath) => runtimeHomePath,
   verifyAuth: ({ agentId, executablePath, runtimeHomePath, busAddress }) => verifyAgySubscriptionEnrollment(agentId, executablePath, runtimeHomePath, busAddress),
-  hasRefreshableCredential: () => false,
-  credentialSecretValues: () => []
+  hasRefreshableCredential: () => false
 };
 
 export async function verifyAgySubscriptionEnrollment(

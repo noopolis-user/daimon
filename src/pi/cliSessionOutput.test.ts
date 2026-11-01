@@ -7,11 +7,9 @@ import test from "node:test";
 import {
   CLI_ENGINE_MAX_DIAGNOSTIC_BYTES,
   CLI_ENGINE_MAX_OUTPUT_BYTES,
-  createCliSessionFactory,
   readChild,
   spawnEngine
 } from "./cliSession.js";
-import { GrokSubscriptionAuthenticationRejectedError } from "../engines/grok/broker/grokAuthenticationError.js";
 
 test("verbose progress stderr is drained without invalidating a bounded successful reply", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "daimon-cli-stderr-progress-"));
@@ -133,72 +131,3 @@ test("redacts a 2000-byte exact secret before retaining a failed stderr tail", a
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
-test("Grok replies redact both the staged credential and a credential rotated during the turn", async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "daimon-grok-output-redaction-"));
-  const engine = path.join(root, "grok.mjs");
-  const oldSecret = "old-access-secret-1234567890";
-  const rotatedSecret = "rotated-refresh-secret-0987654321";
-  const reply = `provider echoed ${oldSecret} and ${rotatedSecret}`;
-  await writeFile(engine, `const a=process.argv.slice(2);if(a.includes("mcp"))process.stdout.write("ok");else{const r=${JSON.stringify(reply)},s="session";process.stdout.write(JSON.stringify({type:"assistant",session_id:s,parent_tool_use_id:null,message:{role:"assistant",stop_reason:"end_turn",content:[{type:"text",text:r}]}})+"\\n"+JSON.stringify({type:"result",subtype:"success",is_error:false,stop_reason:"end_turn",errors:[],result:r,session_id:s})+"\\n");}`);
-  let reads = 0;
-  try {
-    const { session } = await createCliSessionFactory({
-      command: process.execPath, commandArgs: [engine], engine: "grok", engineHomePath: path.join(root, ".grok"),
-      credentialSecretValues: async () => ++reads === 1 ? [oldSecret] : [rotatedSecret]
-    })({ cwd: root });
-    let emitted = "";
-    session.subscribe((event) => {
-      if (event.type === "turn_end") {
-        const message = event.message as { content: Array<{ text?: string; type: string }> };
-        emitted = message.content.map((part) => part.type === "text" ? part.text ?? "" : "").join("");
-      }
-    });
-    await session.prompt("work");
-    assert.equal(reads, 2);
-    assert.doesNotMatch(emitted, /old-access|rotated-refresh/u);
-    assert.match(emitted, /\[REDACTED\]/u);
-    await session.disposeAsync?.();
-  } finally { await rm(root, { recursive: true, force: true }); }
-});
-
-test("Grok auth rejection is typed and never retains raw credential diagnostics", async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "daimon-grok-auth-rejection-"));
-  const engine = path.join(root, "grok.mjs");
-  const secret = "access-auth-rejection-secret-123456";
-  await writeFile(engine, `const a=process.argv.slice(2);if(a.includes("mcp"))process.stdout.write("ok");else{process.stderr.write("Authentication rejected by server ${secret}");process.exitCode=7;}`);
-  try {
-    const { session } = await createCliSessionFactory({
-      command: process.execPath, commandArgs: [engine], engine: "grok", engineHomePath: path.join(root, ".grok"),
-      credentialSecretValues: async () => [secret]
-    })({ cwd: root });
-    await assert.rejects(session.prompt("work"), (error: unknown) => {
-      assert.ok(error instanceof GrokSubscriptionAuthenticationRejectedError);
-      assert.doesNotMatch(error.message, /secret|server/u);
-      return true;
-    });
-    await session.disposeAsync?.();
-  } finally { await rm(root, { recursive: true, force: true }); }
-});
-
-test("Grok auth rejection is classified before a long secret and verbose tail are truncated", async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "daimon-grok-streaming-auth-rejection-"));
-  const engine = path.join(root, "grok.mjs");
-  const secret = `access-start-${"s".repeat(1970)}-access-end`;
-  await writeFile(engine, [
-    "const a=process.argv.slice(2);",
-    "if(a.includes('mcp'))process.stdout.write('ok');",
-    `else{process.stderr.write("RefreshToken");process.stderr.write("Rejected "+${JSON.stringify(secret)}+" "+"tail".repeat(250));process.exitCode=7;}`
-  ].join("\n"));
-  try {
-    const { session } = await createCliSessionFactory({
-      command: process.execPath, commandArgs: [engine], engine: "grok", engineHomePath: path.join(root, ".grok"),
-      credentialSecretValues: async () => [secret]
-    })({ cwd: root });
-    await assert.rejects(session.prompt("work"), (error: unknown) => {
-      assert.ok(error instanceof GrokSubscriptionAuthenticationRejectedError);
-      assert.doesNotMatch(error.message, /RefreshToken|access-start|access-end|s{32}|tail/u);
-      return true;
-    });
-    await session.disposeAsync?.();
-  } finally { await rm(root, { recursive: true, force: true }); }
-});

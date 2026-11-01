@@ -1,19 +1,16 @@
 import { ENGINE_DESCRIPTORS } from "../descriptors.js";
 import path from "node:path";
-import { credentialJson, credentialPairSecrets, firstNonBlankString, firstString, object, type AuthEngineHooks } from "../authHooks.js";
-import { verifyPortableEngineAuth } from "../../runtime/engineReadiness.js";
+import { credentialJson, firstNonBlankString, firstString, object, type AuthEngineHooks } from "../authHooks.js";
 
 export const grokAuthHooks: AuthEngineHooks = {
   engineHomePath: (runtimeHomePath) => path.join(runtimeHomePath, ENGINE_DESCRIPTORS.grok.homeDirectory),
-  verifyAuth: ({ agentId, engineHomePath }) => verifyPortableEngineAuth(agentId, "grok", engineHomePath),
   hasRefreshableCredential(bytes) {
     const value = credentialJson(bytes);
     const pair = grokTokenPair(value);
     if (pair.access === undefined || pair.refresh === undefined) return false;
     const candidate = firstString(grokTokenEntry(value), [ENGINE_DESCRIPTORS.grok.auth.format.expiresAtKey]);
     return candidate !== undefined && Number.isFinite(Date.parse(candidate));
-  },
-  credentialSecretValues: (bytes) => credentialPairSecrets(grokTokenPair(credentialJson(bytes)))
+  }
 };
 
 function grokTokenEntry(value: unknown): Record<string, unknown> | undefined {

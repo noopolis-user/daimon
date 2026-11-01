@@ -284,61 +284,22 @@ not be group/other writable. Daimon never creates or removes these roots.
 For a production CLI engine, Daimon resolves the engine from `PATH` once,
 pins its canonical executable identity, probes only `--version`, and rechecks
 that identity before every child process. Every subscription engine must have a
-shared credential owner before the production host becomes ready. Codex uses a
-private durable authority at `/var/lib/spawnfile/daimon/codex-subscription-realm`
-(`0700`, runtime uid), seeded from the read-only `0600` mount
-`/var/lib/spawnfile/daimon/codex-bootstrap-auth`. One account lease stages a
-regular `0600` `.codex/auth.json` into the selected agent home, runs its complete
-turn, atomically promotes any rotation, then removes the staged file. Sessions
-and other state remain private to each agent. A journal recovers interrupted
-promotion; rejected or missing credentials fence the authority until the
-operator supplies a changed bootstrap. Startup never overwrites newer durable
-auth from an unchanged bootstrap.
+shared credential owner before the production host becomes ready. Codex and
+Grok logins are held only by the auth gateway (`daimon-runtime gateway`), which
+owns each private durable realm (`0700`) seeded from its read-only `0600`
+bootstrap, refreshes single-flight, fences a rejected login until the operator
+supplies a changed bootstrap, and never overwrites newer durable auth from an
+unchanged bootstrap. A Codex agent gets `DAIMON_GATEWAY_URL` and its key, never
+an `auth.json`; every Grok agent runs through the engine broker, whose upstream
+is the same gateway. Without the gateway variables a Codex or Grok agent refuses
+to start.
 
-Grok uses its existing shared engine broker: workers never receive the provider
-refresh credential, and the broker owns single-flight refresh, durable generation
-journaling, stale fencing, and its exclusive account lease. Its sandbox receipt
-must protect the bootstrap, durable credential homes, and every peer workspace.
-
-Codex and AGY serialize their CLI turns per account because their CLIs do not
-provide a verified cross-process OAuth refresh lock. Account waiting is bounded
-to 128 pending operations and 30 minutes, is cancelled when the agent stops, and
+AGY serializes its CLI turns per account because its CLI does not provide a
+verified cross-process OAuth refresh lock. Account waiting is bounded to 128
+pending operations and 30 minutes, is cancelled when the agent stops, and
 happens before the CLI turn timeout starts. Owner shutdown rejects pending work
-and drains the active operation before releasing its lease. A broker/native
-keyring adapter remains responsible for its own credential representation.
-
-Upgrade with the runtime stopped: preserve the latest account credential as the
-bootstrap, remove old per-agent credential files or symlinks, and provision the
-private durable mount. Existing links are never accepted or silently repaired.
-The low-level one-agent harness and isolated training interfaces remain
-caller-owned: the caller must exclusively own that account for the run. A
-production organization always uses the shared owner lifecycle above.
-
-Trusted embedding hosts may provide `subscriptionRealmPaths: { codex:
-{ bootstrapPath, durablePath } }` to either public host constructor. The paths
-must be real, outside agent mutable roots and other protected runtime stores,
-and retain the same private file/directory checks. Daimon adds both resolved
-paths to native sandbox denials. Pass the same option to the public sandbox
-projection to obtain the exact runtime policy. A training container must reuse one pair and
-serialize complete child-host lifetimes; separate per-trial realm copies are
-not an account ownership mechanism. This option is not agent configuration.
-
-Engine children receive only their matching engine home, runtime/XDG paths,
-locale/timezone, and a PATH sufficient for the pinned executable.
-They never inherit arbitrary host variables. Missing, replaced, malformed,
-stale, or unsafe engine authority prevents startup or fails the affected wake
-without publishing credential contents or file paths.
-
-AGY subscription authentication is different: it uses OS-native secure
-storage. Daimon supervises one private D-Bus plus Secret Service realm for all
-AGY agents on the host, holds an exclusive lease on its durable encrypted
-keyring volume, and unlocks it from an independent caller-owned `0600`
-read-only mount through bounded stdin. Only AGY children receive that realm's
-exact bus address. Normal startup proves enrollment with `agy models` before
-any agent starts. Enrollment probes and all AGY CLI turns pass through the same
-account gate; the native encrypted keyring remains the only credential store.
-
-Enroll an empty realm once from an interactive terminal:
+and drains the active operation before releasing its lease. The native keyring
+remains responsible for its own credential representation.
 
 ```bash
 daimon-runtime auth agy login --config /runtime/daimon-runtime.json
@@ -398,15 +359,6 @@ Pi still requires an API-key field for custom providers, so the helper writes th
 upstream-documented dummy `ollama` value.
 
 ## Pi E2E
-
-`npm run live:grok-broker` checks an existing Grok subscription login through
-the real CLI and Daimon provider proxy, then repeats after restarting the proxy.
-It spends two short model turns, requires their exact terminal reply and real
-usage, and gives each CLI a temporary home containing only a scoped capability.
-The operator credential is read in the parent process and is never copied or
-refreshed. This is a local authentication/transport check; it does not exercise
-the Linux native launcher, worker attestation, MCP tools, or OAuth renewal.
-Success ends with `GROK_BROKER_AUTH_RESTART_OK`.
 
 The Pi E2E uses the local Codex CLI subscription auth file to seed an ignored Pi
 `auth.json` under `.runtime/`.

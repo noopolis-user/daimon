@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import { access, chmod, mkdir, mkdtemp, readFile, rm, unlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import test from "node:test";
+import { createServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
+import test, { after, before } from "node:test";
 
 import { codexSandboxProtectedPaths, codexSandboxReadablePaths, grokSandboxProtectedPaths, startOrganizationRuntimeEngine } from "./engineDispatcher.js";
 import { AGY_SUBSCRIPTION_REALM, CODEX_SUBSCRIPTION_REALM, GROK_SUBSCRIPTION_REALM } from "./contractManifest.js";
@@ -83,17 +85,17 @@ test("production dispatcher starts each closed engine intent through Daimon", as
   const ledger = path.join(root, "usage.jsonl");
   const stub = `#!/usr/bin/env node\nconst args = process.argv.slice(2); const text = process.env.DAIMON_DISPATCH_CONTROL ?? "absent"; const stream = (value) => [{ type: "assistant", parent_tool_use_id: null, session_id: "fake", message: { role: "assistant", stop_reason: "end_turn", content: [{ type: "text", text: value }] } }, { type: "result", subtype: "success", is_error: false, result: value, stop_reason: "end_turn", session_id: "fake" }].map(JSON.stringify).join("\\n"); const codex = (value) => [{ type: "item.completed", item: { type: "agent_message", text: value } }, { type: "turn.completed", usage: { input_tokens: 11, cached_input_tokens: 3, cache_write_input_tokens: 0, output_tokens: 2, reasoning_output_tokens: 1 } }].map(JSON.stringify).join("\\n"); const agy = (value) => JSON.stringify({ event: "result", result: { conversation_id: "fake", status: "SUCCESS", response: value, num_turns: 1, usage: { input_tokens: 11, output_tokens: 2, thinking_tokens: 1, cache_read_tokens: 0, total_tokens: 13 } } }); if (args.includes("mcp")) process.stdout.write("ok"); else process.stdout.write(args.includes("--single") ? stream(text) : args.includes("--output-format") ? agy(text) : args.includes("--json") ? codex(text) : text);`;
   try {
-    for (const name of ["codex", "grok", "agy"]) {
+    for (const name of ["codex", "agy"] as const) {
       const file = path.join(root, name);
       await writeFile(file, stub);
       await chmod(file, 0o700);
-      await seedAuth(root, name as "codex" | "grok" | "agy");
+      await seedAuth(root, name);
     }
     process.env.PATH = `${root}${path.delimiter}${priorPath ?? ""}`;
     process.env.NOOPOLIS_RUN_ID = "dispatcher-test";
     process.env.DAIMON_TURN_USAGE_LEDGER_PATH = ledger;
     process.env.DAIMON_DISPATCH_CONTROL = "host-only";
-    for (const kind of ["codex", "grok", "agy"] as const) {
+    for (const kind of ["codex", "agy"] as const) {
       const handle = await startOrganizationRuntimeEngine(rootConfig(root, kind), "DAIMON_DISPATCH_CONTROL", undefined, kind === "agy" ? "unix:path=/private/realm/bus" : undefined);
       const result = await handle.wake({ id: `${kind}-wake`, kind: "manual", text: "probe" });
       assert.equal(result.text, "absent");
@@ -103,7 +105,7 @@ test("production dispatcher starts each closed engine intent through Daimon", as
     assert.deepEqual(metered.map(({ engine, wake, total }) => ({ engine, wake, total })), [
       { engine: "codex", wake: "codex-wake", total: 13 },
       { engine: "agy", wake: "agy-wake", total: 13 }
-    ], "Codex and AGY carry advisory session meters while unbrokered Grok remains unchanged");
+    ], "Codex and AGY carry advisory session meters; Grok's broker meters its own turns");
   } finally {
     if (priorPath === undefined) delete process.env.PATH;
     else process.env.PATH = priorPath;
@@ -289,7 +291,8 @@ test("Daimon frames one escaped identity envelope for every production engine", 
     for (const kind of ["codex", "grok", "agy"] as const) {
       const base = rootConfig(root, kind);
       const config: OrganizationRuntimeAgentConfig = { ...base, name: identity.name, instructions: identity.instructions };
-      const handle = await startOrganizationRuntimeEngine(config, "DAIMON_UNUSED_CONTROL", undefined, kind === "agy" ? "unix:path=/private/realm/bus" : undefined);
+      const handle = await startOrganizationRuntimeEngine(config, "DAIMON_UNUSED_CONTROL", undefined, kind === "agy" ? "unix:path=/private/realm/bus" : undefined,
+        kind === "grok" ? echoBroker : undefined);
       const result = await handle.wake({ id: `${kind}-wake`, kind: "manual", text: "payload" });
       const envelope = JSON.stringify({ id: config.id, name: identity.name, instructions: identity.instructions });
       assert.equal(result.text.split(envelope).length - 1, 1);
@@ -383,6 +386,20 @@ test("a Codex wake that runs past the configured wall-clock bound fails the wake
   }
 });
 
+/** A healthy auth gateway for every Codex agent in this file; the stub CLI never calls it. */
+let gatewayServer: Server | undefined;
+before(async () => {
+  gatewayServer = createServer((_request, response) => { response.writeHead(200, { "content-type": "application/json" }); response.end(JSON.stringify({ engines: ["codex"], write_back: { codex: "ok" } })); });
+  await new Promise<void>((resolve) => gatewayServer!.listen(0, "127.0.0.1", resolve));
+  process.env.DAIMON_GATEWAY_URL = `http://127.0.0.1:${(gatewayServer.address() as AddressInfo).port}`;
+  process.env.DAIMON_GATEWAY_KEY = "dispatcher-test-gateway-key-0123456789";
+});
+after(async () => {
+  delete process.env.DAIMON_GATEWAY_URL; delete process.env.DAIMON_GATEWAY_KEY;
+  await new Promise<void>((resolve) => gatewayServer === undefined ? resolve() : gatewayServer.close(() => resolve()));
+});
+const echoBroker: EngineBrokerTurnClient = { turn: async (_agentId, _wakeId, prompt) => prompt };
+
 async function waitForFile(filePath: string): Promise<void> {
   for (let attempt = 0; attempt < 100; attempt += 1) {
     try { await access(filePath); return; } catch { await new Promise((resolve) => setTimeout(resolve, 10)); }
@@ -394,6 +411,7 @@ async function seedAuth(root: string, kind: "codex" | "grok" | "agy"): Promise<v
   const directory = path.join(root, "runtime", kind, kind === "codex" ? ".codex" : kind === "grok" ? ".grok" : ".antigravity-cli");
   await mkdir(path.join(root, "workspace", kind), { recursive: true, mode: 0o700 });
   await mkdir(directory, { recursive: true, mode: 0o700 });
+  if (kind === "codex") return; // the auth gateway holds the Codex login; the home holds none
   const file = path.join(directory, kind === "agy" ? "antigravity-oauth-token" : "auth.json");
   const credential = kind === "grok"
     ? { "https://auth.x.ai::test": { key: "test-access", refresh_token: "test-refresh", expires_at: "2099-01-01T00:00:00.000Z" } }

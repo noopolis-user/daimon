@@ -4,7 +4,7 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { decodeGrokHeadlessResult, decodeGrokHeadlessTurn } from "./grokHeadlessResult.js";
+import { decodeGrokHeadlessTurn } from "./grokHeadlessResult.js";
 
 const fixtures = path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures");
 const fixture = (name: string): string => readFileSync(path.join(fixtures, name), "utf8");
@@ -45,7 +45,7 @@ test("the live zero-filled fixture is a lower bound, not a free turn", () => {
   // block reads as "unknown". The decoder still refuses the frame outright,
   // because the turn never published — but the usage rule is asserted directly
   // below so the heuristic itself is pinned.
-  assert.throws(() => decodeGrokHeadlessResult(fixture("grok-streaming-messages-json-error-result.jsonl")), /no publishable terminal response/u);
+  assert.throws(() => decodeGrokHeadlessTurn(fixture("grok-streaming-messages-json-error-result.jsonl")), /no publishable terminal response/u);
   assert.equal(turn({ input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }).usage?.complete, false);
   assert.equal(turn({ ...fullUsage, input_tokens: 0 }).usage?.complete, true, "a partially zero-filled turn is byte-indistinguishable and is not detected");
 });
@@ -129,5 +129,5 @@ test("no engine-controlled string from the usage block reaches the decoded recor
 });
 
 test("the text-only decoder still returns exactly the published reply", () => {
-  assert.equal(decodeGrokHeadlessResult(stream(assistant("ACK"), result(fullUsage))), "ACK");
+  assert.equal(decodeGrokHeadlessTurn(stream(assistant("ACK"), result(fullUsage))).text, "ACK");
 });

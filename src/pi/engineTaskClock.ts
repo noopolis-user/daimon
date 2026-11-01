@@ -3,7 +3,6 @@ import type { EngineKind } from "../engines/descriptors.js";
 import { readTaskClock } from "../runtime/taskClock.js";
 
 export { codexTaskClockArgs } from "../engines/codex/piTaskClock.js";
-export { grokTaskClockConfig } from "../engines/grok/piTaskClock.js";
 
 /** Operational diagnostic only. Brokered Grok reports from its attested per-turn boundary. */
 export function reportEngineTaskClockGap(engine: EngineKind): void {

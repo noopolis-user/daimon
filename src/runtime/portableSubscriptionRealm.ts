@@ -1,6 +1,5 @@
 import { cleanupSubscriptionCredentialTemporaries } from "./subscriptionCredentialCleanup.js";
 import { waitForSubscriptionLeaseReady } from "./subscriptionLeaseReady.js";
-import { createSubscriptionTurnGate } from "./subscriptionTurnGate.js";
 import { createHash, randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import { lstat, open, rename, unlink } from "node:fs/promises";
@@ -8,8 +7,13 @@ import path from "node:path";
 import { spawnRealTime as spawn, type ChildProcess } from "./taskClockProcess.js";
 import { terminateChild, trackCliChild } from "../pi/cliProcess.js";
 import { hasRefreshablePortableCredential } from "./portableCredentialAuth.js";
-import type { PortableRealmAgent, PortableRealmProfile, PortableCredentialJournal as Journal, PortableSubscriptionRealm, PortableSubscriptionRealmOptions } from "./portableSubscriptionRealmTypes.js";
+import type { PortableRealmProfile, PortableCredentialJournal as Journal, PortableSubscriptionRealm, PortableSubscriptionRealmOptions } from "./portableSubscriptionRealmTypes.js";
 
+/**
+ * The durable realm the auth gateway holds for its whole life: exclusive flock,
+ * bootstrap import and stale fence. A `lease.json` left by a pre-gateway
+ * per-wake lease is still read once at start and settled without an agent copy.
+ */
 export function createPortableSubscriptionRealm(profile: PortableRealmProfile) {
 const AUTH_FILE = "auth.json";
 const JOURNAL_FILE = "lease.json";
@@ -17,35 +21,24 @@ const STALE_FILE = "stale.json";
 const BOOTSTRAP_FILE = "bootstrap.json";
 const LEASE_FILE = ".daimon-lease";
 const MAX_CONTROL_BYTES = 4_096;
-async function startSubscriptionRealm(
-  configuredAgents: readonly PortableRealmAgent[],
-  options: PortableSubscriptionRealmOptions = {}
-): Promise<PortableSubscriptionRealm> {
+async function startSubscriptionRealm(options: PortableSubscriptionRealmOptions = {}): Promise<PortableSubscriptionRealm> {
   const durablePath = options.durablePath ?? profile.contract.durableMountPath;
   const bootstrapPath = options.bootstrapPath ?? profile.contract.bootstrapMountPath;
   await verifyPrivateDirectory(durablePath);
   const { child: lease, lock } = await acquireRealmLease(durablePath, options);
-  const agents = new Map(configuredAgents.map((agent) => [agent.id, agent]));
-  const gate = createSubscriptionTurnGate({ assertLive: () => { if (lease.exitCode !== null || lease.signalCode !== null || lease.killed) throw redact(); } });
   let closePromise: Promise<void> | undefined;
   let bootstrapDigest: string;
   try {
-    for (const directory of [durablePath, ...configuredAgents.map((agent) => path.dirname(path.join(agent.runtimeHomePath, profile.contract.agentCredentialRelativePath)))]) await cleanupSubscriptionCredentialTemporaries(directory);
-    bootstrapDigest = await initializeRealm(durablePath, bootstrapPath, agents);
+    await cleanupSubscriptionCredentialTemporaries(durablePath);
+    bootstrapDigest = await initializeRealm(durablePath, bootstrapPath);
   } catch (error) {
     await terminateChild(lease).catch(() => undefined);
     await lock.close();
     throw redact(error);
   }
-  const withCredential = async <T>(agent: PortableRealmAgent, operation: () => Promise<T>, signal?: AbortSignal): Promise<T> => {
-    if (agents.get(agent.id)?.runtimeHomePath !== agent.runtimeHomePath) throw redact();
-    return gate.run(() => runLeasedTurn(durablePath, bootstrapDigest, agent, operation, options.onTransitionForTest), signal);
-  };
   const authorityFile = path.join(durablePath, AUTH_FILE);
   const live = (): void => { if (lease.exitCode !== null || lease.signalCode !== null || lease.killed) throw redact(); };
   return {
-    withCredential,
-    // Sole-holder access for a process that owns the realm for its lifetime (the auth gateway).
     authority: {
       async read() { live(); if (await readStale(path.join(durablePath, STALE_FILE)) !== undefined) throw redact(); return (await readCredential(authorityFile)).bytes; },
       async replace(bytes) { live(); await atomicCredentialWrite(authorityFile, bytes); },
@@ -53,27 +46,17 @@ async function startSubscriptionRealm(
       assertLive: live
     },
     close: () => closePromise ??= (async () => {
-      await gate.close();
       try { await terminateChild(lease); } finally { await lock.close(); }
     })()
   };
 }
-async function initializeRealm(
-  durablePath: string,
-  bootstrapPath: string,
-  agents: ReadonlyMap<string, PortableRealmAgent>
-): Promise<string> {
+async function initializeRealm(durablePath: string, bootstrapPath: string): Promise<string> {
   const bootstrap = await readCredential(bootstrapPath);
   try {
     const observedBootstrap = await readBootstrap(path.join(durablePath, BOOTSTRAP_FILE));
     const journal = await readJournal(path.join(durablePath, JOURNAL_FILE));
     if (journal !== undefined) {
-      await recoverJournal(
-        durablePath,
-        journal,
-        agents,
-        observedBootstrap?.bootstrap_digest ?? bootstrap.digest
-      );
+      await settleLegacyJournal(durablePath, journal, observedBootstrap?.bootstrap_digest ?? bootstrap.digest);
     }
     const stale = await readStale(path.join(durablePath, STALE_FILE));
     const authority = await readOptionalAuthority(path.join(durablePath, AUTH_FILE));
@@ -96,140 +79,22 @@ async function initializeRealm(
     bootstrap.bytes.fill(0);
   }
 }
-async function runLeasedTurn<T>(
-  durablePath: string,
-  bootstrapDigest: string,
-  agent: PortableRealmAgent,
-  operation: () => Promise<T>,
-  onTransition?: PortableSubscriptionRealmOptions["onTransitionForTest"]
-): Promise<T> {
-  if (await readStale(path.join(durablePath, STALE_FILE)) !== undefined) throw redact();
-  await verifyPrivateDirectory(path.dirname(path.join(
-    agent.runtimeHomePath,
-    profile.contract.agentCredentialRelativePath
-  )));
-  const target = path.join(agent.runtimeHomePath, profile.contract.agentCredentialRelativePath);
-  await assertAbsent(target);
-  const authority = await readCredential(path.join(durablePath, AUTH_FILE));
-  const journalPath = path.join(durablePath, JOURNAL_FILE);
-  try {
-    await writeJournal(journalPath, { agent_id: agent.id, source_digest: authority.digest, state: "preparing", version: `noopolis.daimon.${profile.engine}-credential-lease.v1` });
-    await atomicCredentialWrite(target, authority.bytes);
-    await writeJournal(journalPath, { agent_id: agent.id, source_digest: authority.digest, state: "active", version: `noopolis.daimon.${profile.engine}-credential-lease.v1` });
-  } finally {
-    authority.bytes.fill(0);
-  }
-  let result: T | undefined;
-  let operationError: unknown;
-  try { result = await operation(); } catch (error) { operationError = error; }
-  if (profile.isAuthenticationRejected(operationError)) {
-    await unlink(target).catch(ignoreMissing);
-    await syncDirectory(path.dirname(target));
-    await markStale(durablePath, bootstrapDigest);
-    throw redact();
-  }
-  const candidate = await tryReadCredential(target);
-  if (candidate === undefined) {
-    await unlink(target).catch(ignoreMissing);
-    await syncDirectory(path.dirname(target));
-    await markStale(durablePath, bootstrapDigest);
-    throw redact(operationError);
-  }
-  try {
-    await writeJournal(journalPath, {
-      agent_id: agent.id,
-      promoted_digest: candidate.digest,
-      source_digest: authority.digest,
-      state: "promoting",
-      version: `noopolis.daimon.${profile.engine}-credential-lease.v1`
-    });
-    await onTransition?.("promotion_prepared");
-    await atomicCredentialWrite(path.join(durablePath, AUTH_FILE), candidate.bytes);
-    await onTransition?.("authority_replaced");
-    await writeJournal(journalPath, {
-      agent_id: agent.id,
-      promoted_digest: candidate.digest,
-      source_digest: authority.digest,
-      state: "promoted",
-      version: `noopolis.daimon.${profile.engine}-credential-lease.v1`
-    });
-    await unlink(target).catch(ignoreMissing);
-    await syncDirectory(path.dirname(target));
-    await unlink(journalPath).catch(ignoreMissing);
-    await syncDirectory(durablePath);
-  } finally {
-    candidate.bytes.fill(0);
-  }
-  if (operationError !== undefined) throw operationError;
-  return result as T;
-}
-async function recoverJournal(
-  durablePath: string,
-  journal: Journal,
-  agents: ReadonlyMap<string, PortableRealmAgent>,
-  bootstrapDigest: string
-): Promise<void> {
-  const agent = agents.get(journal.agent_id);
-  const target = agent === undefined ? undefined
-    : path.join(agent.runtimeHomePath, profile.contract.agentCredentialRelativePath);
-  if (target !== undefined) await verifyPrivateDirectory(path.dirname(target));
+/**
+ * A pre-gateway lease journal. No agent copy is reachable any more, so a
+ * finished or never-started lease is cleared when the authority still matches
+ * it, and any lease that may hold a newer refresh elsewhere fences the realm.
+ */
+async function settleLegacyJournal(durablePath: string, journal: Journal, bootstrapDigest: string): Promise<void> {
   const authority = await readCredential(path.join(durablePath, AUTH_FILE));
   const authorityDigest = authority.digest;
-  try {
-    const expected = journal.state === "promoted" ? [journal.promoted_digest]
-      : journal.state === "promoting" ? [journal.source_digest, journal.promoted_digest]
-        : [journal.source_digest];
-    if (!expected.includes(authorityDigest)) {
-      if (target !== undefined) { await unlink(target).catch(ignoreMissing); await syncDirectory(path.dirname(target)); }
-      await markStale(durablePath, bootstrapDigest);
-      return;
-    }
-  } finally { authority.bytes.fill(0); }
-  if (journal.state === "promoted") {
-    if (target !== undefined) {
-      await unlink(target).catch(ignoreMissing);
-      await syncDirectory(path.dirname(target));
-    }
-    await unlink(path.join(durablePath, JOURNAL_FILE)).catch(ignoreMissing);
-    await syncDirectory(durablePath);
-    return;
-  }
-  if (journal.state === "preparing") {
-    if (target !== undefined) { await unlink(target).catch(ignoreMissing); await syncDirectory(path.dirname(target)); }
-    await unlink(path.join(durablePath, JOURNAL_FILE)).catch(ignoreMissing);
-    await syncDirectory(durablePath);
-    return;
-  }
-  const candidate = target === undefined ? undefined : await tryReadCredential(target);
-  if (candidate === undefined) {
-    if (target !== undefined) {
-      await unlink(target).catch(ignoreMissing);
-      await syncDirectory(path.dirname(target));
-    }
+  authority.bytes.fill(0);
+  const expected = journal.state === "promoted" ? journal.promoted_digest : journal.state === "preparing" ? journal.source_digest : undefined;
+  if (expected === undefined || expected !== authorityDigest) {
     await markStale(durablePath, bootstrapDigest);
     return;
   }
-  try {
-    if (journal.state === "promoting" && candidate.digest !== journal.promoted_digest) {
-      await unlink(target!).catch(ignoreMissing);
-      await syncDirectory(path.dirname(target!));
-      await markStale(durablePath, bootstrapDigest);
-      return;
-    }
-    if (journal.state === "active") await writeJournal(path.join(durablePath, JOURNAL_FILE), { ...journal, promoted_digest: candidate.digest, state: "promoting" });
-    if (authorityDigest === journal.source_digest) {
-      await atomicCredentialWrite(path.join(durablePath, AUTH_FILE), candidate.bytes);
-    }
-    await writeJournal(path.join(durablePath, JOURNAL_FILE), {
-      ...journal, promoted_digest: candidate.digest, state: "promoted"
-    });
-    await unlink(target!).catch(ignoreMissing);
-    await syncDirectory(path.dirname(target!));
-    await unlink(path.join(durablePath, JOURNAL_FILE)).catch(ignoreMissing);
-    await syncDirectory(durablePath);
-  } finally {
-    candidate.bytes.fill(0);
-  }
+  await unlink(path.join(durablePath, JOURNAL_FILE)).catch(ignoreMissing);
+  await syncDirectory(durablePath);
 }
 async function markStale(durablePath: string, bootstrapDigest: string): Promise<void> {
   await atomicJsonWrite(path.join(durablePath, STALE_FILE), {
@@ -259,9 +124,6 @@ async function readCredential(file: string): Promise<{ bytes: Buffer; digest: st
   } finally {
     await handle?.close().catch(() => undefined);
   }
-}
-async function tryReadCredential(file: string): Promise<Awaited<ReturnType<typeof readCredential>> | undefined> {
-  try { return await readCredential(file); } catch { return undefined; }
 }
 async function readOptionalAuthority(file: string): Promise<Awaited<ReturnType<typeof readCredential>> | undefined> {
   try {
@@ -294,7 +156,6 @@ async function atomicWrite(file: string, bytes: Uint8Array, mode: number): Promi
     await handle?.close().catch(() => undefined); await unlink(temporary).catch(() => undefined);
   }
 }
-async function writeJournal(file: string, value: Journal): Promise<void> { await atomicJsonWrite(file, value); }
 async function readJournal(file: string): Promise<Journal | undefined> {
   return readPrivateJson(file, (value) => {
     const candidate = value as Partial<Journal>;
@@ -349,14 +210,6 @@ async function readPrivateJson<T>(file: string, parse: (value: unknown) => T): P
 async function verifyPrivateDirectory(directory: string): Promise<void> {
   try { const entry = await lstat(directory); if (!entry.isDirectory() || entry.isSymbolicLink() || entry.uid !== process.getuid?.() || (entry.mode & 0o777) !== profile.contract.directoryMode) throw new Error("unsafe"); }
   catch { throw redact(); }
-}
-async function assertAbsent(file: string): Promise<void> {
-  try {
-    await lstat(file);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
-  }
-  throw redact();
 }
 async function acquireRealmLease(durablePath: string, options: PortableSubscriptionRealmOptions): Promise<{ child: ChildProcess; lock: Awaited<ReturnType<typeof open>> }> {
   let lock: Awaited<ReturnType<typeof open>> | undefined;

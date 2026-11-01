@@ -66,15 +66,16 @@ that fails to write back is retried on the next request and on a timer, and
 `GET /v1/health` (that key's engines, realm state, `write_back` and usage
 counters) answers 503 `write_back_pending` until it lands, so readiness refuses.
 
-Migrating an existing realm whose `lease.json` is `active` or `promoting` for an agent the
-gateway does not know fences it on the gateway's first start; re-import the
-login.
+A realm migrated from the retired per-wake lease may still hold `lease.json`.
+The gateway reads it once at start: a `promoted` or `preparing` lease that
+matches the durable login is cleared, and an `active` or `promoting` one (whose
+newest refresh lived in an agent home) fences the realm; re-import the login.
 
-When the runtime sees `DAIMON_GATEWAY_URL` and `DAIMON_GATEWAY_KEY`, Codex wakes
-use it: Codex gets a `daimon_gateway` provider (`env_key = DAIMON_GATEWAY_KEY`),
-no realm lease or per-wake `auth.json` copy happens, readiness calls the health
-route and refuses any `auth.json` in `CODEX_HOME`, and the key is redacted from
-diagnostics. Without both variables, behavior is unchanged.
+The runtime requires `DAIMON_GATEWAY_URL` and `DAIMON_GATEWAY_KEY` for Codex:
+Codex gets a `daimon_gateway` provider (`env_key = DAIMON_GATEWAY_KEY`),
+readiness calls the health route and refuses any `auth.json` in `CODEX_HOME`,
+and the key is redacted from diagnostics. Without both variables a Codex agent
+refuses to start.
 
 ### Grok
 
@@ -87,13 +88,12 @@ then an atomic write-back of the CLI file. Only a diagnostic the CLI names as an
 authentication refusal fences; a timeout or network fault stays transient.
 Proactive refresh before `expires_at` is single-flight and at most once a minute.
 
-When the engine broker process sees `DAIMON_GATEWAY_URL` and
-`DAIMON_GATEWAY_KEY`, it takes no realm lease and reads no credential: its
-upstream is the gateway with its own key. Metering, admission, budgets, slots,
-sandbox and MCP are unchanged. A gateway 401 (its key was refused) is a named
-400 `gateway_unauthorized`, never a refresh; a gateway 403 `auth_stale` fences
-the broker exactly as a rejected local refresh does. Without both variables the
-broker owns its realm as before.
+The engine broker requires `DAIMON_GATEWAY_URL` and `DAIMON_GATEWAY_KEY`: it
+takes no realm lease and reads no credential, and its upstream is the gateway
+with its own key. A gateway 401 (its key was refused) is a named 400
+`gateway_unauthorized`, never a refresh; a gateway 403 `auth_stale` fences the
+broker until restart. The service config still carries `credentialHome`, which
+is validated but unused.
 
 ## Task clock environment
 

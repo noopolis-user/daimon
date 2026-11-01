@@ -7,8 +7,3 @@ export type PortableCredentialKind = PortableEngineKind;
 export function hasRefreshablePortableCredential(engine: PortableCredentialKind, bytes: Uint8Array): boolean {
   return getEngineHandler(engine).hasRefreshableCredential(bytes);
 }
-
-/** Returns only the provider-native bearer values for exact in-process redaction. */
-export function portableCredentialSecretValues(engine: PortableCredentialKind, bytes: Uint8Array): readonly string[] {
-  return getEngineHandler(engine).credentialSecretValues(bytes);
-}

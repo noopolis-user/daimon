@@ -109,16 +109,16 @@ test("owns the real portable realm: reads it, writes back the CLI schema, and fe
     await writeFile(fakeFlock, "#!/usr/bin/env node\nprocess.exit(0);\n", { mode: 0o700 });
     await chmod(fakeFlock, 0o700);
     const options = { durablePath, bootstrapPath, flock: fakeFlock };
-    let realm = await startCodexSubscriptionRealm([], options);
-    const owner = await createCodexRealmOwner({ authority: realm.authority!, log: () => undefined, refresh: async () => tokens(1) });
+    let realm = await startCodexSubscriptionRealm(options);
+    const owner = await createCodexRealmOwner({ authority: realm.authority, log: () => undefined, refresh: async () => tokens(1) });
     await owner.rejected(await owner.bearer());
     assert.equal(parseCodexAuth(await readFile(path.join(durablePath, "auth.json"))).refreshToken, "synthetic-refresh-1");
     await realm.close();
-    realm = await startCodexSubscriptionRealm([], options);
-    const restarted = await createCodexRealmOwner({ authority: realm.authority!, log: () => undefined, refresh: async () => { throw new CodexRefreshRejected(); } });
+    realm = await startCodexSubscriptionRealm(options);
+    const restarted = await createCodexRealmOwner({ authority: realm.authority, log: () => undefined, refresh: async () => { throw new CodexRefreshRejected(); } });
     assert.equal((await restarted.bearer()).accessToken, tokens(1).accessToken);
     await restarted.fence();
-    await assert.rejects(realm.authority!.read(), /unavailable or stale/u);
+    await assert.rejects(realm.authority.read(), /unavailable or stale/u);
     await realm.close();
   } finally {
     await rm(root, { recursive: true, force: true });

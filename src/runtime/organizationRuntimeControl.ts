@@ -22,7 +22,7 @@ export type OrganizationRuntimeControlHost = OrganizationRuntimeHost & Readonly<
   /** Ends a drain and dispatches the queue. Never clears the latched `fuse.stop`. */
   resume(token: string | undefined): Promise<WorkAvailability | undefined>;
 }>;
-export type OrganizationRuntimeControlOptions = Readonly<{ acceptanceStorePath: string; controlToken?: string; subscriptionRealmPaths?: import("./subscriptionRealmPaths.js").SubscriptionRealmPaths }>;
+export type OrganizationRuntimeControlOptions = Readonly<{ acceptanceStorePath: string; controlToken?: string }>;
 type TestControlOptions = OrganizationRuntimeControlOptions & Readonly<{
   scheduleOptions?: Pick<ScheduleControllerOptions, "clearTimer" | "now" | "setTimer">;
   storeOptions?: WakeAcceptanceStoreTestOptions;
@@ -36,7 +36,7 @@ type TestControlOptions = OrganizationRuntimeControlOptions & Readonly<{
 export function createOrganizationRuntimeControlHost(config: unknown, options: OrganizationRuntimeControlOptions): OrganizationRuntimeControlHost {
   const parsed = parseOrganizationRuntimeConfig(config);
   const registry: AttentionRegistry = new Map();
-  return createControl(parsed, createOrganizationRuntimeHostWithAttention(parsed, { sharedProtectedPaths: [options.acceptanceStorePath], subscriptionRealmPaths: options.subscriptionRealmPaths }, registry), options, registry);
+  return createControl(parsed, createOrganizationRuntimeHostWithAttention(parsed, { sharedProtectedPaths: [options.acceptanceStorePath] }, registry), options, registry);
 }
 /** @internal Test seam; intentionally absent from the public runtime barrel. */
 export function createOrganizationRuntimeControlHostWithCoreForTest(config: unknown, host: OrganizationRuntimeHost, options: TestControlOptions): OrganizationRuntimeControlHost {

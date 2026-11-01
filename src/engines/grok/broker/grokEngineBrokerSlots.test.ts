@@ -38,8 +38,7 @@ async function fixture(t: TestContext) {
   let launches = 0, closed = 0;
   const live = new Set<string>();
   const deps: GrokEngineBrokerDependencies = {
-    acquireLease: async () => ({ close: async () => { closed++; } }),
-    createAuthority: () => ({ initialize: async () => {}, accessToken: async () => "unused", markRejected: async () => {}, isStale: () => false }),
+    gatewayFetch: async () => new Response(JSON.stringify({ status: "ok", engines: ["grok"] }), { status: 200 }),
     needsTaskClockReconciliation: async (_profile, _pins, file) => {
       assert.ok([0, 1].some((slot) => file === brokerTaskClockFileFor(slot)));
       return true;
@@ -59,7 +58,7 @@ async function fixture(t: TestContext) {
       capabilities: { issue: (_agent, turn) => turn, revoke() {} }, registerIsolationGuard() {}, revokeIsolationGuard() {},
       registerTurn(turn) { assert.equal(live.has(turn), false); live.add(turn); },
       revokeTurn(turn) { live.delete(turn); } }),
-    startMcp: async () => ({ register: (_agent, turn) => turn, revoke() {}, close: async () => {} }),
+    startMcp: async () => ({ register: (_agent, turn) => turn, revoke() {}, close: async () => { closed++; } }),
     runNative: async (_client, input, signal) => {
       launches++; signals[input.slot] = signal!; turnIds[input.slot] = input.turnId;
       offsets[input.slot] = await readFile(fileFor(input.slot), "utf8");
@@ -75,7 +74,7 @@ async function fixture(t: TestContext) {
     }
   };
   const start = async (overrides: Partial<GrokEngineBrokerDependencies> = {}, regs = registrations) => {
-    const broker = await startGrokEngineBroker({ grokCommand: "unused", nativeClient: "unused", credentialHome: root,
+    const broker = await startGrokEngineBroker({ nativeClient: "unused", gateway: { url: "http://127.0.0.1:9", key: "test-gateway-key-0123456789" },
       turnStore: path.join(root, "turns"), registrations: regs }, { ...deps, ...overrides });
     brokers.push(broker);
     return broker;
@@ -184,7 +183,7 @@ test("startup and per-turn attestation both reject a clocked profile exposing it
   assert.equal(f.launches(), 0);
 });
 
-test("shutdown keeps the realm lease until an admitted slot reset finishes", async (t) => {
+test("shutdown keeps its services until an admitted slot reset finishes", async (t) => {
   const f = await fixture(t), entered = deferred(), finish = deferred();
   let block = false;
   const broker = await f.start({ writeTaskClock: async (value, file) => {

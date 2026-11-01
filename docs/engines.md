@@ -145,7 +145,6 @@ providers.
 Live scripts and examples spend real tokens and require local subscription
 auth:
 
-- `npm run live:grok-broker`
 - `npm run e2e:pi-agent`
 - `npm run e2e:pi-memory-org`
 - `npm run e2e:jungian-play-org`

@@ -135,5 +135,4 @@ export const decodeGrokHeadlessTurn = (output: string): GrokHeadlessTurn => {
 };
 
 /** Text-only view of {@link decodeGrokHeadlessTurn}, for callers that do not meter. */
-export const decodeGrokHeadlessResult = (output: string): string => decodeGrokHeadlessTurn(output).text;
 import { asGrokAuthenticationRejected } from "./broker/grokAuthenticationError.js";

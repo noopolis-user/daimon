@@ -117,8 +117,6 @@ test("upstream 429 and 5xx are relayed to the broker with the token redacted", a
 
 function brokerDependencies(events: string[]): GrokEngineBrokerDependencies {
   return {
-    acquireLease: async () => { events.push("lease"); return { close: async () => undefined }; },
-    createAuthority: () => { events.push("authority"); return { initialize: async () => undefined, accessToken: async () => "unused", markRejected: async () => undefined, isStale: () => false }; },
     startProxy: async (_authority, upstream) => {
       events.push(upstream === undefined ? "proxy:provider" : "proxy:gateway");
       return { port: 43123, close: async () => undefined, capabilities: { issue: () => "provider", revoke() {} }, registerIsolationGuard() {}, revokeIsolationGuard() {}, registerTurn() {}, revokeTurn() {} };
@@ -135,17 +133,10 @@ function brokerDependencies(events: string[]): GrokEngineBrokerDependencies {
 
 const registration = { agentId: "agent", slot: 0, workerUid: 2200, workspace: "/workspace/0", profilePath: "/unused/.grok/sandbox.toml", eventsPath: "/unused/.grok/sessions/sandbox-events.jsonl", profileSha256: "a".repeat(64), usageLedgerPath: "/unused/usage.jsonl", limits: { maxRequests: 2, maxTokens: 100, timeoutMs: 5000 }, model: { model: "grok-4.6", reasoningEffort: "low" } } as const;
 
-test("without a gateway the broker leases its realm and calls the provider exactly as before", async () => {
-  const events: string[] = [];
-  const broker = await startGrokEngineBroker({ grokCommand: "unused", nativeClient: "unused", credentialHome: "/unused", turnStore: "/unused/turns", registrations: [registration] }, brokerDependencies(events));
-  await broker.close();
-  assert.deepEqual(events, ["lease", "authority", "proxy:provider"]);
-});
-
-test("with a gateway the broker takes no realm lease and builds no credential authority", async () => {
+test("the broker takes no realm lease and probes the gateway before serving", async () => {
   const events: string[] = [];
   const gatewayFetch: typeof fetch = async (input) => { events.push(`health:${String(input)}`); return new Response(JSON.stringify({ status: "ok", engines: ["grok"] }), { status: 200 }); };
-  const broker = await startGrokEngineBroker({ grokCommand: "unused", nativeClient: "unused", credentialHome: "/unused", turnStore: "/unused/turns", registrations: [registration], gateway: { url: "http://127.0.0.1:9", key: GATEWAY_KEY } }, { ...brokerDependencies(events), gatewayFetch });
+  const broker = await startGrokEngineBroker({ nativeClient: "unused", turnStore: "/unused/turns", registrations: [registration], gateway: { url: "http://127.0.0.1:9", key: GATEWAY_KEY } }, { ...brokerDependencies(events), gatewayFetch });
   assert.equal(broker.readiness().credentialStale, false);
   await broker.close();
   assert.deepEqual(events, ["health:http://127.0.0.1:9/v1/health", "proxy:gateway"]);

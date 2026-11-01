@@ -10,9 +10,8 @@ import { terminateChild, trackCliChild } from "./cliProcess.js";
  * Codex takes `-c mcp_servers.daimon.url=<endpoint>` per invocation and needs
  * nothing here. AGY is config-file driven, so Daimon registers the ephemeral
  * endpoint before the turn and removes it afterwards through its own `mcp
- * add`/`mcp remove` subcommands. Grok no longer uses this path: its project
- * scope is ignored in untrusted workspaces on 1.0.34, so its endpoint is written
- * into the agent's Daimon-owned GROK_HOME (`grokHomeMcpRegistration.ts`).
+ * add`/`mcp remove` subcommands. Grok never spawns here: every Grok turn runs
+ * through the engine broker.
  *
  * The registration is deliberately performed by the engine CLI rather than by
  * writing its config file directly: the file format belongs to the engine, and
@@ -73,9 +72,9 @@ const runRegistrationCommand = async (
 /**
  * Registers the endpoint, returning a single-shot remover.
  *
- * `verify` is the caller's production authority (the Grok sandbox profile
- * check); it runs before both the add and the remove so a registration can
- * never be issued against an unverified engine.
+ * `verify` is the caller's production authority; it runs before both the add
+ * and the remove so a registration can never be issued against an unverified
+ * engine.
  */
 export const registerCliMcpServer = async (
   input: CliMcpRegistrationInput

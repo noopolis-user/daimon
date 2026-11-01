@@ -35,7 +35,7 @@ test("actual engine children stay real without a readiness probe; unset children
   const command = path.join(root, "engine");
   await writeFile(command, `#!${process.execPath}\nprocess.stdin.resume();process.stdin.on('end',()=>process.stdout.write(JSON.stringify(Object.fromEntries(${JSON.stringify(observedKeys)}.filter(k=>process.env[k]!==undefined).map(k=>[k,process.env[k]])))));\n`);
   await chmod(command, 0o700);
-  for (const engine of ["codex", "grok", "agy"] as const) {
+  for (const engine of ["codex", "agy"] as const) {
     const child = spawnEngine({ engine, command }, "hello", { cwd: root, runtimeHomePath: root }, "http://127.0.0.1:1234/mcp");
     assert.deepEqual(JSON.parse(await readChild(child, 5000, [])), { LC_ALL: process.env.LC_ALL ?? "C" });
   }
