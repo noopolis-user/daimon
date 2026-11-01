@@ -68,7 +68,7 @@ test("readiness calls the authenticated health route and refuses a credential in
   const server = createServer((request, response) => {
     seen.push(request.headers.authorization);
     response.writeHead(healthy ? 200 : 403, { "content-type": "application/json" });
-    response.end(JSON.stringify(healthy ? { status: "ok", engines: ["codex"] } : { error: "auth_stale" }));
+    response.end(JSON.stringify(healthy ? { status: "ok", engines: ["codex"], write_back: { codex: "ok" } } : { error: "auth_stale" }));
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   t.after(() => new Promise<void>((resolve) => server.close(() => resolve())));

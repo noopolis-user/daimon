@@ -58,8 +58,17 @@ bearer. Config (`noopolis.daimon.gateway.v1`):
 realm contract mounts). The key table (`noopolis.daimon.gateway-keys.v1`) maps
 `sha256(key)` to `{ agent_id, engines }` and must not be world-readable.
 Statuses: 401 for a bad key, 404 outside the route list, 403 `auth_stale` when
-the login cannot be refreshed, upstream 429/5xx relayed. `GET /v1/health` with a
-key answers that key's engines, realm state and usage counters.
+the login cannot be refreshed, 503 `realm_unavailable` once the realm lease is
+lost, upstream 429/5xx relayed. Only a named refusal from the token endpoint
+(`invalid_grant`, `refresh_token_reused|invalidated|expired`, `token_revoked`)
+fences the realm; 408, 429 and anything else stay transient. A refreshed login
+that fails to write back is retried on the next request and on a timer, and
+`GET /v1/health` (that key's engines, realm state, `write_back` and usage
+counters) answers 503 `write_back_pending` until it lands, so readiness refuses.
+
+Migrating an existing realm whose `lease.json` is `active` or `promoting` for an agent the
+gateway does not know fences it on the gateway's first start; re-import the
+login.
 
 When the runtime sees `DAIMON_GATEWAY_URL` and `DAIMON_GATEWAY_KEY`, Codex wakes
 use it: Codex gets a `daimon_gateway` provider (`env_key = DAIMON_GATEWAY_KEY`),

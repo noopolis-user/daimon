@@ -22,8 +22,9 @@ export async function runGatewayCli(arguments_: readonly string[]): Promise<Runn
     ...(config.codex.bootstrapPath === undefined ? {} : { bootstrapPath: config.codex.bootstrapPath })
   });
   let server: GatewayServer;
+  let owner: Awaited<ReturnType<typeof createCodexRealmOwner>>;
   try {
-    const owner = await createCodexRealmOwner({ authority: realm.authority!, refresh: createCodexRefresh(config.codex.tokenUrl === undefined ? {} : { tokenUrl: config.codex.tokenUrl }) });
+    owner = await createCodexRealmOwner({ authority: realm.authority!, refresh: createCodexRefresh(config.codex.tokenUrl === undefined ? {} : { tokenUrl: config.codex.tokenUrl }) });
     server = await startGatewayServer({ host: config.host, port: config.port, keys, codex: { owner, ...(config.codex.upstreamBaseUrl === undefined ? {} : { upstreamBaseUrl: config.codex.upstreamBaseUrl }) } });
   } catch (error) {
     await realm.close().catch(() => undefined);
@@ -34,6 +35,7 @@ export async function runGatewayCli(arguments_: readonly string[]): Promise<Runn
   const stop = (): Promise<void> => stopping ??= (async () => {
     process.removeListener("SIGINT", onSignal);
     process.removeListener("SIGTERM", onSignal);
+    owner.close();
     try { await server.close(); } finally { await realm.close(); }
   })();
   const onSignal = (): void => { void stop().catch(() => { process.exitCode = 1; }); };

@@ -46,7 +46,8 @@ async function fixture(t: import("node:test").TestContext, upstream: UpstreamHan
     staleMarks: 0,
     read: async () => Buffer.from(stored),
     replace: async (bytes) => { stored = Buffer.from(bytes); },
-    markStale: async () => { authority.staleMarks += 1; }
+    markStale: async () => { authority.staleMarks += 1; },
+    assertLive: () => undefined
   };
   const logs: string[] = [];
   const owner = await createCodexRealmOwner({ authority, refresh: createCodexRefresh({ tokenUrl: `${base}/oauth/token` }), log: (line) => logs.push(line) });
@@ -170,4 +171,54 @@ test("upstream 429 and 5xx are relayed with a scrubbed, bounded body", async (t)
   status = 503;
   assert.equal((await f.call("/v1/codex/responses")).status, 503);
   assert.equal(f.tokenCalls(), 0);
+});
+
+test("a rate-limited token endpoint answers auth_stale without fencing", async (t) => {
+  let tokenStatus = 429;
+  const f = await fixture(t, (_request, response, generation) => {
+    if (generation === 0) { response.writeHead(401); response.end(); return; }
+    sse(response);
+  }, (response) => {
+    if (tokenStatus === 429) { response.writeHead(429, { "content-type": "application/json" }); response.end('{"error":"invalid_grant"}'); return; }
+    respondToken(response, 1);
+  });
+  const limited = await f.call("/v1/codex/responses");
+  assert.equal(limited.status, 403);
+  assert.deepEqual(JSON.parse(limited.text), { error: "auth_stale" });
+  assert.equal(f.authority.staleMarks, 0);
+  tokenStatus = 200;
+  assert.equal((await f.call("/v1/codex/responses")).status, 200, "the realm was not fenced");
+  assert.equal(f.tokenCalls(), 2);
+});
+
+test("a write-back that fails is retried and readiness refuses until it lands", async (t) => {
+  const f = await fixture(t, (_request, response, generation) => {
+    if (generation === 0) { response.writeHead(401); response.end(); return; }
+    sse(response);
+  });
+  const replace = f.authority.replace;
+  let failing = true;
+  (f.authority as { replace: typeof replace }).replace = async (bytes) => { if (failing) throw new Error("disk"); await replace(bytes); };
+  assert.equal((await f.call("/v1/codex/responses")).status, 200);
+  assert.equal(f.stored().refreshToken, "synthetic-refresh-0", "the write-back has not landed");
+  const pending = await f.call("/v1/health", { method: "GET", body: null });
+  assert.equal(pending.status, 503);
+  assert.deepEqual(JSON.parse(pending.text).write_back, { codex: "pending" });
+  failing = false;
+  assert.equal((await f.call("/v1/codex/responses")).status, 200);
+  assert.equal(f.stored().refreshToken, "synthetic-refresh-1", "the next bearer() flushed the pending login");
+  const healthy = await f.call("/v1/health", { method: "GET", body: null });
+  assert.equal(healthy.status, 200);
+  assert.deepEqual(JSON.parse(healthy.text).write_back, { codex: "ok" });
+  f.assertCleanLogs();
+});
+
+test("a lost realm lease refuses every request before any upstream call", async (t) => {
+  const f = await fixture(t, (_request, response) => sse(response));
+  (f.authority as { assertLive: () => void }).assertLive = () => { throw new Error("lease gone"); };
+  const refused = await f.call("/v1/codex/responses");
+  assert.equal(refused.status, 503);
+  assert.deepEqual(JSON.parse(refused.text), { error: "realm_unavailable" });
+  assert.equal(f.seen.length, 0);
+  assert.equal((await f.call("/v1/health", { method: "GET", body: null })).status, 503);
 });

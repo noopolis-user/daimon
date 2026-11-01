@@ -2,8 +2,8 @@ import { ENGINE_DESCRIPTORS } from "../engines/descriptors.js";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { Socket } from "node:net";
 import { redactCredentialText } from "../core/credentialRedaction.js";
-import { CodexAuthStale, type CodexBearer, type CodexRealmOwner } from "./codexRealmOwner.js";
-import type { GatewayEngine, GatewayKeyEntry, GatewayKeyTable } from "./keyTable.js";
+import { CodexAuthStale, CodexRealmLost, type CodexBearer, type CodexRealmOwner } from "./codexRealmOwner.js";
+import type { GatewayKeyEntry, GatewayKeyTable } from "./keyTable.js";
 import { createUsageTap, GATEWAY_LIMITS, readBoundedText, readRequestBody, relayResponseHeaders, RequestTooLarge, upstreamRequestHeaders } from "./relay.js";
 
 export const CODEX_UPSTREAM_BASE_URL = "https://chatgpt.com/backend-api/codex";
@@ -70,6 +70,7 @@ export async function startGatewayServer(options: GatewayServerOptions): Promise
       if (error instanceof Refusal) return refuse(request, response, error.status, error.code, agent);
       if (error instanceof RequestTooLarge) return refuse(request, response, 413, "request_too_large", agent);
       if (error instanceof CodexAuthStale) return refuse(request, response, 403, "auth_stale", agent);
+      if (error instanceof CodexRealmLost) return refuse(request, response, 503, "realm_unavailable", agent);
       log(`daimon gateway: codex relay failed (${error instanceof Error ? error.name : "unknown"})`);
       if (!response.headersSent) return refuse(request, response, 502, "upstream_unavailable", agent);
       response.destroy();
@@ -126,12 +127,21 @@ export async function startGatewayServer(options: GatewayServerOptions): Promise
   };
 
   const health = (response: ServerResponse, entry: GatewayKeyEntry, agent: GatewayAgentCounters): void => {
-    const realms: Record<string, "ready" | "stale"> = {};
-    for (const engine of entry.engines) realms[engine] = engineStale(engine) ? "stale" : "ready";
-    if (Object.values(realms).includes("stale")) { agent.refused += 1; return json(response, 403, { error: "auth_stale", realms }); }
-    json(response, 200, { status: "ok", agent_id: entry.agentId, engines: entry.engines, realms, usage: { ...agent } });
+    const codex = entry.engines.includes(ENGINE_DESCRIPTORS.codex.id);
+    const realms: Record<string, "ready" | "stale" | "unavailable"> = {};
+    const writeBack: Record<string, "ok" | "pending"> = {};
+    if (codex) {
+      realms[ENGINE_DESCRIPTORS.codex.id] = !owner.live() ? "unavailable" : owner.stale() ? "stale" : "ready";
+      writeBack[ENGINE_DESCRIPTORS.codex.id] = owner.writeBackPending() ? "pending" : "ok";
+    }
+    const body = { agent_id: entry.agentId, engines: entry.engines, realms, write_back: writeBack };
+    const states = Object.values(realms);
+    if (states.includes("stale")) { agent.refused += 1; return json(response, 403, { error: "auth_stale", ...body }); }
+    if (states.includes("unavailable")) { agent.refused += 1; return json(response, 503, { error: "realm_unavailable", ...body }); }
+    // A refreshed login not yet durable in the realm would be lost on restart: not ready until it lands.
+    if (Object.values(writeBack).includes("pending")) { agent.refused += 1; return json(response, 503, { error: "write_back_pending", ...body }); }
+    json(response, 200, { status: "ok", ...body, usage: { ...agent } });
   };
-  const engineStale = (engine: GatewayEngine): boolean => engine === ENGINE_DESCRIPTORS.codex.id && owner.stale();
 
   const refuse = (request: IncomingMessage, response: ServerResponse, status: number, code: string, agent?: GatewayAgentCounters, headers: Record<string, string> = {}): void => {
     if (agent !== undefined) agent.refused += 1;

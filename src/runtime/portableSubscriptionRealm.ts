@@ -49,7 +49,8 @@ async function startSubscriptionRealm(
     authority: {
       async read() { live(); if (await readStale(path.join(durablePath, STALE_FILE)) !== undefined) throw redact(); return (await readCredential(authorityFile)).bytes; },
       async replace(bytes) { live(); await atomicCredentialWrite(authorityFile, bytes); },
-      markStale: async () => { live(); await markStale(durablePath, bootstrapDigest); }
+      markStale: async () => { live(); await markStale(durablePath, bootstrapDigest); },
+      assertLive: live
     },
     close: () => closePromise ??= (async () => {
       await gate.close();

@@ -17,6 +17,8 @@ export type PortableRealmAuthority = Readonly<{
   read(): Promise<Buffer>;
   replace(bytes: Uint8Array): Promise<void>;
   markStale(): Promise<void>;
+  /** Throws once the exclusive lease is gone. */
+  assertLive(): void;
 }>;
 export type PortableSubscriptionRealm = Readonly<{
   withCredential<T>(agent: PortableRealmAgent, operation: () => Promise<T>, signal?: AbortSignal): Promise<T>;

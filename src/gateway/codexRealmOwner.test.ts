@@ -7,7 +7,7 @@ import test from "node:test";
 import { startCodexSubscriptionRealm } from "../engines/codex/codexSubscriptionRealm.js";
 import type { PortableRealmAuthority } from "../runtime/portableSubscriptionRealmTypes.js";
 import { parseCodexAuth, renderCodexAuth, type CodexTokens } from "./codexCredential.js";
-import { CodexAuthStale, createCodexRealmOwner } from "./codexRealmOwner.js";
+import { CodexAuthStale, CodexRealmLost, createCodexRealmOwner } from "./codexRealmOwner.js";
 import { CodexRefreshRejected, type CodexRefresh } from "./codexRefresh.js";
 
 const jwt = (claims: Record<string, unknown>): string => `e30.${Buffer.from(JSON.stringify(claims)).toString("base64url")}.c2ln`;
@@ -19,7 +19,8 @@ function memoryAuthority(initial: CodexTokens): PortableRealmAuthority & { write
     writes: [] as CodexTokens[], staleMarks: 0,
     read: async () => Buffer.from(bytes),
     replace: async (next: Uint8Array) => { bytes = Buffer.from(next); authority.writes.push(parseCodexAuth(bytes)); },
-    markStale: async () => { authority.staleMarks += 1; }
+    markStale: async () => { authority.staleMarks += 1; },
+    assertLive: () => undefined
   };
   return authority;
 }
@@ -72,6 +73,29 @@ test("a rejected refresh fences the realm; a transient one does not", async () =
   assert.equal(owner.stale(), true);
   assert.equal(authority.staleMarks, 1);
   await assert.rejects(owner.bearer(), CodexAuthStale);
+});
+
+test("a pending write-back is retried on a timer", async () => {
+  const authority = memoryAuthority(tokens(0));
+  const replace = authority.replace;
+  let failures = 2;
+  (authority as { replace: typeof replace }).replace = async (bytes) => { if (failures > 0) { failures -= 1; throw new Error("disk"); } await replace(bytes); };
+  const owner = await createCodexRealmOwner({ authority, log: () => undefined, writeBackRetryMs: 10, refresh: async () => tokens(1) });
+  await owner.rejected(await owner.bearer());
+  assert.equal(owner.writeBackPending(), true);
+  for (let attempt = 0; owner.writeBackPending() && attempt < 100; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(owner.writeBackPending(), false);
+  assert.equal(authority.writes.at(-1)!.refreshToken, "synthetic-refresh-1");
+  owner.close();
+});
+
+test("a lost lease refuses the bearer", async () => {
+  const authority = memoryAuthority(tokens(0));
+  const owner = await createCodexRealmOwner({ authority, log: () => undefined, refresh: async () => tokens(1) });
+  assert.equal(owner.live(), true);
+  (authority as { assertLive: () => void }).assertLive = () => { throw new Error("lease gone"); };
+  assert.equal(owner.live(), false);
+  await assert.rejects(owner.bearer(), CodexRealmLost);
 });
 
 test("owns the real portable realm: reads it, writes back the CLI schema, and fences it", async () => {

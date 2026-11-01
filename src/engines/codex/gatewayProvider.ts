@@ -34,13 +34,13 @@ export function codexGatewayProviderArgs(gateway: CodexGateway): string[] {
   return ["-c", `model_provider=${JSON.stringify(CODEX_GATEWAY_PROVIDER_ID)}`, "-c", `model_providers.${CODEX_GATEWAY_PROVIDER_ID}=${provider}`];
 }
 
-/** Readiness: the key is accepted, buys Codex, and the realm is not stale. */
+/** Readiness: the key is accepted, buys Codex, the realm is live and not stale, and its login is durable. */
 export async function verifyCodexGateway(agentId: string, gateway: CodexGateway, fetcher: typeof fetch = fetch): Promise<void> {
   let ready = false;
   try {
     const response = await fetcher(`${gateway.url}/v1/health`, { headers: { authorization: `Bearer ${gateway.key}` }, redirect: "error", signal: AbortSignal.timeout(HEALTH_TIMEOUT_MS) });
-    const body = await response.json().catch(() => undefined) as { engines?: unknown } | undefined;
-    ready = response.status === 200 && Array.isArray(body?.engines) && body.engines.includes("codex");
+    const body = await response.json().catch(() => undefined) as { engines?: unknown; write_back?: { codex?: unknown } } | undefined;
+    ready = response.status === 200 && Array.isArray(body?.engines) && body.engines.includes("codex") && body.write_back?.codex === "ok";
   } catch { ready = false; }
   if (!ready) throw new Error(`agent ${JSON.stringify(agentId)} Codex auth gateway is not ready`);
 }
