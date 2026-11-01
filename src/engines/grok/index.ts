@@ -1,6 +1,4 @@
-export * from "./piArgs.js";
 export * from "./piHooks.js";
-export * from "./piTaskClock.js";
 export * from "./authHooks.js";
 export * from "./configHooks.js";
 export * from "./configSchema.js";
@@ -9,7 +7,5 @@ export * from "./runtimeSandbox.js";
 export * from "./runtimeDirectory.js";
 export * from "./usageLedgerFields.js";
 export * from "./grokHeadlessResult.js";
-export * from "./grokHomeMcpRegistration.js";
-export * from "./grokSandbox.js";
 export * from "./grokStreamUsage.js";
 export * from "./broker/index.js";

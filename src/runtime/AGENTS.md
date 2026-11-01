@@ -602,8 +602,7 @@ therefore has two halves:
   and strictly below every base-profile grant (`GROK_WORKER_BASE_PROFILE_GRANTS`);
 - placement, asserted by whoever provisions the paths — root provisioning and
   every slot recycle on the Spawnfile side, `prepareGrokWorkerAttestation`
-  before every brokered turn, and `prepareAndVerifyGrokSandbox` on the direct
-  path, which runs as the worker uid itself. The broker (uid 2100) cannot
+  before every brokered turn. The broker (uid 2100) cannot
   descend into a `2000:<worker> 0710` runtime home, so an `EACCES` below an
   ancestor the worker *can* search is left undecided there; root, which holds
   `CAP_DAC_READ_SEARCH`, decides every entry.
@@ -679,25 +678,19 @@ in `deny` (verified: `/tmp`, `/var/tmp`, `/run`, `/etc`, `sessions` all fail;
 realm, durable keyring lease, bounded unlock stdin, and cleanup. Enrollment
 probes, interactive bootstrap, and complete CLI turns use its account gate;
 AGY credentials remain in the native encrypted keyring.
-`portableSubscriptionRealm.ts` owns portable stage/turn/promote/remove,
-crash journals and stale fences. Codex production uses this shared authority;
-`grokSubscriptionRealm.ts` is its compatibility wrapper for the older direct
-Grok path. Current production Grok uses its broker's single-flight refresh
-and durable generation authority. `portableCredentialMaterial.ts` remains
-an isolated caller-owned credential import, never production host preparation.
+`portableSubscriptionRealm.ts` owns the realm lease, crash journals and stale
+fences. The auth gateway holds it for life through `authority` for Codex and
+Grok. Its per-wake stage/turn/promote/remove (`withCredential`) serves only a
+Codex organization started without `DAIMON_GATEWAY_URL`, which today is
+Spawnfile's native-sandbox Codex training subject. Grok never runs in the agent
+process: every Grok agent requires the engine broker, whose upstream is the
+gateway or, in Spawnfile's v4 training container, its own realm authority.
 `subscriptionAuthority.ts` requires a descriptor-keyed realm or broker before
 any production agent starts, so a new subscription engine cannot silently
 bypass ownership. `subscriptionTurnGate.ts` bounds waits to 128 pending and
 30 minutes outside the CLI turn timeout; stop cancels waiting admissions and
 close drains the active operation. The owner retains the inherited flock file
 descriptor until that drain completes, even if its lease helper exits.
-`../pi/grokSandbox.ts` owns the direct (non-broker) Grok process boundary: it
-replaces the provider's fail-open built-in profile with an exact custom profile
-denying the realm, bootstrap, and peer roots, and requires a kernel-enforcement
-event (read from `$GROK_HOME/sessions/sandbox-events.jsonl`) before every Grok
-turn. The direct path registers its per-wake MCP endpoint in the agent's
-Daimon-owned `GROK_HOME` config (`../pi/grokHomeMcpRegistration.ts`), because
-1.0.34 skips project-scoped MCP servers in untrusted workspaces.
 Strict Codex uses its native permission profile only for model-run local
 commands: the profile denies current `.codex/auth.json`, current
 `.daimon-inbound`, `/proc`, `/run`, shared protected stores, and peer roots

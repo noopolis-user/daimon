@@ -356,7 +356,7 @@ test("codex child stdin EPIPE does not replace the engine exit diagnostic", asyn
   }
 });
 
-test("protected host control variables never reach Codex, Grok, or AGY children", async (context) => {
+test("protected host control variables never reach Codex or AGY children", async (context) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "daimon-cli-control-token-"));
   const controlEnv = "DAIMON_HOST_CONTROL_TOKEN_CANARY";
   const controlToken = "must-never-reach-engine";
@@ -366,11 +366,11 @@ test("protected host control variables never reach Codex, Grok, or AGY children"
   process.env[unrelatedEnv] = "must-never-reach-engine";
   process.env[modelEnv] = "must-never-reach-engine";
   const probe = path.join(root, "probe.mjs");
-  await writeFile(probe, `#!/usr/bin/env node\nconst text = [process.env.${controlEnv} ?? "absent", process.env.${unrelatedEnv} ?? "absent", process.env.${modelEnv} ?? "absent", process.env.CODEX_HOME ?? process.env.GROK_HOME ?? process.env.ANTIGRAVITY_CLI_HOME ?? "missing", process.env.DAIMON_WAKE_ID ?? "absent"].join("|"); const stream = (value) => [{ type: "assistant", parent_tool_use_id: null, session_id: "fake", message: { role: "assistant", stop_reason: "end_turn", content: [{ type: "text", text: value }] } }, { type: "result", subtype: "success", is_error: false, result: value, stop_reason: "end_turn", session_id: "fake" }].map(JSON.stringify).join("\\n"); const codex = (value) => [{ type: "item.completed", item: { type: "agent_message", text: value } }, { type: "turn.completed" }].map(JSON.stringify).join("\\n"); const agy = (value) => JSON.stringify({ event: "result", result: { conversation_id: "fake", status: "SUCCESS", response: value, num_turns: 1, usage: { input_tokens: 11, output_tokens: 2, thinking_tokens: 1, cache_read_tokens: 0, total_tokens: 13 } } }); process.stdout.write(process.argv.includes("--single") ? stream(text) : process.argv.includes("--output-format") ? agy(text) : process.argv.includes("--json") ? codex(text) : text);`);
+  await writeFile(probe, `#!/usr/bin/env node\nconst text = [process.env.${controlEnv} ?? "absent", process.env.${unrelatedEnv} ?? "absent", process.env.${modelEnv} ?? "absent", process.env.CODEX_HOME ?? process.env.ANTIGRAVITY_CLI_HOME ?? "missing", process.env.DAIMON_WAKE_ID ?? "absent"].join("|"); const stream = (value) => [{ type: "assistant", parent_tool_use_id: null, session_id: "fake", message: { role: "assistant", stop_reason: "end_turn", content: [{ type: "text", text: value }] } }, { type: "result", subtype: "success", is_error: false, result: value, stop_reason: "end_turn", session_id: "fake" }].map(JSON.stringify).join("\\n"); const codex = (value) => [{ type: "item.completed", item: { type: "agent_message", text: value } }, { type: "turn.completed" }].map(JSON.stringify).join("\\n"); const agy = (value) => JSON.stringify({ event: "result", result: { conversation_id: "fake", status: "SUCCESS", response: value, num_turns: 1, usage: { input_tokens: 11, output_tokens: 2, thinking_tokens: 1, cache_read_tokens: 0, total_tokens: 13 } } }); process.stdout.write(process.argv.includes("--single") ? stream(text) : process.argv.includes("--output-format") ? agy(text) : process.argv.includes("--json") ? codex(text) : text);`);
   await chmod(probe, 0o700);
   try {
-    for (const engine of ["codex", "grok", "agy"] as const) {
-      const engineHomePath = path.join(root, engine, engine === "codex" ? ".codex" : engine === "grok" ? ".grok" : ".antigravity-cli");
+    for (const engine of ["codex", "agy"] as const) {
+      const engineHomePath = path.join(root, engine, engine === "codex" ? ".codex" : ".antigravity-cli");
       const options = engine === "agy"
         ? { engine, command: probe, commandArgs: [], maxToolTurns: 1, timeoutMs: 10_000 as const, redactedEnvironmentNames: [controlEnv], engineHomePath }
         : { engine, command: probe, commandArgs: [], maxToolTurns: 1, timeoutMs: 10_000, redactedEnvironmentNames: [controlEnv], engineHomePath };

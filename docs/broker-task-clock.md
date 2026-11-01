@@ -6,7 +6,7 @@ control, clock-isolation and reset contracts.
 The optional clocked worker config shifts native shell children while Daimon,
 the native launcher and Grok itself retain real time. It uses the same shell
 policy inheritance, empty include/exclude filters and automatic secret-name
-exclusions as direct Grok. Its `set` contains exactly four keys:
+exclusions as Codex. Its `set` contains exactly four keys:
 
 | Key | Fixed value |
 | --- | --- |

@@ -6,7 +6,6 @@ import type { CliEngineOptions, CliSessionInput } from "./cliSession.js";
 
 export { renderCodexArgs, renderCodexPermissionProfile } from "../engines/codex/piArgs.js";
 export { renderAgyArgs } from "../engines/agy/piArgs.js";
-export { GROK_STRICT_SANDBOX_PROFILE, renderGrokSandboxArgs } from "../engines/grok/piArgs.js";
 
 export const spawnEngine = (
   options: CliEngineOptions,

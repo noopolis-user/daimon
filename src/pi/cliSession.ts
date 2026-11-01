@@ -45,9 +45,6 @@ export type CliEngineOptions = {
   readonly redactedEnvironmentNames?: readonly string[];
   /** Internal secret-file authority used only for exact reply redaction. */
   readonly credentialSecretValues?: () => Promise<readonly string[]>;
-  /** Internal production boundary; confirms the custom kernel profile before every Grok process. */
-  readonly verifyGrokSandbox?: () => Promise<void>;
-  readonly grokSandboxProfile?: string;
   readonly grokBrokerTurn?: (prompt: string, mcpEndpoint: string, signal: AbortSignal) => Promise<string>;
   /** Codex only: kills the child and fails the wake once a turn's own reported usage reaches this. */
   readonly codexTokenCeiling?: number;
@@ -200,7 +197,6 @@ class CliSession implements PiSessionLike {
       this.ensureLive();
       await this.options.verifyRuntimePaths?.();
       await this.options.verifyExecutable?.();
-      await this.options.verifyGrokSandbox?.();
       child = spawnEngine(this.options, `${this.options.identityPrompt ?? ""}${text}`, this.input, mount?.endpoint, this.wakeId);
       this.activeChild = child;
       // Attach terminal listeners synchronously. A fast local sentinel may

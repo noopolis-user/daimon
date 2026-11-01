@@ -129,7 +129,8 @@ test("auth homes, environment names, provider mapping and credential formats fol
   for (const id of ENGINE_IDS) {
     const descriptor = ENGINE_DESCRIPTORS[id], handler = getEngineHandler(id);
     assert.equal(handler.engineHomePath("/runtime"), path.join("/runtime", descriptor.homeDirectory));
-    assert.equal(handler.environmentVariables({ engineHomePath: "/engine", dbusSessionBusAddress: "unix:path=/bus" })[descriptor.homeEnvironment], "/engine");
+    // Grok never spawns in the agent process: its broker worker gets the home instead.
+    assert.equal(handler.environmentVariables({ engineHomePath: "/engine", dbusSessionBusAddress: "unix:path=/bus" })[descriptor.homeEnvironment], id === "grok" ? undefined : "/engine");
   }
   const codex = ENGINE_DESCRIPTORS.codex;
   assert.equal(getEngineHandler("codex").resolvePiProvider!({ provider: codex.auth.provider, name: "any", auth: { method: codex.auth.method } }), codex.piProvider);

@@ -16,7 +16,6 @@ export type RuntimeHostResources = {
   credentialRealms?: Partial<Record<import("./descriptors.js").EngineKind, import("../runtime/portableSubscriptionRealmTypes.js").PortableSubscriptionRealm>>;
 };
 export type RuntimeSandbox = Readonly<{
-  verifyGrokSandbox?: () => Promise<void>;
   codexSandboxPaths?: { readonly protectedPaths: readonly string[]; readonly readablePaths: readonly string[] };
 }>;
 export type RuntimeSessionContext = Readonly<{

@@ -3,10 +3,8 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test, { type TestContext } from "node:test";
-import { codexTaskClockArgs, grokTaskClockConfig, reportEngineTaskClockGap } from "./engineTaskClock.js";
+import { codexTaskClockArgs, reportEngineTaskClockGap } from "./engineTaskClock.js";
 import { renderCodexArgs } from "./cliEngineSpawn.js";
-import { registerGrokHomeMcpServer } from "../engines/grok/grokHomeMcpRegistration.js";
-import { renderGrokLeanBaseConfig } from "../engines/grok/broker/grokBrokerWorkerConfig.js";
 
 const expectedSet = '{"FAKETIME"="-843385600.250","FAKETIME_DONT_FAKE_MONOTONIC"="1","LC_ALL"="C","LD_PRELOAD"="/caller/libfaketime.so.1"}';
 const expectedPolicy = `{inherit="all",ignore_default_excludes=false,exclude=[],include_only=[],set=${expectedSet}}`;
@@ -29,20 +27,6 @@ test("Codex receives the exact derived shell policy through argv in both sandbox
   delete process.env.NOOPOLIS_TASK_CLOCK;
   assert.deepEqual(codexTaskClockArgs(), []);
   assert.ok(!renderCodexArgs({}, "/workspace", undefined).some((value) => value.includes("shell_environment_policy")));
-});
-
-test("direct Grok writes the exact tool-child policy into its private home, then removes it", async (t) => {
-  clock(t);
-  const home = await mkdtemp(path.join(os.tmpdir(), "daimon-grok-clock-"));
-  t.after(() => rm(home, { recursive: true, force: true }));
-  const policy = `shell_environment_policy = ${expectedPolicy}\n`;
-  assert.equal(grokTaskClockConfig(), policy);
-  const registration = await registerGrokHomeMcpServer({ engineHomePath: home, endpoint: "http://127.0.0.1:1234/mcp" });
-  assert.equal(await readFile(path.join(home, "config.toml"), "utf8"), `${policy}${renderGrokLeanBaseConfig()}[mcp_servers.daimon]\nurl = "http://127.0.0.1:1234/mcp"\n`);
-  await registration.close();
-  assert.equal(await readFile(path.join(home, "config.toml"), "utf8"), renderGrokLeanBaseConfig());
-  delete process.env.NOOPOLIS_TASK_CLOCK;
-  assert.equal(grokTaskClockConfig(), "");
 });
 
 test("clock coverage gaps are explicit non-fatal readiness diagnostics", (t) => {

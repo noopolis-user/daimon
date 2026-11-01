@@ -6,8 +6,8 @@ import test from "node:test";
 
 import { createCliSessionFactory, readChild, spawnEngine, terminateChild } from "./cliSession.js";
 
-// Only AGY still registers its per-wake MCP endpoint through setup/removal
-// children; Grok writes it into its own GROK_HOME (`grokHomeMcpRegistration.ts`).
+// Only AGY registers its per-wake MCP endpoint through setup/removal
+// children; Grok never spawns in the agent process.
 const agyStream = (text: string): string => JSON.stringify({ event: "result", result: { conversation_id: "fake", status: "SUCCESS", response: text, num_turns: 1, usage: { input_tokens: 1, output_tokens: 1, thinking_tokens: 0, cache_read_tokens: 0, total_tokens: 2 } } });
 
 test("terminates a process group after its leader has exited", async (context) => {
