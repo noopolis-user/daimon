@@ -79,6 +79,8 @@ export async function startGatewayServer(options: GatewayServerOptions): Promise
       if (error instanceof RequestTooLarge) return refuse(request, response, 413, "request_too_large", agent);
       if (error instanceof RealmAuthStale) return refuse(request, response, 403, "auth_stale", agent);
       if (error instanceof RealmLost) return refuse(request, response, 503, "realm_unavailable", agent);
+      // The agent hung up (Codex closes once it has response.completed): not a relay fault.
+      if (controller.signal.aborted && !lifetime.signal.aborted) return;
       log(`daimon gateway: ${route.engine} relay failed (${error instanceof Error ? error.name : "unknown"})`);
       if (!response.headersSent) return refuse(request, response, 502, "upstream_unavailable", agent);
       response.destroy();
