@@ -1,9 +1,10 @@
+import { ENGINE_DESCRIPTORS } from "../engines/descriptors.js";
 import { createHash, timingSafeEqual } from "node:crypto";
 import { constants } from "node:fs";
 import { open } from "node:fs/promises";
 
 export const GATEWAY_KEY_TABLE_VERSION = "noopolis.daimon.gateway-keys.v1";
-export const GATEWAY_ENGINES = Object.freeze(["codex"] as const);
+export const GATEWAY_ENGINES = Object.freeze([ENGINE_DESCRIPTORS.codex.id] as const);
 export type GatewayEngine = (typeof GATEWAY_ENGINES)[number];
 export type GatewayKeyEntry = Readonly<{ agentId: string; engines: readonly GatewayEngine[]; digest: string }>;
 export type GatewayKeyTable = Readonly<{ lookup(presented: string | undefined): GatewayKeyEntry | undefined; size: number }>;

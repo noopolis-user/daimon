@@ -1,6 +1,8 @@
+import { ENGINE_DESCRIPTORS } from "../engines/descriptors.js";
 import { isIP } from "node:net";
 import path from "node:path";
 
+const CODEX = ENGINE_DESCRIPTORS.codex.id;
 export const GATEWAY_CONFIG_VERSION = "noopolis.daimon.gateway.v1";
 
 export type GatewayConfig = Readonly<{
@@ -16,13 +18,13 @@ export type GatewayConfig = Readonly<{
  * local fake in tests but never at an arbitrary remote.
  */
 export function parseGatewayConfig(value: unknown): GatewayConfig {
-  const source = exact(value, "config", ["codex", "host", "key_table_path", "port", "version"], ["codex", "key_table_path", "version"]);
+  const source = exact(value, "config", [CODEX, "host", "key_table_path", "port", "version"], [CODEX, "key_table_path", "version"]);
   if (source.version !== GATEWAY_CONFIG_VERSION) throw new TypeError("gateway config version is unsupported");
   const host = source.host === undefined ? "127.0.0.1" : source.host;
   if (typeof host !== "string" || isIP(host) === 0) throw new TypeError("gateway host must be an IP address");
   const port = source.port === undefined ? 0 : source.port;
   if (typeof port !== "number" || !Number.isInteger(port) || port < 0 || port > 65_535) throw new TypeError("gateway port is invalid");
-  const codex = exact(source.codex, "codex", ["bootstrap_path", "realm_path", "token_url", "upstream_base_url"], []);
+  const codex = exact(source.codex, CODEX, ["bootstrap_path", "realm_path", "token_url", "upstream_base_url"], []);
   return {
     host, port,
     keyTablePath: absolute(source.key_table_path, "key_table_path"),

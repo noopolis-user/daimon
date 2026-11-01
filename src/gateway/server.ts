@@ -1,3 +1,4 @@
+import { ENGINE_DESCRIPTORS } from "../engines/descriptors.js";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { Socket } from "node:net";
 import { redactCredentialText } from "../core/credentialRedaction.js";
@@ -55,7 +56,7 @@ export async function startGatewayServer(options: GatewayServerOptions): Promise
     if (!url.pathname.startsWith("/v1/codex/")) return refuse(request, response, 404, "not_found", agent);
     const subpath = url.pathname.slice("/v1/codex".length);
     if (!(CODEX_GATEWAY_ROUTES as readonly string[]).includes(`${request.method} ${subpath}`)) return refuse(request, response, 404, "not_found", agent);
-    if (!entry.engines.includes("codex")) return refuse(request, response, 403, "engine_not_allowed", agent);
+    if (!entry.engines.includes(ENGINE_DESCRIPTORS.codex.id)) return refuse(request, response, 403, "engine_not_allowed", agent);
     if (active >= GATEWAY_LIMITS.maxConcurrentRequests) return refuse(request, response, 503, "overloaded", agent, { "retry-after": "1" });
     active += 1;
     const controller = new AbortController();
@@ -130,7 +131,7 @@ export async function startGatewayServer(options: GatewayServerOptions): Promise
     if (Object.values(realms).includes("stale")) { agent.refused += 1; return json(response, 403, { error: "auth_stale", realms }); }
     json(response, 200, { status: "ok", agent_id: entry.agentId, engines: entry.engines, realms, usage: { ...agent } });
   };
-  const engineStale = (engine: GatewayEngine): boolean => engine === "codex" && owner.stale();
+  const engineStale = (engine: GatewayEngine): boolean => engine === ENGINE_DESCRIPTORS.codex.id && owner.stale();
 
   const refuse = (request: IncomingMessage, response: ServerResponse, status: number, code: string, agent?: GatewayAgentCounters, headers: Record<string, string> = {}): void => {
     if (agent !== undefined) agent.refused += 1;
