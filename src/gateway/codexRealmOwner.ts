@@ -22,6 +22,7 @@ export function createCodexRealmOwner(options: CodexRealmOwnerOptions): Promise<
     extra: (tokens) => ({ accountId: tokens.accountId }),
     expiryMs: (tokens) => jwtExpiryMs(tokens.accessToken),
     secrets: (tokens) => [tokens.accessToken, tokens.refreshToken, tokens.idToken],
+    same: (left, right) => left.accessToken === right.accessToken && left.refreshToken === right.refreshToken && left.idToken === right.idToken,
     refreshRejected: (error) => error instanceof CodexRefreshRejected
   }, options);
 }

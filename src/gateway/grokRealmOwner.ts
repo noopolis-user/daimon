@@ -23,6 +23,7 @@ export function createGrokRealmOwner(options: GrokRealmOwnerOptions): Promise<Gr
     extra: () => ({}),
     expiryMs: (login) => login.expiresAt,
     secrets: (login) => [login.accessToken, login.refreshToken],
+    same: (left, right) => left.digest === right.digest,
     refreshRejected: (error) => error instanceof GrokRefreshRejected
   }, { proactiveRefreshIntervalMs: PROACTIVE_REFRESH_INTERVAL_MS, ...options });
 }

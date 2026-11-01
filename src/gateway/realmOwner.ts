@@ -41,6 +41,8 @@ export type RealmLoginCodec<Login, Extra extends object> = Readonly<{
   extra(login: Login): Extra;
   expiryMs(login: Login): number | undefined;
   secrets(login: Login): readonly string[];
+  /** The refresh left the login as it was: no new generation, nothing to write back. */
+  same(left: Login, right: Login): boolean;
   /** Only a named refusal of the login fences; anything else stays transient. */
   refreshRejected(error: unknown): boolean;
 }>;
@@ -119,6 +121,7 @@ export async function createRealmOwner<Login, Extra extends object>(
   const refreshOnce = (): Promise<RealmBearer<Extra>> => inflight ??= (async () => {
     try {
       const next = await Promise.resolve().then(() => options.refresh(login));
+      if (codec.same(login, next)) return current();
       login = next;
       generation += 1;
       await writeBack(next);
