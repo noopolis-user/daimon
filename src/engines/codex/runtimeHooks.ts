@@ -1,7 +1,7 @@
 import path from "node:path";
 import { ensureRuntimeHomeDirectory } from "../../runtime/runtimeHomeLayout.js";
 import { resolveCodexWakeTimeoutMs, resolveCodexWakeTokenCeiling } from "../../pi/cliSession.js";
-import { prepareEngineExecutable, prepareEngineReadiness, readPortableEngineCredentialSecrets, verifyPortableEngineAuth } from "../../runtime/engineReadiness.js";
+import { prepareEngineExecutable, readPortableEngineCredentialSecrets, verifyPortableEngineAuth } from "../../runtime/engineReadiness.js";
 import { recordTurnUsage, resolveTurnUsageLedgerPath } from "../../runtime/turnUsageLedger.js";
 import { recordCodexTurnRequests } from "../../runtime/turnRequestLedger.js";
 import { bareMountedToolNamingRule, type RuntimeEngineHooks } from "../runtimeHooks.js";
@@ -25,7 +25,7 @@ export const codexRuntimeHooks: RuntimeEngineHooks = {
     resources.credentialRealms.codex = await startCodexSubscriptionRealm(agents.map((agent) => ({ ...agent, runtimeHomePath: paths.forAgent(agent).runtimeHomePath })), realmPaths);
   },
   assertRuntimeLaunch() {},
-  async prepareRuntimeReadiness(agent, bus, _broker, credentialRealm) {
+  async prepareRuntimeReadiness(agent, _bus, _broker, credentialRealm) {
     const gateway = codexGatewayFromEnvironment();
     if (gateway !== undefined) {
       const executable = await prepareEngineExecutable(agent.id, "codex");
@@ -38,7 +38,8 @@ export const codexRuntimeHooks: RuntimeEngineHooks = {
       await verify();
       return { executablePath: executable.executablePath, engineHomePath, verify };
     }
-    if (credentialRealm === undefined) return prepareEngineReadiness(agent, agent.runtimeHomePath, bus);
+    // Without the gateway, the shared realm stages Codex's own login for each wake (training's native subject).
+    if (credentialRealm === undefined) throw new Error(`agent ${JSON.stringify(agent.id)} Codex requires the auth gateway or its subscription realm`);
     const executable = await prepareEngineExecutable(agent.id, "codex");
     const engineHomePath = path.join(agent.runtimeHomePath, ".codex");
     return { executablePath: executable.executablePath, engineHomePath, async verify() {
