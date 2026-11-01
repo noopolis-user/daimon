@@ -7,7 +7,7 @@ const base = { version: GATEWAY_CONFIG_VERSION, key_table_path: "/etc/daimon-gat
 
 test("parses a minimal config with loopback defaults", () => {
   assert.deepEqual(parseGatewayConfig(base), { host: "127.0.0.1", port: 0, keyTablePath: "/etc/daimon-gateway/keys.json", codex: {} });
-  assert.equal(parseGatewayConfig({ ...base, codex: { upstream_base_url: "http://127.0.0.1:9/backend-api/codex/" } }).codex.upstreamBaseUrl, "http://127.0.0.1:9/backend-api/codex");
+  assert.equal(parseGatewayConfig({ ...base, codex: { upstream_base_url: "http://127.0.0.1:9/backend-api/codex/" } }).codex?.upstreamBaseUrl, "http://127.0.0.1:9/backend-api/codex");
 });
 
 test("refuses remote upstream overrides, unknown members and relative paths", () => {

@@ -25,7 +25,7 @@ export * from "./grokBrokerProxyBodyShape.js";
 export * from "./grokBrokerProxyJson.js";
 export * from "./grokBrokerProxyRequest.js";
 export * from "./grokBrokerRealmLease.js";
-export * from "./grokBrokerRefresh.js";
+export { refreshGrokBrokerCredential } from "../../../gateway/grokRefresh.js";
 export * from "./grokBrokerRunBudget.js";
 export * from "./grokBrokerSlot.js";
 export * from "./grokBrokerTaskClock.js";

@@ -26,10 +26,20 @@ const TRANSPORT_CODES: ReadonlySet<string> = new Set([
  */
 export function isGrokUpstreamTransportFault(error: unknown, signal?: AbortSignal): boolean {
   if (signal?.aborted === true || !(error instanceof Error) || error.name === "AbortError") return false;
+  if (error instanceof GrokGatewayTransportFault) return true;
   if (error instanceof TypeError && (error.message === "fetch failed" || error.message === "terminated")) return true;
   for (const value of [error, error.cause]) {
     const code = (value as NodeJS.ErrnoException | undefined)?.code;
     if (typeof code === "string" && TRANSPORT_CODES.has(code)) return true;
   }
   return false;
+}
+
+/**
+ * The auth gateway's own transport answer (502 `upstream_unavailable`, 504
+ * `upstream_timeout`): the provider connection failed behind the gateway, so it
+ * gets the same one retry a direct connection failure gets.
+ */
+export class GrokGatewayTransportFault extends Error {
+  constructor(readonly code: "upstream_unavailable" | "upstream_timeout") { super(`auth gateway ${code}`); this.name = "GrokGatewayTransportFault"; }
 }

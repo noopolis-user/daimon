@@ -39,7 +39,7 @@ current-user-owned, and not unsafe through symlinks or writable permissions.
 The control token is named by `host.controlTokenEnv`; only the variable name is
 stored in config. HTTP requests use `Authorization: Bearer <token>`.
 
-## Auth gateway (Codex)
+## Auth gateway (Codex, Grok)
 
 `daimon-runtime gateway --config <path>` runs the auth gateway: the only
 process that holds a Codex subscription login. It takes the realm's exclusive
@@ -75,6 +75,25 @@ use it: Codex gets a `daimon_gateway` provider (`env_key = DAIMON_GATEWAY_KEY`),
 no realm lease or per-wake `auth.json` copy happens, readiness calls the health
 route and refuses any `auth.json` in `CODEX_HOME`, and the key is redacted from
 diagnostics. Without both variables, behavior is unchanged.
+
+### Grok
+
+A `grok` section (`realm_path`, `bootstrap_path`, `command`, `scratch_path`, and
+a loopback-only `upstream_base_url` for tests) makes the gateway the sole holder
+of the Grok realm too. It forwards exactly `POST /v1/grok/chat/completions` (no
+query string) to `cli-chat-proxy.grok.com/v1`. Refresh is the pinned CLI's own:
+`grok models` in a private scratch home seeded with the login (removed after),
+then an atomic write-back of the CLI file. Only a diagnostic the CLI names as an
+authentication refusal fences; a timeout or network fault stays transient.
+Proactive refresh before `expires_at` is single-flight and at most once a minute.
+
+When the engine broker process sees `DAIMON_GATEWAY_URL` and
+`DAIMON_GATEWAY_KEY`, it takes no realm lease and reads no credential: its
+upstream is the gateway with its own key. Metering, admission, budgets, slots,
+sandbox and MCP are unchanged. A gateway 401 (its key was refused) is a named
+400 `gateway_unauthorized`, never a refresh; a gateway 403 `auth_stale` fences
+the broker exactly as a rejected local refresh does. Without both variables the
+broker owns its realm as before.
 
 ## Task clock environment
 

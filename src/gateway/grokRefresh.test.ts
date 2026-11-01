@@ -3,7 +3,7 @@ import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { refreshGrokBrokerCredential } from "./grokBrokerRefresh.js";
+import { refreshGrokBrokerCredential } from "./grokRefresh.js";
 
 test("refresh uses only pinned models command and a positive broker environment", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "daimon-grok-refresh-")); const command = path.join(root, "grok"); const receipt = path.join(root, "receipt.json");

@@ -1,8 +1,16 @@
 export * from "./codexCredential.js";
 export * from "./codexRealmOwner.js";
 export * from "./codexRefresh.js";
+export * from "./codexRoute.js";
 export * from "./config.js";
 export * from "./gatewayCli.js";
+export * from "./grokCredential.js";
+export * from "./grokRealmOwner.js";
+export * from "./grokRefresh.js";
+export * from "./grokRoute.js";
 export * from "./keyTable.js";
+export * from "./realmOwner.js";
 export * from "./relay.js";
-export * from "./server.js";
+export type * from "./route.js";
+export { startGatewayServer, type GatewayAgentCounters, type GatewayServer, type GatewayServerOptions } from "./server.js";
+export * from "./agentGateway.js";

@@ -5,7 +5,7 @@ import { constants } from "node:fs";
 import { mkdir, open, rename, unlink } from "node:fs/promises";
 import path from "node:path";
 import { readGrokBrokerCredential } from "./grokBrokerCredentialReader.js";
-import { refreshGrokBrokerCredential } from "./grokBrokerRefresh.js";
+import { refreshGrokBrokerCredential } from "../../../gateway/grokRefresh.js";
 import { EngineBrokerGenerationFence, EngineBrokerSingleflight } from "./engineBrokerSingleflight.js";
 import { BROKER_CREDENTIAL_MAX_ANCESTORS, parseBrokerCredentialJournal, recoverBrokerCredentialJournal } from "./engineBrokerCredentialJournal.js";
 

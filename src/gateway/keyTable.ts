@@ -4,7 +4,8 @@ import { constants } from "node:fs";
 import { open } from "node:fs/promises";
 
 export const GATEWAY_KEY_TABLE_VERSION = "noopolis.daimon.gateway-keys.v1";
-export const GATEWAY_ENGINES = Object.freeze([ENGINE_DESCRIPTORS.codex.id] as const);
+/** Engines a key may be scoped to; AGY is never gatewayed (its terms bar third-party OAuth). */
+export const GATEWAY_ENGINES = Object.freeze([ENGINE_DESCRIPTORS.codex.id, ENGINE_DESCRIPTORS.grok.id] as const);
 export type GatewayEngine = (typeof GATEWAY_ENGINES)[number];
 export type GatewayKeyEntry = Readonly<{ agentId: string; engines: readonly GatewayEngine[]; digest: string }>;
 export type GatewayKeyTable = Readonly<{ lookup(presented: string | undefined): GatewayKeyEntry | undefined; size: number }>;

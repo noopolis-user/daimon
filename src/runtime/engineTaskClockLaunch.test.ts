@@ -9,7 +9,7 @@ import { prepareEngineExecutable, verifyAgySubscriptionEnrollment } from "./engi
 import { registerCliMcpServer } from "../pi/cliMcpRegistration.js";
 import { runNativeBrokerTurn } from "../engines/grok/broker/engineBrokerNativeClient.js";
 import { acquireGrokBrokerRealmLease } from "../engines/grok/broker/grokBrokerRealmLease.js";
-import { refreshGrokBrokerCredential } from "../engines/grok/broker/grokBrokerRefresh.js";
+import { refreshGrokBrokerCredential } from "../gateway/grokRefresh.js";
 
 async function fixture(t: TestContext) {
   const previous = process.env;

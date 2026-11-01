@@ -12,6 +12,8 @@ import { GrokBrokerRunBudget } from "./grokBrokerRunBudget.js";
 import { startGrokBrokerProxy } from "./grokBrokerProxy.js";
 import { startEngineBrokerMcpFacade } from "./engineBrokerMcpFacade.js";
 import { acquireGrokBrokerRealmLease } from "./grokBrokerRealmLease.js";
+import { createGrokGatewayAuthority, createGrokGatewayUpstream } from "./grokBrokerGateway.js";
+import type { AgentGateway } from "../../../gateway/agentGateway.js";
 import { grokBrokerWorkerConfigPins } from "./grokBrokerWorkerConfig.js";
 import { parseGrokBrokerModelPolicy } from "./grokBrokerModelPolicy.js";
 import {
@@ -37,6 +39,11 @@ export type GrokEngineBroker = Awaited<ReturnType<typeof startGrokEngineBroker>>
  * grants (`grokInferenceGrants.ts`) over the same credential authority and
  * proxy; their rows go only to that ledger. A stale realm refuses a grant as
  * `auth_stale`, exactly as it fails subject turns.
+ *
+ * With a `gateway` the broker holds no Grok token and no realm lease: its
+ * upstream is the auth gateway's `/v1/grok` with its own gateway key
+ * (`grokBrokerGateway.ts`). Metering, admission, budgets, slots, sandbox and
+ * MCP are unchanged; `realmLease` then reports that the gateway owns the realm.
  */
 /** Internal seams exercise the production startup and per-turn admission paths. */
 export type GrokEngineBrokerDependencies = Readonly<{
@@ -52,6 +59,8 @@ export type GrokEngineBrokerDependencies = Readonly<{
   writeTaskClock: typeof writeBrokerTaskClock;
   workerIdentityEmpty: typeof grokWorkerIdentityEmpty;
   runNative: typeof runNativeBrokerTurn;
+  /** Gateway-mode transport; production uses the global fetch. */
+  gatewayFetch?: typeof fetch;
 }>;
 
 const brokerDependencies: GrokEngineBrokerDependencies = {
@@ -71,6 +80,7 @@ export async function startGrokEngineBroker(
   options: Readonly<{
     grokCommand: string; nativeClient: string; credentialHome: string; turnStore: string;
     registrations: readonly GrokEngineBrokerRegistration[]; inferenceLedgerPath?: string; maxRunRequests?: number; runRequestStore?: string;
+    gateway?: AgentGateway;
   }>,
   dependencies: GrokEngineBrokerDependencies = brokerDependencies
 ) {
@@ -83,8 +93,10 @@ export async function startGrokEngineBroker(
   );
   const grants = options.inferenceLedgerPath === undefined
     ? undefined : createLedgeredGrokInferenceGrants(options.inferenceLedgerPath);
-  const lease = await dependencies.acquireLease(options.credentialHome);
-  const authority = dependencies.createAuthority(options.grokCommand, options.credentialHome);
+  const gatewayAuthority = options.gateway === undefined ? undefined : createGrokGatewayAuthority(options.gateway, dependencies.gatewayFetch);
+  const lease = gatewayAuthority === undefined ? await dependencies.acquireLease(options.credentialHome) : { close: async () => undefined };
+  const authority = gatewayAuthority ?? dependencies.createAuthority(options.grokCommand, options.credentialHome);
+  const upstream = gatewayAuthority === undefined ? undefined : createGrokGatewayUpstream(options.gateway!, gatewayAuthority, dependencies.gatewayFetch);
   let proxy: Awaited<ReturnType<GrokEngineBrokerDependencies["startProxy"]>> | undefined;
   let mcp: Awaited<ReturnType<GrokEngineBrokerDependencies["startMcp"]>> | undefined;
   let runBudget: GrokBrokerRunBudget | undefined;
@@ -107,7 +119,7 @@ export async function startGrokEngineBroker(
     await authority.initialize();
     runBudget = options.maxRunRequests === undefined ? undefined :
       await GrokBrokerRunBudget.open(options.maxRunRequests, path.join(options.runRequestStore ?? options.turnStore, "run-requests.json"));
-    proxy = await dependencies.startProxy(authority, undefined, undefined, undefined, grants, runBudget);
+    proxy = await dependencies.startProxy(authority, upstream, undefined, undefined, grants, runBudget);
     mcp = await dependencies.startMcp();
   } catch (error) {
     grants?.close();

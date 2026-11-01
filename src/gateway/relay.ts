@@ -78,6 +78,15 @@ export type ResponseUsage = Readonly<{ inputTokens: number; outputTokens: number
 
 /** Watches an SSE relay for `response.completed` usage; bounded per line, never retains content. */
 export function createUsageTap(onUsage: (usage: ResponseUsage) => void): (chunk: Uint8Array) => void {
+  return sseDataTap("\"response.completed\"", parseCompletedUsage, onUsage);
+}
+
+/** Watches a chat-completions SSE relay for its `usage` chunk (`include_usage`); same bounds. */
+export function createChatCompletionsUsageTap(onUsage: (usage: ResponseUsage) => void): (chunk: Uint8Array) => void {
+  return sseDataTap("\"usage\"", parseChatCompletionsUsage, onUsage);
+}
+
+function sseDataTap(marker: string, parse: (data: string) => ResponseUsage | undefined, onUsage: (usage: ResponseUsage) => void): (chunk: Uint8Array) => void {
   const decoder = new TextDecoder();
   let line = "";
   const maxLine = 4 * 1024 * 1024;
@@ -87,13 +96,25 @@ export function createUsageTap(onUsage: (usage: ResponseUsage) => void): (chunk:
     while ((index = line.indexOf("\n")) !== -1) {
       const current = line.slice(0, index);
       line = line.slice(index + 1);
-      if (current.startsWith("data:") && current.includes("\"response.completed\"")) {
-        const usage = parseCompletedUsage(current.slice(5));
+      if (current.startsWith("data:") && current.includes(marker)) {
+        const usage = parse(current.slice(5));
         if (usage !== undefined) onUsage(usage);
       }
     }
     if (line.length > maxLine) line = "";
   };
+}
+
+const usageCount = (value: unknown): number => typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : 0;
+
+function parseChatCompletionsUsage(data: string): ResponseUsage | undefined {
+  try {
+    const usage = (JSON.parse(data) as { usage?: Record<string, unknown> | null }).usage;
+    return usage === undefined || usage === null || typeof usage !== "object" ? undefined
+      : { inputTokens: usageCount(usage.prompt_tokens), outputTokens: usageCount(usage.completion_tokens), totalTokens: usageCount(usage.total_tokens) };
+  } catch {
+    return undefined;
+  }
 }
 
 function parseCompletedUsage(data: string): ResponseUsage | undefined {
