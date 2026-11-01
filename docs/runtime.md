@@ -39,6 +39,43 @@ current-user-owned, and not unsafe through symlinks or writable permissions.
 The control token is named by `host.controlTokenEnv`; only the variable name is
 stored in config. HTTP requests use `Authorization: Bearer <token>`.
 
+## Auth gateway (Codex)
+
+`daimon-runtime gateway --config <path>` runs the auth gateway: the only
+process that holds a Codex subscription login. It takes the realm's exclusive
+lock for its lifetime, refreshes the login (before `exp`, and once on an
+upstream 401, single-flight), writes it back in the CLI's own `auth.json`
+schema, and forwards `POST /v1/codex/responses`, `POST /v1/codex/responses/compact`
+and `GET /v1/codex/models` to `chatgpt.com/backend-api/codex` with the realm
+bearer. Config (`noopolis.daimon.gateway.v1`):
+
+```json
+{ "version": "noopolis.daimon.gateway.v1", "host": "127.0.0.1", "port": 43200,
+  "key_table_path": "/etc/daimon-gateway/keys.json", "codex": {} }
+```
+
+`codex` optionally names `realm_path` and `bootstrap_path` (defaulting to the
+realm contract mounts). The key table (`noopolis.daimon.gateway-keys.v1`) maps
+`sha256(key)` to `{ agent_id, engines }` and must not be world-readable.
+Statuses: 401 for a bad key, 404 outside the route list, 403 `auth_stale` when
+the login cannot be refreshed, 503 `realm_unavailable` once the realm lease is
+lost, upstream 429/5xx relayed. Only a named refusal from the token endpoint
+(`invalid_grant`, `refresh_token_reused|invalidated|expired`, `token_revoked`)
+fences the realm; 408, 429 and anything else stay transient. A refreshed login
+that fails to write back is retried on the next request and on a timer, and
+`GET /v1/health` (that key's engines, realm state, `write_back` and usage
+counters) answers 503 `write_back_pending` until it lands, so readiness refuses.
+
+Migrating an existing realm whose `lease.json` is `active` or `promoting` for an agent the
+gateway does not know fences it on the gateway's first start; re-import the
+login.
+
+When the runtime sees `DAIMON_GATEWAY_URL` and `DAIMON_GATEWAY_KEY`, Codex wakes
+use it: Codex gets a `daimon_gateway` provider (`env_key = DAIMON_GATEWAY_KEY`),
+no realm lease or per-wake `auth.json` copy happens, readiness calls the health
+route and refuses any `auth.json` in `CODEX_HOME`, and the key is redacted from
+diagnostics. Without both variables, behavior is unchanged.
+
 ## Task clock environment
 
 Set `NOOPOLIS_TASK_CLOCK` before startup to consume the ecosystem task clock:

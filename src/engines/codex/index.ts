@@ -18,3 +18,4 @@ export * from "./codexRolloutUsage.js";
 export * from "./codexSandboxProjection.js";
 export * from "./portableCredentialMaterial.js";
 export * from "./codexSubscriptionRealm.js";
+export * from "./gatewayProvider.js";

@@ -11,6 +11,7 @@ import { createOrganizationRuntimeHost } from "./organizationRuntimeHost.js";
 import { createOrganizationRuntimeControlHost } from "./organizationRuntimeControl.js";
 import { parseOrganizationRuntimeConfig, parseOrganizationRuntimeWakeRequest } from "./organizationRuntime.js";
 import { runEngineBrokerServiceCli } from "../engines/grok/broker/engineBrokerServiceCli.js";
+import { runGatewayCli } from "../gateway/gatewayCli.js";
 
 const MAX_BODY_BYTES = 1_048_576;
 const MAX_CONFIG_BYTES = 1_048_576;
@@ -19,6 +20,7 @@ const READINESS_RECEIPT_ENV = "DAIMON_RUNTIME_READINESS_RECEIPT";
 
 export async function runOrganizationRuntimeCli(arguments_: readonly string[], environment = process.env): Promise<void> {
   if(arguments_.length===2&&arguments_[0]==="engine-broker"&&arguments_[1]==="serve"){await runEngineBrokerServiceCli();return;}
+  if (arguments_[0] === "gateway") { await runGatewayCli(arguments_.slice(1)); return; }
   const command = parseArguments(arguments_);
   const config = parseOrganizationRuntimeConfig(JSON.parse(await readBoundedFile(command.configPath)));
   if (command.kind !== "run") {
@@ -87,7 +89,7 @@ export function parseOrganizationRuntimeCliArguments(arguments_: readonly string
     const command = handler.parseCliArguments?.(arguments_);
     if (command !== undefined) return command;
   }
-  throw new Error("usage: daimon-runtime run --config <path> | daimon-runtime auth agy login --config <path>");
+  throw new Error("usage: daimon-runtime run --config <path> | daimon-runtime gateway --config <path> | daimon-runtime auth agy login --config <path>");
 }
 
 const parseArguments = parseOrganizationRuntimeCliArguments;

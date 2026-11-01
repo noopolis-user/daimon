@@ -12,8 +12,17 @@ export type PortableCredentialJournal = Readonly<{
   state: "active" | "preparing" | "promoted" | "promoting";
   version: string;
 }>;
+/** Whole-lifetime authority over the realm credential; the caller zeroes returned bytes. */
+export type PortableRealmAuthority = Readonly<{
+  read(): Promise<Buffer>;
+  replace(bytes: Uint8Array): Promise<void>;
+  markStale(): Promise<void>;
+  /** Throws once the exclusive lease is gone. */
+  assertLive(): void;
+}>;
 export type PortableSubscriptionRealm = Readonly<{
   withCredential<T>(agent: PortableRealmAgent, operation: () => Promise<T>, signal?: AbortSignal): Promise<T>;
+  authority?: PortableRealmAuthority;
   close(): Promise<void>;
 }>;
 export type PortableSubscriptionRealmOptions = Readonly<{
