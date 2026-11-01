@@ -1,14 +1,17 @@
-import { ENGINE_DESCRIPTORS } from "../engines/descriptors.js";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { Socket } from "node:net";
 import { redactCredentialText } from "../core/credentialRedaction.js";
-import { CodexAuthStale, CodexRealmLost, type CodexBearer, type CodexRealmOwner } from "./codexRealmOwner.js";
+import { codexGatewayRoute } from "./codexRoute.js";
+import type { CodexRealmOwner } from "./codexRealmOwner.js";
+import { grokGatewayRoute } from "./grokRoute.js";
+import type { GrokRealmOwner } from "./grokRealmOwner.js";
 import type { GatewayKeyEntry, GatewayKeyTable } from "./keyTable.js";
-import { createUsageTap, GATEWAY_LIMITS, readBoundedText, readRequestBody, relayResponseHeaders, RequestTooLarge, upstreamRequestHeaders } from "./relay.js";
+import { RealmAuthStale, RealmLost, type RealmBearer } from "./realmOwner.js";
+import { GATEWAY_LIMITS, readBoundedText, readRequestBody, relayResponseHeaders, RequestTooLarge, upstreamRequestHeaders } from "./relay.js";
+import type { GatewayRoute } from "./route.js";
 
-export const CODEX_UPSTREAM_BASE_URL = "https://chatgpt.com/backend-api/codex";
-/** The only Codex routes a key can buy; there is no open proxy. */
-export const CODEX_GATEWAY_ROUTES = Object.freeze(["POST /responses", "POST /responses/compact", "GET /models"] as const);
+export { CODEX_GATEWAY_ROUTES, CODEX_UPSTREAM_BASE_URL } from "./codexRoute.js";
+export { GROK_GATEWAY_ROUTES, GROK_UPSTREAM_BASE_URL } from "./grokRoute.js";
 
 export type GatewayAgentCounters = { requests: number; upstreamRequests: number; refused: number; responses: number; inputTokens: number; outputTokens: number; totalTokens: number };
 export type GatewayServer = Readonly<{
@@ -21,7 +24,8 @@ export type GatewayServerOptions = Readonly<{
   host?: string;
   port?: number;
   keys: GatewayKeyTable;
-  codex: Readonly<{ owner: CodexRealmOwner; upstreamBaseUrl?: string }>;
+  codex?: Readonly<{ owner: CodexRealmOwner; upstreamBaseUrl?: string }>;
+  grok?: Readonly<{ owner: GrokRealmOwner; upstreamBaseUrl?: string }>;
   fetch?: typeof fetch;
   log?: (line: string) => void;
 }>;
@@ -33,8 +37,11 @@ class Refusal extends Error {
 export async function startGatewayServer(options: GatewayServerOptions): Promise<GatewayServer> {
   const fetcher = options.fetch ?? fetch;
   const log = options.log ?? ((line: string) => { process.stderr.write(`${line}\n`); });
-  const upstreamBase = (options.codex.upstreamBaseUrl ?? CODEX_UPSTREAM_BASE_URL).replace(/\/+$/u, "");
-  const owner = options.codex.owner;
+  const routes = new Map<string, GatewayRoute>();
+  for (const route of [options.codex && codexGatewayRoute(options.codex), options.grok && grokGatewayRoute(options.grok)]) {
+    if (route) routes.set(route.engine, { ...route, upstreamBaseUrl: route.upstreamBaseUrl.replace(/\/+$/u, "") });
+  }
+  if (routes.size === 0) throw new Error("gateway serves no engine");
   const counters = new Map<string, GatewayAgentCounters>();
   const lifetime = new AbortController();
   let active = 0;
@@ -53,10 +60,11 @@ export async function startGatewayServer(options: GatewayServerOptions): Promise
     agent.requests += 1;
     const url = new URL(request.url ?? "/", "http://gateway.invalid");
     if (url.pathname === "/v1/health" && request.method === "GET" && url.search === "") return health(response, entry, agent);
-    if (!url.pathname.startsWith("/v1/codex/")) return refuse(request, response, 404, "not_found", agent);
-    const subpath = url.pathname.slice("/v1/codex".length);
-    if (!(CODEX_GATEWAY_ROUTES as readonly string[]).includes(`${request.method} ${subpath}`)) return refuse(request, response, 404, "not_found", agent);
-    if (!entry.engines.includes(ENGINE_DESCRIPTORS.codex.id)) return refuse(request, response, 403, "engine_not_allowed", agent);
+    const match = /^\/v1\/([a-z]+)(\/.*)$/u.exec(url.pathname);
+    const route = match === null ? undefined : routes.get(match[1]!);
+    const subpath = match?.[2] ?? "";
+    if (route === undefined || !route.routes.includes(`${request.method} ${subpath}`)) return refuse(request, response, 404, "not_found", agent);
+    if (!entry.engines.includes(route.engine)) return refuse(request, response, 403, "engine_not_allowed", agent);
     if (active >= GATEWAY_LIMITS.maxConcurrentRequests) return refuse(request, response, 503, "overloaded", agent, { "retry-after": "1" });
     active += 1;
     const controller = new AbortController();
@@ -65,13 +73,13 @@ export async function startGatewayServer(options: GatewayServerOptions): Promise
     const signal = AbortSignal.any([controller.signal, lifetime.signal]);
     try {
       const body = request.method === "POST" ? await readRequestBody(request) : Buffer.alloc(0);
-      await relayCodex(request, response, body, `${upstreamBase}${subpath}${url.search}`, agent, presented!, signal);
+      await relay(route, request, response, body, `${route.upstreamBaseUrl}${subpath}${url.search}`, agent, presented!, signal);
     } catch (error) {
       if (error instanceof Refusal) return refuse(request, response, error.status, error.code, agent);
       if (error instanceof RequestTooLarge) return refuse(request, response, 413, "request_too_large", agent);
-      if (error instanceof CodexAuthStale) return refuse(request, response, 403, "auth_stale", agent);
-      if (error instanceof CodexRealmLost) return refuse(request, response, 503, "realm_unavailable", agent);
-      log(`daimon gateway: codex relay failed (${error instanceof Error ? error.name : "unknown"})`);
+      if (error instanceof RealmAuthStale) return refuse(request, response, 403, "auth_stale", agent);
+      if (error instanceof RealmLost) return refuse(request, response, 503, "realm_unavailable", agent);
+      log(`daimon gateway: ${route.engine} relay failed (${error instanceof Error ? error.name : "unknown"})`);
       if (!response.headersSent) return refuse(request, response, 502, "upstream_unavailable", agent);
       response.destroy();
     } finally {
@@ -80,15 +88,15 @@ export async function startGatewayServer(options: GatewayServerOptions): Promise
     }
   };
 
-  const relayCodex = async (
-    request: IncomingMessage, response: ServerResponse, body: Buffer, target: string,
+  const relay = async (
+    route: GatewayRoute, request: IncomingMessage, response: ServerResponse, body: Buffer, target: string,
     agent: GatewayAgentCounters, agentKey: string, signal: AbortSignal
   ): Promise<void> => {
-    let bearer: CodexBearer = await owner.bearer();
+    const owner = route.owner;
+    let bearer: RealmBearer<object> = await owner.bearer();
     for (let attempt = 0; ; attempt += 1) {
       const headers = upstreamRequestHeaders(request.headers);
-      headers.authorization = `Bearer ${bearer.accessToken}`;
-      if (bearer.accountId !== undefined) headers["chatgpt-account-id"] = bearer.accountId;
+      route.applyBearer(headers, bearer);
       const headerTimeout = new AbortController();
       const timer = setTimeout(() => headerTimeout.abort(), GATEWAY_LIMITS.upstreamHeadersMs);
       agent.upstreamRequests += 1;
@@ -105,7 +113,7 @@ export async function startGatewayServer(options: GatewayServerOptions): Promise
       }
       if (upstream.status === 401) {
         await upstream.body?.cancel().catch(() => undefined);
-        if (attempt > 0) { await owner.fence(); throw new CodexAuthStale(); }
+        if (attempt > 0) { await owner.fence(); throw new RealmAuthStale(); }
         bearer = await owner.rejected(bearer);
         continue;
       }
@@ -118,7 +126,7 @@ export async function startGatewayServer(options: GatewayServerOptions): Promise
         return;
       }
       response.writeHead(upstream.status, relayResponseHeaders(upstream.headers));
-      await streamBody(upstream.body, response, signal, createUsageTap((usage) => {
+      await streamBody(upstream.body, response, signal, route.usageTap((usage) => {
         agent.inputTokens += usage.inputTokens; agent.outputTokens += usage.outputTokens; agent.totalTokens += usage.totalTokens;
       }));
       agent.responses += 1;
@@ -127,12 +135,13 @@ export async function startGatewayServer(options: GatewayServerOptions): Promise
   };
 
   const health = (response: ServerResponse, entry: GatewayKeyEntry, agent: GatewayAgentCounters): void => {
-    const codex = entry.engines.includes(ENGINE_DESCRIPTORS.codex.id);
     const realms: Record<string, "ready" | "stale" | "unavailable"> = {};
     const writeBack: Record<string, "ok" | "pending"> = {};
-    if (codex) {
-      realms[ENGINE_DESCRIPTORS.codex.id] = !owner.live() ? "unavailable" : owner.stale() ? "stale" : "ready";
-      writeBack[ENGINE_DESCRIPTORS.codex.id] = owner.writeBackPending() ? "pending" : "ok";
+    for (const engine of entry.engines) {
+      const owner = routes.get(engine)?.owner;
+      // A key engine this gateway does not serve has no realm here: unavailable, never ready.
+      realms[engine] = owner === undefined || !owner.live() ? "unavailable" : owner.stale() ? "stale" : "ready";
+      writeBack[engine] = owner?.writeBackPending() === true ? "pending" : "ok";
     }
     const body = { agent_id: entry.agentId, engines: entry.engines, realms, write_back: writeBack };
     const states = Object.values(realms);

@@ -1,4 +1,5 @@
 import type { OrganizationRuntimeAgentConfig } from "../../../runtime/organizationRuntime.js";
+import type { PortableRealmAuthority } from "../../../runtime/portableSubscriptionRealmTypes.js";
 
 export type GrokAgent = OrganizationRuntimeAgentConfig & { engine: { kind: "grok" } };
 
@@ -12,6 +13,8 @@ export type GrokCredentialJournal = Readonly<{
 
 export type GrokSubscriptionRealm = Readonly<{
   withCredential<T>(agent: GrokAgent, operation: () => Promise<T>, signal?: AbortSignal): Promise<T>;
+  /** Sole-holder access for the auth gateway, which owns the realm for its lifetime. */
+  authority?: PortableRealmAuthority;
   close(): Promise<void>;
 }>;
 
