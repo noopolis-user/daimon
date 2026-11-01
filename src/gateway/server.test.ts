@@ -115,6 +115,20 @@ test("injects the realm bearer, strips the agent key, streams SSE and counts usa
   f.assertCleanLogs();
 });
 
+test("an agent that hangs up mid-stream is not logged as a relay fault", async (t) => {
+  const f = await fixture(t, (_request, response) => {
+    response.writeHead(200, { "content-type": "text/event-stream" });
+    response.write(SSE);
+    setTimeout(() => response.end(), 300);
+  });
+  const controller = new AbortController();
+  const response = await fetch(`${f.gateway.url}/v1/codex/responses`, { method: "POST", body: "{}", signal: controller.signal, headers: { "content-type": "application/json", authorization: `Bearer ${AGENT_KEY}` } });
+  await response.body!.getReader().read();
+  controller.abort();
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  assert.deepEqual(f.logs.filter((line) => line.includes("relay failed")), []);
+});
+
 test("an upstream 401 refreshes once and retries with the new bearer", async (t) => {
   const f = await fixture(t, (_request, response, generation) => {
     if (generation === 0) { response.writeHead(401, { "content-type": "application/json" }); response.end('{"error":"expired"}'); return; }
