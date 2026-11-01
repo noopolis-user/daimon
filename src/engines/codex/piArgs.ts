@@ -1,6 +1,7 @@
 import { ENGINE_DESCRIPTORS } from "../descriptors.js";
 import { codexTaskClockArgs } from "./piTaskClock.js";
 import { codexFilesystemRules } from "./codexFilesystemRules.js";
+import { codexGatewayFromEnvironment, codexGatewayProviderArgs } from "./gatewayProvider.js";
 import type { CliEngineOptions } from "../../pi/cliSession.js";
 
 /**
@@ -52,6 +53,7 @@ export const renderCodexArgs = (
   return [...assertSafeCodexCommandArgs(options.commandArgs, strictPolicy !== undefined), "exec", ...(strictPolicy === undefined ? ["--sandbox", effectiveSandbox] : []), ...policyArgs, "--skip-git-repo-check",
   ...(options.model === undefined ? [] : [`--model=${options.model}`]),
   ...(options.reasoningEffort === undefined ? [] : ["-c", `model_reasoning_effort=${options.reasoningEffort}`]),
+  ...gatewayArgs(),
   "--color", "never", "--json", "-C", cwd,
   "-c", `mcp_servers.daimon.url=${endpoint}`,
   "-c", "features.apps=false", "-c", "features.plugins=false",
@@ -74,6 +76,12 @@ export const renderCodexPermissionProfile = (
     filesystem,
     network: { enabled: false }
   } })}`;
+};
+
+/** With an auth gateway configured, Codex reaches its subscription through it and holds no login. */
+const gatewayArgs = (): string[] => {
+  const gateway = codexGatewayFromEnvironment();
+  return gateway === undefined ? [] : codexGatewayProviderArgs(gateway);
 };
 
 /** Caller arguments cannot reopen Codex's sandbox, output, cwd, or config boundary. */

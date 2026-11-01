@@ -41,8 +41,16 @@ async function startSubscriptionRealm(
     if (agents.get(agent.id)?.runtimeHomePath !== agent.runtimeHomePath) throw redact();
     return gate.run(() => runLeasedTurn(durablePath, bootstrapDigest, agent, operation, options.onTransitionForTest), signal);
   };
+  const authorityFile = path.join(durablePath, AUTH_FILE);
+  const live = (): void => { if (lease.exitCode !== null || lease.signalCode !== null || lease.killed) throw redact(); };
   return {
     withCredential,
+    // Sole-holder access for a process that owns the realm for its lifetime (the auth gateway).
+    authority: {
+      async read() { live(); if (await readStale(path.join(durablePath, STALE_FILE)) !== undefined) throw redact(); return (await readCredential(authorityFile)).bytes; },
+      async replace(bytes) { live(); await atomicCredentialWrite(authorityFile, bytes); },
+      markStale: async () => { live(); await markStale(durablePath, bootstrapDigest); }
+    },
     close: () => closePromise ??= (async () => {
       await gate.close();
       try { await terminateChild(lease); } finally { await lock.close(); }

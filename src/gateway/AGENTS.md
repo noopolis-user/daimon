@@ -1,0 +1,24 @@
+# Daimon auth gateway
+
+`daimon-runtime gateway --config <path>` is the sole holder of a subscription
+login. Agents get `DAIMON_GATEWAY_URL` and a per-agent `DAIMON_GATEWAY_KEY`;
+the gateway swaps that key for the realm bearer upstream. Design:
+`AUTH_GATEWAY_DESIGN.md` in the ecosystem folder. Slice 1 serves Codex only.
+
+Rules:
+
+- Status contract: 401 only for a bad agent key. An upstream 401 refreshes once
+  (single-flight across every request) and retries; a failed refresh or a
+  second 401 fences the realm and answers 403 `auth_stale`, never a relayed 401
+  and never 5xx. Upstream 429 and 5xx are relayed with a bounded, redacted body.
+- Fixed upstreams and a closed route list (`CODEX_GATEWAY_ROUTES`); anything
+  else is 404. A config may override an upstream only to a loopback URL.
+- Never log a header, body, key or token. Fault lines name an error class only.
+- The key table stores `sha256(key)` only and is compared in constant time.
+- The realm is the existing portable realm (`../runtime/portableSubscriptionRealm.ts`):
+  the gateway holds its exclusive flock for life through `authority`, and every
+  write-back is the CLI's own `auth.json` schema (`codexCredential.ts`).
+- Keep the key's env name ending in `_KEY`: Codex's shell policy excludes
+  `*KEY*` names from model-run commands.
+
+Use named exports, keep files under 400 lines, tests beside files.
