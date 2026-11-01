@@ -8,9 +8,10 @@ the gateway swaps that key for the realm bearer upstream. Design:
 Rules:
 
 - Status contract: 401 only for a bad agent key. An upstream 401 refreshes once
-  (single-flight across every request) and retries; a failed refresh or a
-  second 401 fences the realm and answers 403 `auth_stale`, never a relayed 401
-  and never 5xx. Upstream 429 and 5xx are relayed with a bounded, redacted body.
+  (single-flight across every request) and retries. A refresh the token
+  endpoint rejects, or a second 401, fences the realm (durable stale file);
+  a transient refresh failure answers the same 403 `auth_stale` without
+  fencing. Never a relayed 401 and never 5xx. Upstream 429 and 5xx are relayed with a bounded, redacted body.
 - Fixed upstreams and a closed route list (`CODEX_GATEWAY_ROUTES`); anything
   else is 404. A config may override an upstream only to a loopback URL.
 - Never log a header, body, key or token. Fault lines name an error class only.
