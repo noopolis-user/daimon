@@ -12,6 +12,7 @@ export function grokGatewayRoute(options: Readonly<{ owner: GrokRealmOwner; upst
     engine: ENGINE_DESCRIPTORS.grok.id,
     upstreamBaseUrl: options.upstreamBaseUrl ?? GROK_UPSTREAM_BASE_URL,
     routes: GROK_GATEWAY_ROUTES,
+    query: false,
     owner: options.owner,
     applyBearer(headers, bearer) { headers.authorization = `Bearer ${bearer.accessToken}`; },
     usageTap: createChatCompletionsUsageTap

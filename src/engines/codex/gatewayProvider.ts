@@ -3,30 +3,14 @@ import path from "node:path";
 import { PORTABLE_AUTH_FILE_NAME } from "../descriptorContracts.js";
 import type { PortableSubscriptionRealm } from "../../runtime/portableSubscriptionRealmTypes.js";
 
-export const DAIMON_GATEWAY_URL_ENV = "DAIMON_GATEWAY_URL";
-/**
- * Must keep its `_KEY` suffix: Codex's default shell environment excludes
- * every `*KEY*` name, so the agent key reaches Codex's provider but never a
- * model-run command.
- */
-export const DAIMON_GATEWAY_KEY_ENV = "DAIMON_GATEWAY_KEY";
+import { DAIMON_GATEWAY_KEY_ENV, gatewayFromEnvironment, type AgentGateway } from "../../gateway/agentGateway.js";
+
+export { DAIMON_GATEWAY_KEY_ENV, DAIMON_GATEWAY_URL_ENV } from "../../gateway/agentGateway.js";
 export const CODEX_GATEWAY_PROVIDER_ID = "daimon_gateway";
 const HEALTH_TIMEOUT_MS = 5_000;
 
-export type CodexGateway = Readonly<{ url: string; key: string }>;
-
-/** Both variables or neither; half a gateway is a deployment fault, never a silent fallback. */
-export function codexGatewayFromEnvironment(environment: NodeJS.ProcessEnv = process.env): CodexGateway | undefined {
-  const rawUrl = environment[DAIMON_GATEWAY_URL_ENV];
-  const key = environment[DAIMON_GATEWAY_KEY_ENV];
-  if ((rawUrl === undefined || rawUrl === "") && (key === undefined || key === "")) return undefined;
-  if (!rawUrl || !key) throw new Error(`${DAIMON_GATEWAY_URL_ENV} and ${DAIMON_GATEWAY_KEY_ENV} must be set together`);
-  if (!/^[A-Za-z0-9._~+/=-]{16,512}$/u.test(key)) throw new Error(`${DAIMON_GATEWAY_KEY_ENV} is not a gateway key`);
-  let url: URL;
-  try { url = new URL(rawUrl); } catch { throw new Error(`${DAIMON_GATEWAY_URL_ENV} must be a URL`); }
-  if (!["http:", "https:"].includes(url.protocol) || url.username || url.password || url.search || url.hash) throw new Error(`${DAIMON_GATEWAY_URL_ENV} must be a plain http(s) URL`);
-  return { url: url.href.replace(/\/+$/u, ""), key };
-}
+export type CodexGateway = AgentGateway;
+export const codexGatewayFromEnvironment = gatewayFromEnvironment;
 
 /** Routes Codex's subscription request through the gateway; HTTP SSE only. */
 export function codexGatewayProviderArgs(gateway: CodexGateway): string[] {

@@ -12,6 +12,7 @@ export function codexGatewayRoute(options: Readonly<{ owner: CodexRealmOwner; up
     engine: ENGINE_DESCRIPTORS.codex.id,
     upstreamBaseUrl: options.upstreamBaseUrl ?? CODEX_UPSTREAM_BASE_URL,
     routes: CODEX_GATEWAY_ROUTES,
+    query: true,
     owner: options.owner,
     applyBearer(headers, bearer) {
       headers.authorization = `Bearer ${bearer.accessToken}`;

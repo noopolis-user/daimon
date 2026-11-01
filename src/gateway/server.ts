@@ -63,7 +63,7 @@ export async function startGatewayServer(options: GatewayServerOptions): Promise
     const match = /^\/v1\/([a-z]+)(\/.*)$/u.exec(url.pathname);
     const route = match === null ? undefined : routes.get(match[1]!);
     const subpath = match?.[2] ?? "";
-    if (route === undefined || !route.routes.includes(`${request.method} ${subpath}`)) return refuse(request, response, 404, "not_found", agent);
+    if (route === undefined || !route.routes.includes(`${request.method} ${subpath}`) || (!route.query && url.search !== "")) return refuse(request, response, 404, "not_found", agent);
     if (!entry.engines.includes(route.engine)) return refuse(request, response, 403, "engine_not_allowed", agent);
     if (active >= GATEWAY_LIMITS.maxConcurrentRequests) return refuse(request, response, 503, "overloaded", agent, { "retry-after": "1" });
     active += 1;

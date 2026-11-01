@@ -13,3 +13,4 @@ export * from "./realmOwner.js";
 export * from "./relay.js";
 export type * from "./route.js";
 export { startGatewayServer, type GatewayAgentCounters, type GatewayServer, type GatewayServerOptions } from "./server.js";
+export * from "./agentGateway.js";

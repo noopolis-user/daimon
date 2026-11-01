@@ -12,6 +12,8 @@ export type GatewayRoute = Readonly<{
   engine: GatewayEngine;
   upstreamBaseUrl: string;
   routes: readonly string[];
+  /** Whether a query string is relayed; a route that never needs one refuses it. */
+  query: boolean;
   owner: RealmOwner<object>;
   applyBearer(headers: Record<string, string>, bearer: RealmBearer<object>): void;
   usageTap(onUsage: (usage: ResponseUsage) => void): (chunk: Uint8Array) => void;
