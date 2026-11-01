@@ -7,7 +7,7 @@ import { createCodexRealmOwner, type CodexRealmOwner } from "./codexRealmOwner.j
 import { createCodexRefresh } from "./codexRefresh.js";
 import { parseGatewayConfig } from "./config.js";
 import { createGrokRealmOwner, type GrokRealmOwner } from "./grokRealmOwner.js";
-import { createGrokRefresh } from "./grokRefresh.js";
+import { createGrokRefresh, sweepGrokRefreshScratch } from "./grokRefresh.js";
 import { readGatewayKeyTable } from "./keyTable.js";
 import type { RealmOwner } from "./realmOwner.js";
 import { startGatewayServer, type GatewayServer } from "./server.js";
@@ -45,6 +45,7 @@ export async function runGatewayCli(arguments_: readonly string[]): Promise<Runn
     if (config.grok !== undefined) {
       const realm = await startGrokSubscriptionRealm([], realmPaths(config.grok));
       realms.push(realm);
+      await sweepGrokRefreshScratch(config.grok.scratchPath);
       const refresh = createGrokRefresh({ command: config.grok.command ?? GROK_ENGINE_BROKER.grokExecutablePath, ...(config.grok.scratchPath === undefined ? {} : { scratchRoot: config.grok.scratchPath }) });
       const owner = await createGrokRealmOwner({ authority: realm.authority!, refresh });
       owners.push(owner);

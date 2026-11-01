@@ -1,6 +1,6 @@
 import { ENGINE_DESCRIPTORS } from "../engines/descriptors.js";
 import { constants } from "node:fs";
-import { mkdtemp, open, rm } from "node:fs/promises";
+import { mkdtemp, open, readdir, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { spawnRealTime as spawn } from "../runtime/taskClockProcess.js";
@@ -32,30 +32,56 @@ export async function refreshGrokBrokerCredential(command: string, grokHome: str
 export type GrokRefresh = (current: GrokLogin) => Promise<GrokLogin>;
 export type GrokRefreshOptions = Readonly<{ command: string; scratchRoot?: string; timeoutMs?: number; run?: typeof refreshGrokBrokerCredential }>;
 
+const SCRATCH_PREFIX = "daimon-gateway-refresh-";
+
 /**
  * Gateway refresh: the CLI runs in a private scratch home seeded with the
  * current login, so the realm file changes only through the owner's atomic
  * write-back. The scratch home is removed before this returns.
+ *
+ * The CLI can rotate the login and still exit non-zero (a 429 on the model
+ * listing after a successful token exchange). The old refresh token is then
+ * spent, so a rotated login in the scratch home is returned, not discarded;
+ * only an unchanged (or unreadable) one lets the failure stand. A login the
+ * CLI named as refused is never kept.
  */
 export function createGrokRefresh(options: GrokRefreshOptions): GrokRefresh {
   const run = options.run ?? refreshGrokBrokerCredential;
   return async (current) => {
-    const home = await mkdtemp(path.join(options.scratchRoot ?? os.tmpdir(), "daimon-gateway-refresh-"));
+    const home = await mkdtemp(path.join(options.scratchRoot ?? os.tmpdir(), SCRATCH_PREFIX));
     try {
       const file = path.join(home, GROK.auth.fileName);
       const handle = await open(file, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY, GROK.auth.fileMode);
       try { await handle.writeFile(current.bytes); } finally { await handle.close(); }
-      await run(options.command, home, options.timeoutMs);
-      const reader = await open(file, constants.O_RDONLY | ((constants as { O_NOFOLLOW?: number }).O_NOFOLLOW ?? 0));
-      let bytes: Buffer | undefined;
-      try {
-        const stat = await reader.stat();
-        if (!stat.isFile() || stat.size > GROK.auth.maxCredentialBytes) throw new Error("Grok refresh left no usable login");
-        bytes = await reader.readFile();
-        return parseGrokAuth(bytes);
-      } finally { bytes?.fill(0); await reader.close(); }
+      try { await run(options.command, home, options.timeoutMs); }
+      catch (error) {
+        if (error instanceof GrokRefreshRejected) throw error;
+        const left = await readScratchLogin(file).catch(() => undefined);
+        if (left !== undefined && left.digest !== current.digest) return left;
+        left?.bytes.fill(0);
+        throw error;
+      }
+      return await readScratchLogin(file);
     } finally {
       await rm(home, { recursive: true, force: true });
     }
   };
+}
+
+/** Removes scratch homes a crashed gateway left behind; run once at start, before any refresh. */
+export async function sweepGrokRefreshScratch(scratchRoot: string = os.tmpdir()): Promise<void> {
+  const entries = await readdir(scratchRoot, { withFileTypes: true }).catch(() => []);
+  await Promise.all(entries.filter((entry) => entry.isDirectory() && entry.name.startsWith(SCRATCH_PREFIX))
+    .map((entry) => rm(path.join(scratchRoot, entry.name), { recursive: true, force: true })));
+}
+
+async function readScratchLogin(file: string): Promise<GrokLogin> {
+  const reader = await open(file, constants.O_RDONLY | ((constants as { O_NOFOLLOW?: number }).O_NOFOLLOW ?? 0));
+  let bytes: Buffer | undefined;
+  try {
+    const stat = await reader.stat();
+    if (!stat.isFile() || stat.size > GROK.auth.maxCredentialBytes) throw new Error("Grok refresh left no usable login");
+    bytes = await reader.readFile();
+    return parseGrokAuth(bytes);
+  } finally { bytes?.fill(0); await reader.close(); }
 }

@@ -10,7 +10,7 @@ import type { PortableRealmAuthority } from "../runtime/portableSubscriptionReal
 import { parseGatewayConfig, GATEWAY_CONFIG_VERSION } from "./config.js";
 import { parseGrokAuth, type GrokLogin } from "./grokCredential.js";
 import { createGrokRealmOwner } from "./grokRealmOwner.js";
-import { createGrokRefresh, GrokRefreshRejected } from "./grokRefresh.js";
+import { createGrokRefresh, GrokRefreshRejected, sweepGrokRefreshScratch } from "./grokRefresh.js";
 import { gatewayKeyDigest, GATEWAY_KEY_TABLE_VERSION, parseGatewayKeyTable } from "./keyTable.js";
 import { startGatewayServer } from "./server.js";
 
@@ -127,6 +127,8 @@ test("proactive refresh before expiry is single-flight and spaced when the CLI l
   const owner = await createGrokRealmOwner({ authority: realm, now: () => clock, log: () => undefined, refresh: async (current) => { refreshes += 1; return current; } });
   await Promise.all([owner.bearer(), owner.bearer(), owner.bearer()]);
   assert.equal(refreshes, 1);
+  assert.equal((await owner.bearer()).generation, 0, "an unchanged login is no new generation");
+  assert.equal(realm.writes, 0, "an unchanged login is not written back");
   await owner.bearer();
   assert.equal(refreshes, 1, "an unchanged login is not refreshed on every request");
   clock += 61_000;
@@ -155,4 +157,29 @@ test("config accepts a Grok-only gateway and refuses remote Grok upstreams", () 
   const base = { version: GATEWAY_CONFIG_VERSION, key_table_path: "/etc/daimon-gateway/keys.json" };
   assert.deepEqual(parseGatewayConfig({ ...base, grok: { command: "/usr/local/bin/grok", upstream_base_url: "http://127.0.0.1:9/v1/" } }), { host: "127.0.0.1", port: 0, keyTablePath: "/etc/daimon-gateway/keys.json", grok: { command: "/usr/local/bin/grok", upstreamBaseUrl: "http://127.0.0.1:9/v1" } });
   for (const value of [base, { ...base, grok: { upstream_base_url: "https://cli-chat-proxy.example/v1" } }, { ...base, grok: { command: "grok" } }, { ...base, grok: { token_url: "http://127.0.0.1/x" } }]) assert.throws(() => parseGatewayConfig(value), TypeError);
+});
+
+test("a login the CLI rotated before failing is kept; an unchanged one lets the failure stand", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "daimon-grok-gw-rotate-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const scratch = path.join(root, "scratch");
+  await mkdir(scratch, { mode: 0o700 });
+  const command = path.join(root, "grok");
+  await writeFile(command, `#!/bin/sh\n[ -f '${root}/rotate' ] && printf '%s' '${login(1).toString("utf8")}' > "$GROK_HOME/auth.json"\necho "HTTP 429 Too Many Requests" >&2\nexit 1\n`);
+  await chmod(command, 0o700);
+  await assert.rejects(createGrokRefresh({ command, scratchRoot: scratch })(parseGrokAuth(login(0))), (error: unknown) => error instanceof Error && !(error instanceof GrokRefreshRejected));
+  await writeFile(path.join(root, "rotate"), "");
+  const kept = await createGrokRefresh({ command, scratchRoot: scratch })(parseGrokAuth(login(0)));
+  assert.equal(kept.accessToken, token(1));
+  assert.deepEqual(await readdir(scratch), []);
+});
+
+test("a crashed gateway's scratch homes are swept at start; other entries stay", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "daimon-grok-gw-sweep-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(path.join(root, "daimon-gateway-refresh-abc123"));
+  await writeFile(path.join(root, "daimon-gateway-refresh-abc123", "auth.json"), login(0));
+  await mkdir(path.join(root, "other"));
+  await sweepGrokRefreshScratch(root);
+  assert.deepEqual(await readdir(root), ["other"]);
 });
