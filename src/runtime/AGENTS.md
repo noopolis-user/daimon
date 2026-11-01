@@ -678,14 +678,13 @@ in `deny` (verified: `/tmp`, `/var/tmp`, `/run`, `/etc`, `sessions` all fail;
 realm, durable keyring lease, bounded unlock stdin, and cleanup. Enrollment
 probes, interactive bootstrap, and complete CLI turns use its account gate;
 AGY credentials remain in the native encrypted keyring.
-`portableSubscriptionRealm.ts` owns the realm lease, crash journals and stale
-fences. The auth gateway holds it for life through `authority` for Codex and
-Grok. Its per-wake stage/turn/promote/remove (`withCredential`) serves only a
-Codex organization started without `DAIMON_GATEWAY_URL`, which today is
-Spawnfile's native-sandbox Codex training subject. Grok never runs in the agent
-process: every Grok agent requires the engine broker, whose upstream is the
-gateway or, in Spawnfile's v4 training container, its own realm authority.
-`subscriptionAuthority.ts` requires a descriptor-keyed realm or broker before
+`portableSubscriptionRealm.ts` owns the realm lease, bootstrap import and stale
+fence; the auth gateway is its only holder, for life, through `authority`, for
+Codex and Grok. A `lease.json` left by the retired per-wake lease is read once
+at start and settled without an agent copy. No agent process ever holds a Codex
+or Grok login: Codex requires the gateway, and every Grok agent requires the
+engine broker, whose upstream is the gateway.
+`subscriptionAuthority.ts` requires the gateway, AGY's realm or the broker before
 any production agent starts, so a new subscription engine cannot silently
 bypass ownership. `subscriptionTurnGate.ts` bounds waits to 128 pending and
 30 minutes outside the CLI turn timeout; stop cancels waiting admissions and

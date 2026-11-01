@@ -40,7 +40,6 @@ export * from "./grokInferenceProxy.js";
 export * from "./grokInferenceProxyRequest.js";
 export * from "./grokSlotPreflightReceipt.js";
 export * from "./grokSubscriptionRealm.js";
-export * from "./grokSubscriptionRealmTypes.js";
 export * from "./grokWorkerAttestation.js";
 export * from "./grokWorkerContract.js";
 export * from "./grokWorkerDenyPlacement.js";

@@ -31,7 +31,8 @@ type OrganizationRuntimeEngineFactory = (
   paths?: ReturnType<OrganizationRuntimePathAuthority["forAgent"]>
 ) => Promise<AgentHandle>;
 type HostReadiness = OrganizationRuntimeHostReadiness;
-type ProductionHostOptions = import("./subscriptionRealmPaths.js").SubscriptionRealmHostOptions;
+/** Trusted host provisioning only; never accepted in agent configuration. */
+export type ProductionHostOptions = Readonly<{ sharedProtectedPaths?: readonly string[] }>;
 type WakeJob = {
   readonly request: OrganizationRuntimeWakeRequest;
   readonly resolve: (result: OrganizationRuntimeWakeResult) => void;
@@ -56,7 +57,7 @@ export function createOrganizationRuntimeHost(config: unknown, options: Producti
 /** @internal Control-owned attention registry, never a caller-supplied config hook. */
 export function createOrganizationRuntimeHostWithAttention(config: unknown, options: ProductionHostOptions, attention: AttentionRegistry): OrganizationRuntimeHost {
   const parsed = parseOrganizationRuntimeConfig(config);
-  let sharedProtectedPaths = options.sharedProtectedPaths ?? [];
+  const sharedProtectedPaths = options.sharedProtectedPaths ?? [];
   let agyBusAddress: string | undefined;
   let grokBroker: OrganizationRuntimeHostReadiness["grokBroker"];
   let credentialRealms: OrganizationRuntimeHostReadiness["credentialRealms"];
@@ -64,8 +65,7 @@ export function createOrganizationRuntimeHostWithAttention(config: unknown, opti
     parsed,
     (agent, paths) => startOrganizationRuntimeEngine(agent, parsed.host.controlTokenEnv, paths, agyBusAddress, grokBroker, parsed.agents, sharedProtectedPaths, attention, credentialRealms?.[agent.engine.kind]),
     async () => {
-      const ready = await prepareProductionReadiness(parsed, options);
-      sharedProtectedPaths = [...(options.sharedProtectedPaths ?? []), ...ready.subscriptionProtectedPaths];
+      const ready = await prepareProductionReadiness(parsed);
       agyBusAddress = ready.agyRealm?.busAddress;
       grokBroker = ready.grokBroker;
       credentialRealms = ready.credentialRealms;
@@ -86,7 +86,7 @@ export function createOrganizationRuntimeHostForTest(
 ): OrganizationRuntimeHost {
   return createHost(parseOrganizationRuntimeConfig(config), factory, preflight === undefined ? undefined : async () => {
     const paths = await preflight();
-    return { paths, subscriptionProtectedPaths: [], close: () => paths.close() };
+    return { paths, close: () => paths.close() };
   });
 }
 function createHost(

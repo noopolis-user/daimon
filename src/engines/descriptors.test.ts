@@ -1,7 +1,5 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { Ajv2020 } from "ajv/dist/2020.js";
@@ -15,7 +13,6 @@ import { renderGrokWorkerSandboxProfile } from "./grok/broker/grokWorkerSandboxP
 import { renderGrokInferenceClientConfig } from "./grok/broker/grokInferenceClientConfig.js";
 import { ENGINE_BROKER_VERSION, parseEngineBrokerRequest } from "./grok/broker/engineBrokerProtocol.js";
 import { lowerEngineBrokerTurnLimits, DEFAULT_GROK_BROKER_TURN_LIMITS, parseEngineBrokerTurnLimitOverrides } from "./grok/broker/engineBrokerTurnAccounting.js";
-import { engineAuthFile, verifyPortableEngineAuth } from "../runtime/engineReadiness.js";
 import { parseOrganizationRuntimeConfig, ORGANIZATION_RUNTIME_CONFIG_SCHEMA, ORGANIZATION_RUNTIME_VERSION } from "../runtime/organizationRuntime.js";
 import { canonicalJson } from "../contracts/canonicalJson.js";
 import { RUNTIME_CONTRACT_MANIFEST } from "../contracts/runtimeContractManifest.js";
@@ -150,35 +147,6 @@ test("auth homes, environment names, provider mapping and credential formats fol
   check("grok", { "https://evil.test::test": entry }, false);
   check("codex", { access_token: "access" }, false);
   assert.equal(getEngineHandler("agy").hasRefreshableCredential(Buffer.from("{}")), false);
-});
-
-test("readiness accepts legacy root-level Codex credentials", async () => {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "descriptor-legacy-auth-"));
-  try {
-    const home = path.join(directory, ENGINE_DESCRIPTORS.codex.homeDirectory);
-    await mkdir(home, { mode: 0o700 });
-    await writeFile(engineAuthFile("codex", home), JSON.stringify({ access_token: "legacy-access", refresh_token: "legacy-refresh" }), { mode: 0o600 });
-    await verifyPortableEngineAuth("test", "codex", home);
-  } finally { await rm(directory, { recursive: true, force: true }); }
-});
-
-test("portable auth readers enforce the descriptor filenames and exact byte ceilings", async () => {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "descriptor-auth-"));
-  try {
-    for (const id of ["codex", "grok"] as const) {
-      const descriptor = ENGINE_DESCRIPTORS[id], home = path.join(directory, descriptor.homeDirectory);
-      await mkdir(home, { mode: 0o700 });
-      const file = engineAuthFile(id, home);
-      assert.equal(file, path.join(home, descriptor.auth.fileName));
-      const value = id === "codex" ? { tokens: { access_token: "a", refresh_token: "r" } }
-        : { "https://auth.x.ai::test": { key: "a", refresh_token: "r", expires_at: "2026-10-23T00:00:00Z" } };
-      const bytes = JSON.stringify(value), limit = descriptor.auth.maxCredentialBytes;
-      await writeFile(file, bytes.padEnd(limit), { mode: 0o600 });
-      await verifyPortableEngineAuth("test", id, home);
-      await writeFile(file, bytes.padEnd(limit + 1), { mode: 0o600 });
-      await assert.rejects(verifyPortableEngineAuth("test", id, home), /authentication is not ready/);
-    }
-  } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
 test("descriptor sandbox capabilities correspond to the real config and rendered confinement", () => {

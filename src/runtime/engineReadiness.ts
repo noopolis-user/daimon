@@ -8,7 +8,6 @@ import { ENGINE_DESCRIPTORS, type EngineKind, type PortableEngineKind } from "..
 import { getEngineHandler } from "../engines/registry.js";
 export { verifyAgySubscriptionEnrollment } from "../engines/agy/authHooks.js";
 import type { OrganizationRuntimeAgentConfig } from "./organizationRuntime.js";
-import { hasRefreshablePortableCredential, portableCredentialSecretValues } from "./portableCredentialAuth.js";
 
 const MAX_PROBE_BYTES = 8 * 1024;
 
@@ -131,74 +130,11 @@ async function verifyEngineAuth(
   agentId: string, engine: EngineKind, engineHomePath: string,
   executablePath: string, runtimeHomePath: string, agyBusAddress?: string
 ): Promise<void> {
-  await getEngineHandler(engine).verifyAuth({ agentId, engine, engineHomePath, executablePath, runtimeHomePath, busAddress: agyBusAddress });
+  const verify = getEngineHandler(engine).verifyAuth;
+  if (verify === undefined) throw unavailable(agentId, engine, "its login is held by the auth gateway or engine broker, never the agent home");
+  await verify({ agentId, engine, engineHomePath, executablePath, runtimeHomePath, busAddress: agyBusAddress });
 }
 
-export async function verifyPortableEngineAuth(agentId: string, engine: PortableEngineKind, engineHomePath: string): Promise<void> {
-  const authPath = engineAuthFile(engine, engineHomePath);
-  let handle: Awaited<ReturnType<typeof open>> | undefined;
-  let buffer: Buffer | undefined;
-  try {
-    const home = await lstat(engineHomePath);
-    if (!home.isDirectory() || home.isSymbolicLink() || home.uid !== process.getuid?.() || (home.mode & 0o777) !== ENGINE_DESCRIPTORS[engine].auth.directoryMode) {
-      throw new Error("unsafe engine home");
-    }
-    const entry = await lstat(authPath);
-    assertPrivateAuthEntry(entry, engine);
-    handle = await open(authPath, constants.O_RDONLY | noFollow());
-    const opened = await handle.stat();
-    assertPrivateAuthEntry(opened, engine);
-    if (!sameIdentity(identity(entry), identity(opened))) throw new Error("auth artifact changed");
-    buffer = await handle.readFile();
-    const after = await handle.stat();
-    assertPrivateAuthEntry(after, engine);
-    if (!sameIdentity(identity(opened), identity(after))) throw new Error("auth artifact changed");
-    if (!hasRefreshablePortableCredential(engine, buffer)) throw new Error("unsupported auth artifact");
-  } catch {
-    throw unavailable(agentId, engine, "subscription authentication is not ready; provision the supported local credential and retry");
-  } finally {
-    buffer?.fill(0);
-    await handle?.close().catch(() => undefined);
-  }
-}
-
-/** Securely rereads the currently staged provider credential for exact output redaction. */
-export async function readPortableEngineCredentialSecrets(
-  agentId: string,
-  engine: PortableEngineKind,
-  engineHomePath: string
-): Promise<readonly string[]> {
-  const authPath = engineAuthFile(engine, engineHomePath);
-  let handle: Awaited<ReturnType<typeof open>> | undefined;
-  let buffer: Buffer | undefined;
-  try {
-    const home = await lstat(engineHomePath);
-    if (!home.isDirectory() || home.isSymbolicLink() || home.uid !== process.getuid?.() || (home.mode & 0o777) !== ENGINE_DESCRIPTORS[engine].auth.directoryMode) throw new Error("unsafe");
-    const before = await lstat(authPath); assertPrivateAuthEntry(before, engine);
-    handle = await open(authPath, constants.O_RDONLY | noFollow());
-    const opened = await handle.stat(); assertPrivateAuthEntry(opened, engine);
-    if (!sameIdentity(identity(before), identity(opened))) throw new Error("changed");
-    buffer = await handle.readFile();
-    const after = await handle.stat(); assertPrivateAuthEntry(after, engine);
-    if (!sameIdentity(identity(opened), identity(after)) || !hasRefreshablePortableCredential(engine, buffer)) throw new Error("changed");
-    return portableCredentialSecretValues(engine, buffer);
-  } catch {
-    throw unavailable(agentId, engine, "subscription authentication is not ready");
-  } finally {
-    buffer?.fill(0);
-    await handle?.close().catch(() => undefined);
-  }
-}
-
-function assertPrivateAuthEntry(entry: Awaited<ReturnType<typeof lstat>>, engine: PortableEngineKind): void {
-  if (!entry.isFile() || entry.isSymbolicLink() || Number(entry.uid) !== process.getuid?.()
-    || Number(entry.nlink) !== 1 || (Number(entry.mode) & 0o777) !== ENGINE_DESCRIPTORS[engine].auth.fileMode
-    || Number(entry.size) < 1 || Number(entry.size) > ENGINE_DESCRIPTORS[engine].auth.maxCredentialBytes) {
-    throw new Error("unsafe auth artifact");
-  }
-}
-
-function noFollow(): number { return (constants as typeof constants & { O_NOFOLLOW?: number }).O_NOFOLLOW ?? 0; }
 function identity(value: Awaited<ReturnType<typeof stat>>): FileIdentity {
   const numeric = value as typeof value & { dev: number; ino: number; size: number; mtimeMs: number; mode: number };
   return { dev: numeric.dev, ino: numeric.ino, size: numeric.size, mtimeMs: numeric.mtimeMs, mode: numeric.mode & 0o7777 };

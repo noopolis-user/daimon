@@ -29,7 +29,7 @@ export async function startOrganizationRuntimeEngine(
   organizationAgents?: readonly OrganizationRuntimeAgentConfig[],
   sharedProtectedPaths: readonly string[] = [],
   attention?: AttentionRegistry,
-  credentialRealm?: import("./portableSubscriptionRealmTypes.js").PortableSubscriptionRealm
+  credentialRealm?: import("../engines/runtimeHooks.js").CredentialGate
 ): Promise<AgentHandle> {
   const clock = readTaskClock();
   reportEngineTaskClockGap(agent.engine.kind);

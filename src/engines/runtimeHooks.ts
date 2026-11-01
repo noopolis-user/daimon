@@ -13,8 +13,10 @@ export type RuntimeHostResources = {
   agyRealm?: AgySubscriptionRealm;
   grokBroker?: EngineBrokerControlClient;
   subscriptionBrokers?: Partial<Record<import("./descriptors.js").EngineKind, EngineBrokerTurnClient>>;
-  credentialRealms?: Partial<Record<import("./descriptors.js").EngineKind, import("../runtime/portableSubscriptionRealmTypes.js").PortableSubscriptionRealm>>;
+  /** Per-wake credential critical sections; only AGY's native keyring realm needs one. */
+  credentialRealms?: Partial<Record<import("./descriptors.js").EngineKind, CredentialGate>>;
 };
+export type CredentialGate = Pick<AgySubscriptionRealm, "withCredential" | "close">;
 export type RuntimeSandbox = Readonly<{
   codexSandboxPaths?: { readonly protectedPaths: readonly string[]; readonly readablePaths: readonly string[] };
 }>;
@@ -43,11 +45,11 @@ export interface RuntimeEngineHooks {
   runCliCommand?(config: OrganizationRuntimeConfig): Promise<void>;
   readonly runtimeHomeShape: "private" | "worker-traversable";
   assertRuntimeHomeDirectory?(entry: RuntimeDirectoryEntry, label: string, runtime: RuntimeDirectoryIdentity): void;
-  /** Preserve credential materialization, broker readiness, then realm startup order. */
+  /** Preserve gateway checks, broker readiness, then realm startup order. */
   readonly hostReadinessOrder: number;
-  prepareHostReadiness(agents: readonly OrganizationRuntimeAgentConfig[], paths: OrganizationRuntimePathAuthority, resources: RuntimeHostResources, realmPaths?: import("../runtime/subscriptionRealmPaths.js").SubscriptionRealmPathPair): Promise<void>;
+  prepareHostReadiness(agents: readonly OrganizationRuntimeAgentConfig[], paths: OrganizationRuntimePathAuthority, resources: RuntimeHostResources): Promise<void>;
   assertRuntimeLaunch(agent: OrganizationRuntimeAgentConfig, broker: EngineBrokerTurnClient | undefined): void;
-  prepareRuntimeReadiness(agent: OrganizationRuntimeAgentConfig, busAddress: string | undefined, broker: EngineBrokerTurnClient | undefined, credentialRealm?: import("../runtime/portableSubscriptionRealmTypes.js").PortableSubscriptionRealm): Promise<EngineReadiness>;
+  prepareRuntimeReadiness(agent: OrganizationRuntimeAgentConfig, busAddress: string | undefined, broker: EngineBrokerTurnClient | undefined, credentialRealm?: CredentialGate): Promise<EngineReadiness>;
   runtimeSandbox(context: RuntimeSandboxContext): RuntimeSandbox;
   runtimeSessionOptions(context: RuntimeSessionContext): Partial<CliEngineOptions>;
   runtimeToolName(name: string): string;

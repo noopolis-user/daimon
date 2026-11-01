@@ -1,7 +1,6 @@
 import { lstat } from "node:fs/promises";
 import path from "node:path";
 import { PORTABLE_AUTH_FILE_NAME } from "../descriptorContracts.js";
-import type { PortableSubscriptionRealm } from "../../runtime/portableSubscriptionRealmTypes.js";
 
 import { DAIMON_GATEWAY_KEY_ENV, gatewayFromEnvironment, type AgentGateway } from "../../gateway/agentGateway.js";
 
@@ -11,6 +10,13 @@ const HEALTH_TIMEOUT_MS = 5_000;
 
 export type CodexGateway = AgentGateway;
 export const codexGatewayFromEnvironment = gatewayFromEnvironment;
+
+/** A Codex agent reaches its subscription only through the auth gateway. */
+export function requireCodexGateway(agentId: string): CodexGateway {
+  const gateway = codexGatewayFromEnvironment();
+  if (gateway === undefined) throw new Error(`agent ${JSON.stringify(agentId)} Codex requires the auth gateway (DAIMON_GATEWAY_URL and DAIMON_GATEWAY_KEY)`);
+  return gateway;
+}
 
 /** Routes Codex's subscription request through the gateway; HTTP SSE only. */
 export function codexGatewayProviderArgs(gateway: CodexGateway): string[] {
@@ -38,9 +44,3 @@ export async function assertNoCodexHomeCredential(agentId: string, engineHomePat
   }
   throw new Error(`agent ${JSON.stringify(agentId)} Codex home must hold no credential in gateway mode`);
 }
-
-/** The gateway owns the login, so a wake needs no lease, copy or promotion. */
-export const codexGatewayRealm = (): PortableSubscriptionRealm => ({
-  withCredential: (_agent, operation) => operation(),
-  close: async () => undefined
-});

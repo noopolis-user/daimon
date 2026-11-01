@@ -66,15 +66,16 @@ that fails to write back is retried on the next request and on a timer, and
 `GET /v1/health` (that key's engines, realm state, `write_back` and usage
 counters) answers 503 `write_back_pending` until it lands, so readiness refuses.
 
-Migrating an existing realm whose `lease.json` is `active` or `promoting` for an agent the
-gateway does not know fences it on the gateway's first start; re-import the
-login.
+A realm migrated from the retired per-wake lease may still hold `lease.json`.
+The gateway reads it once at start: a `promoted` or `preparing` lease that
+matches the durable login is cleared, and an `active` or `promoting` one (whose
+newest refresh lived in an agent home) fences the realm; re-import the login.
 
-When the runtime sees `DAIMON_GATEWAY_URL` and `DAIMON_GATEWAY_KEY`, Codex wakes
-use it: Codex gets a `daimon_gateway` provider (`env_key = DAIMON_GATEWAY_KEY`),
-no realm lease or per-wake `auth.json` copy happens, readiness calls the health
-route and refuses any `auth.json` in `CODEX_HOME`, and the key is redacted from
-diagnostics. Without both variables, behavior is unchanged.
+The runtime requires `DAIMON_GATEWAY_URL` and `DAIMON_GATEWAY_KEY` for Codex:
+Codex gets a `daimon_gateway` provider (`env_key = DAIMON_GATEWAY_KEY`),
+readiness calls the health route and refuses any `auth.json` in `CODEX_HOME`,
+and the key is redacted from diagnostics. Without both variables a Codex agent
+refuses to start.
 
 ### Grok
 

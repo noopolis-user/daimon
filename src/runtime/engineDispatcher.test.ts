@@ -2,12 +2,13 @@ import assert from "node:assert/strict";
 import { access, chmod, mkdir, mkdtemp, readFile, rm, unlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import test from "node:test";
+import { createServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
+import test, { after, before } from "node:test";
 
 import { codexSandboxProtectedPaths, codexSandboxReadablePaths, grokSandboxProtectedPaths, startOrganizationRuntimeEngine } from "./engineDispatcher.js";
 import { AGY_SUBSCRIPTION_REALM, CODEX_SUBSCRIPTION_REALM, GROK_SUBSCRIPTION_REALM } from "./contractManifest.js";
 import type { EngineBrokerTurnClient } from "../engines/grok/broker/engineBrokerControlClient.js";
-import type { PortableSubscriptionRealm } from "./portableSubscriptionRealmTypes.js";
 import { ORGANIZATION_RUNTIME_VERSION, type OrganizationRuntimeAgentConfig } from "./organizationRuntime.js";
 
 const rootConfig = (root: string, kind: OrganizationRuntimeAgentConfig["engine"]["kind"]): OrganizationRuntimeAgentConfig => ({
@@ -95,7 +96,7 @@ test("production dispatcher starts each closed engine intent through Daimon", as
     process.env.DAIMON_TURN_USAGE_LEDGER_PATH = ledger;
     process.env.DAIMON_DISPATCH_CONTROL = "host-only";
     for (const kind of ["codex", "agy"] as const) {
-      const handle = await startOrganizationRuntimeEngine(rootConfig(root, kind), "DAIMON_DISPATCH_CONTROL", undefined, kind === "agy" ? "unix:path=/private/realm/bus" : undefined, undefined, undefined, [], undefined, kind === "codex" ? stagedRealm : undefined);
+      const handle = await startOrganizationRuntimeEngine(rootConfig(root, kind), "DAIMON_DISPATCH_CONTROL", undefined, kind === "agy" ? "unix:path=/private/realm/bus" : undefined);
       const result = await handle.wake({ id: `${kind}-wake`, kind: "manual", text: "probe" });
       assert.equal(result.text, "absent");
       await handle.stop();
@@ -140,7 +141,7 @@ test("production Codex strict dispatcher threads derived protected reads into th
   try {
     process.env.PATH = `${root}${path.delimiter}${priorPath ?? ""}`;
     process.env.NOOPOLIS_RUN_ID = "dispatcher-codex-sandbox-test";
-    const handle = await startOrganizationRuntimeEngine(codex, "DAIMON_UNUSED_CONTROL", undefined, undefined, undefined, [codex, peer], [sharedStore], undefined, stagedRealm);
+    const handle = await startOrganizationRuntimeEngine(codex, "DAIMON_UNUSED_CONTROL", undefined, undefined, undefined, [codex, peer], [sharedStore]);
     assert.equal((await handle.wake({ id: "codex-sandbox-wake", kind: "manual", text: "probe" })).text, "done");
     await handle.stop();
     const args = JSON.parse(await readFile(argvPath, "utf8")) as string[];
@@ -180,7 +181,7 @@ test("engine dispatcher threads a declared memory bank into the Pi harness", asy
     process.env.DAIMON_DISPATCH_CONTROL = "host-only";
     const memoryRuntimeHomePath = path.join(root, "memory-bank");
     const config: OrganizationRuntimeAgentConfig = { ...rootConfig(root, "codex"), memory: { runtimeHomePath: memoryRuntimeHomePath, tokenBudget: 500 } };
-    const handle = await startOrganizationRuntimeEngine(config, "DAIMON_DISPATCH_CONTROL", undefined, undefined, undefined, undefined, [], undefined, stagedRealm);
+    const handle = await startOrganizationRuntimeEngine(config, "DAIMON_DISPATCH_CONTROL");
     await handle.wake({ id: "memory-wake", kind: "manual", text: "probe" });
     await handle.stop();
     // createMemoryRuntime (in-process, via PiHarnessAdapter) provisions this
@@ -291,7 +292,7 @@ test("Daimon frames one escaped identity envelope for every production engine", 
       const base = rootConfig(root, kind);
       const config: OrganizationRuntimeAgentConfig = { ...base, name: identity.name, instructions: identity.instructions };
       const handle = await startOrganizationRuntimeEngine(config, "DAIMON_UNUSED_CONTROL", undefined, kind === "agy" ? "unix:path=/private/realm/bus" : undefined,
-        kind === "grok" ? echoBroker : undefined, undefined, [], undefined, kind === "codex" ? stagedRealm : undefined);
+        kind === "grok" ? echoBroker : undefined);
       const result = await handle.wake({ id: `${kind}-wake`, kind: "manual", text: "payload" });
       const envelope = JSON.stringify({ id: config.id, name: identity.name, instructions: identity.instructions });
       assert.equal(result.text.split(envelope).length - 1, 1);
@@ -329,7 +330,7 @@ test("a Codex wake whose reported usage crosses the configured per-wake token ce
     process.env.PATH = `${root}${path.delimiter}${priorPath ?? ""}`;
     process.env.NOOPOLIS_RUN_ID = "dispatcher-codex-ceiling-test";
     process.env.DAIMON_CODEX_WAKE_TOKEN_CEILING = "1000";
-    const handle = await startOrganizationRuntimeEngine({ ...config, engine: { kind: "codex" } }, "DAIMON_UNUSED_CONTROL", undefined, undefined, undefined, undefined, [], undefined, stagedRealm);
+    const handle = await startOrganizationRuntimeEngine({ ...config, engine: { kind: "codex" } }, "DAIMON_UNUSED_CONTROL");
     await assert.rejects(handle.wake({ id: "codex-over-budget-wake", kind: "manual", text: "probe" }), (error: unknown) => {
       assert.ok(error instanceof Error);
       assert.match(error.message, /1000-token per-wake ceiling/u);
@@ -367,7 +368,7 @@ test("a Codex wake that runs past the configured wall-clock bound fails the wake
     process.env.PATH = `${root}${path.delimiter}${priorPath ?? ""}`;
     process.env.NOOPOLIS_RUN_ID = "dispatcher-codex-timeout-test";
     process.env.DAIMON_CODEX_WAKE_TIMEOUT_MS = "100";
-    const handle = await startOrganizationRuntimeEngine({ ...config, engine: { kind: "codex" } }, "DAIMON_UNUSED_CONTROL", undefined, undefined, undefined, undefined, [], undefined, stagedRealm);
+    const handle = await startOrganizationRuntimeEngine({ ...config, engine: { kind: "codex" } }, "DAIMON_UNUSED_CONTROL");
     await assert.rejects(handle.wake({ id: "codex-hang-wake", kind: "manual", text: "probe" }), (error: unknown) => {
       assert.ok(error instanceof Error);
       assert.match(error.message, /100ms per-wake wall-clock bound/u);
@@ -385,8 +386,18 @@ test("a Codex wake that runs past the configured wall-clock bound fails the wake
   }
 });
 
-/** The realm's per-wake staging is covered by its own suite; here the seeded home login is already in place. */
-const stagedRealm: PortableSubscriptionRealm = { withCredential: (_agent, operation) => operation(), close: async () => undefined };
+/** A healthy auth gateway for every Codex agent in this file; the stub CLI never calls it. */
+let gatewayServer: Server | undefined;
+before(async () => {
+  gatewayServer = createServer((_request, response) => { response.writeHead(200, { "content-type": "application/json" }); response.end(JSON.stringify({ engines: ["codex"], write_back: { codex: "ok" } })); });
+  await new Promise<void>((resolve) => gatewayServer!.listen(0, "127.0.0.1", resolve));
+  process.env.DAIMON_GATEWAY_URL = `http://127.0.0.1:${(gatewayServer.address() as AddressInfo).port}`;
+  process.env.DAIMON_GATEWAY_KEY = "dispatcher-test-gateway-key-0123456789";
+});
+after(async () => {
+  delete process.env.DAIMON_GATEWAY_URL; delete process.env.DAIMON_GATEWAY_KEY;
+  await new Promise<void>((resolve) => gatewayServer === undefined ? resolve() : gatewayServer.close(() => resolve()));
+});
 const echoBroker: EngineBrokerTurnClient = { turn: async (_agentId, _wakeId, prompt) => prompt };
 
 async function waitForFile(filePath: string): Promise<void> {
@@ -400,6 +411,7 @@ async function seedAuth(root: string, kind: "codex" | "grok" | "agy"): Promise<v
   const directory = path.join(root, "runtime", kind, kind === "codex" ? ".codex" : kind === "grok" ? ".grok" : ".antigravity-cli");
   await mkdir(path.join(root, "workspace", kind), { recursive: true, mode: 0o700 });
   await mkdir(directory, { recursive: true, mode: 0o700 });
+  if (kind === "codex") return; // the auth gateway holds the Codex login; the home holds none
   const file = path.join(directory, kind === "agy" ? "antigravity-oauth-token" : "auth.json");
   const credential = kind === "grok"
     ? { "https://auth.x.ai::test": { key: "test-access", refresh_token: "test-refresh", expires_at: "2099-01-01T00:00:00.000Z" } }

@@ -1,4 +1,3 @@
-import { prepareSubscriptionRealmPaths, type SubscriptionRealmPaths } from "../../runtime/subscriptionRealmPaths.js";
 import path from "node:path";
 import { renderCodexArgs } from "../../pi/cliEngineSpawn.js";
 import { codexSandboxProtectedPaths, codexSandboxReadablePaths } from "../../runtime/engineDispatcher.js";
@@ -21,7 +20,7 @@ export type OrganizationCodexSandboxProjection = Readonly<{
 
 /** Resolves the production command policy without importing auth or accepting a wake. */
 export async function resolveOrganizationCodexSandboxProjection(config: unknown, agentId: string,
-  options: Readonly<{ acceptanceStorePath: string; subscriptionRealmPaths?: SubscriptionRealmPaths }>): Promise<OrganizationCodexSandboxProjection> {
+  options: Readonly<{ acceptanceStorePath: string }>): Promise<OrganizationCodexSandboxProjection> {
   const parsed = parseOrganizationRuntimeConfig(config);
   const selected = parsed.agents.find(agent => agent.id === agentId);
   if (!selected || selected.engine.kind !== "codex" || selected.engine.codexSandbox === undefined) {
@@ -33,8 +32,7 @@ export async function resolveOrganizationCodexSandboxProjection(config: unknown,
     const paths = authority.forAgent(selected);
     await paths.verify();
     const agent = { ...selected, workspacePath: paths.workspacePath, runtimeHomePath: paths.runtimeHomePath };
-    const realmPaths = await prepareSubscriptionRealmPaths(options.subscriptionRealmPaths, parsed.agents.map(value => ({ ...value, ...authority.forAgent(value) })), [options.acceptanceStorePath]);
-    const protectedPaths = [options.acceptanceStorePath, ...Object.values(realmPaths).flatMap(pair => [pair.bootstrapPath, pair.durablePath])];
+    const protectedPaths = [options.acceptanceStorePath];
     const engineHomePath = path.join(agent.runtimeHomePath, engineHomeName("codex"));
     const executable = await prepareEngineExecutable(agent.id, "codex");
     // These are the same collectors, canonical roots and renderer used by

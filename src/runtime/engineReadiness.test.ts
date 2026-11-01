@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
-import { chmod, link, mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
 import { ENGINE_CREDENTIAL_MATERIAL, GROK_SUBSCRIPTION_REALM } from "./contractManifest.js";
-import { engineAuthFile, engineHomeName, prepareEngineReadiness } from "./engineReadiness.js";
+import { engineAuthFile, engineHomeName, prepareEngineExecutable, prepareEngineReadiness } from "./engineReadiness.js";
 import type { OrganizationRuntimeAgentConfig } from "./organizationRuntime.js";
 
 const agent = (root: string, kind: "codex" | "grok" | "agy"): OrganizationRuntimeAgentConfig => ({
@@ -16,17 +16,12 @@ test("varying stderr is not a capability change while varying stdout is", async 
   const root = await mkdtemp(path.join(os.tmpdir(), "daimon-engine-stderr-"));
   const previousPath = process.env.PATH;
   try {
-    const config = agent(root, "codex");
     const executable = path.join(root, "codex");
-    await mkdir(config.workspacePath, { recursive: true, mode: 0o700 });
-    await mkdir(path.join(config.runtimeHomePath, ".codex"), { recursive: true, mode: 0o700 });
     // Emulation-dependent allocator noise on stderr differs run to run; the version on stdout does not.
     await writeFile(executable, "#!/usr/bin/env node\nif (process.argv.includes('--version')) { process.stderr.write(`<jemalloc>: warning ${Math.random()}`); process.stdout.write('1.0.13'); }", { mode: 0o700 });
     await chmod(executable, 0o700);
-    await writeFile(path.join(config.runtimeHomePath, ".codex", "auth.json"), JSON.stringify({ tokens: { access_token: "not-logged", refresh_token: "not-logged" } }), { mode: 0o600 });
-    await chmod(path.join(config.runtimeHomePath, ".codex", "auth.json"), 0o600);
     process.env.PATH = `${root}${path.delimiter}${previousPath ?? ""}`;
-    const readiness = await prepareEngineReadiness(config, config.runtimeHomePath);
+    const readiness = await prepareEngineExecutable("safe-agent", "codex");
     await readiness.verify();
     await readiness.verify();
     // A real capability change is still caught.
@@ -39,20 +34,15 @@ test("varying stderr is not a capability change while varying stdout is", async 
   }
 });
 
-test("pins an executable and accepts only a private refreshable local auth artifact", async () => {
+test("pins an executable and refuses a replaced one", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "daimon-engine-ready-"));
   const previousPath = process.env.PATH;
   try {
-    const config = agent(root, "codex");
     const executable = path.join(root, "codex");
-    await mkdir(config.workspacePath, { recursive: true, mode: 0o700 });
-    await mkdir(path.join(config.runtimeHomePath, ".codex"), { recursive: true, mode: 0o700 });
     await writeFile(executable, "#!/usr/bin/env node\nif (process.argv.includes('--version')) process.stdout.write('test');", { mode: 0o700 });
     await chmod(executable, 0o700);
-    await writeFile(path.join(config.runtimeHomePath, ".codex", "auth.json"), JSON.stringify({ tokens: { access_token: "not-logged", refresh_token: "not-logged" } }), { mode: 0o600 });
-    await chmod(path.join(config.runtimeHomePath, ".codex", "auth.json"), 0o600);
     process.env.PATH = `${root}${path.delimiter}${previousPath ?? ""}`;
-    const readiness = await prepareEngineReadiness(config, config.runtimeHomePath);
+    const readiness = await prepareEngineExecutable("safe-agent", "codex");
     await readiness.verify();
     await rename(executable, `${executable}.replaced`);
     await assert.rejects(readiness.verify(), /safe-agent codex is unavailable/);
@@ -62,55 +52,17 @@ test("pins an executable and accepts only a private refreshable local auth artif
   }
 });
 
-test("accepts refreshable native Grok subscription auth across access expiry", async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "daimon-engine-grok-ready-"));
+test("Codex and Grok never verify a login in the agent home", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "daimon-engine-home-login-"));
   const previousPath = process.env.PATH;
   try {
-    const config = agent(root, "grok");
-    const executable = path.join(root, "grok");
-    const authPath = path.join(config.runtimeHomePath, ".grok", "auth.json");
-    await mkdir(config.workspacePath, { recursive: true, mode: 0o700 });
-    await mkdir(path.dirname(authPath), { recursive: true, mode: 0o700 });
-    await writeFile(executable, "#!/usr/bin/env node\nif (process.argv.includes('--version')) process.stdout.write('test');", { mode: 0o700 });
-    await chmod(executable, 0o700);
-    const credential = (expiresAt: string, access = "not-logged", refresh = "not-logged") => ({
-      "https://auth.x.ai::account": { key: access, refresh_token: refresh, expires_at: expiresAt }
-    });
-    await writeFile(authPath, JSON.stringify(credential("2099-01-01T00:00:00.000Z")), { mode: 0o600 });
-    await chmod(authPath, 0o600);
     process.env.PATH = `${root}${path.delimiter}${previousPath ?? ""}`;
-    await (await prepareEngineReadiness(config, config.runtimeHomePath)).verify();
-
-    await writeFile(authPath, JSON.stringify(credential("2020-01-01T00:00:00.000Z")), { mode: 0o600 });
-    await chmod(authPath, 0o600);
-    await (await prepareEngineReadiness(config, config.runtimeHomePath)).verify();
-
-    for (const unsupported of [
-      { "https://auth.x.ai::account": { key: "not-logged", refresh_token: "not-logged" } },
-      credential("not-a-date"),
-      { "https://auth.x.ai::account": { refresh_token: "not-logged", expires_at: "2099-01-01T00:00:00.000Z" } },
-      { "https://auth.x.ai::account": { key: "not-logged", expires_at: "2099-01-01T00:00:00.000Z" } },
-      credential("2099-01-01T00:00:00.000Z", "", "not-logged"),
-      credential("2099-01-01T00:00:00.000Z", "not-logged", ""),
-      credential("2020-01-01T00:00:00.000Z", "not-logged", "   "),
-      { unexpected: true }
-    ]) {
-      await writeFile(authPath, JSON.stringify(unsupported), { mode: 0o600 });
-      await chmod(authPath, 0o600);
-      await assert.rejects(prepareEngineReadiness(config, config.runtimeHomePath), /subscription authentication is not ready/);
+    for (const kind of ["codex", "grok"] as const) {
+      const config = agent(root, kind);
+      await writeFile(path.join(root, kind), "#!/usr/bin/env node\nif (process.argv.includes('--version')) process.stdout.write('test');", { mode: 0o700 });
+      await chmod(path.join(root, kind), 0o700);
+      await assert.rejects(prepareEngineReadiness(config, config.runtimeHomePath), /held by the auth gateway or engine broker/u);
     }
-
-    await writeFile(authPath, "{", { mode: 0o600 });
-    await chmod(authPath, 0o600);
-    await assert.rejects(prepareEngineReadiness(config, config.runtimeHomePath), /subscription authentication is not ready/);
-
-    await writeFile(authPath, JSON.stringify(credential("2099-01-01T00:00:00.000Z")), { mode: 0o600 });
-    await chmod(authPath, 0o644);
-    await assert.rejects(prepareEngineReadiness(config, config.runtimeHomePath), /subscription authentication is not ready/);
-
-    await chmod(authPath, 0o600);
-    await link(authPath, path.join(root, "linked-auth"));
-    await assert.rejects(prepareEngineReadiness(config, config.runtimeHomePath), /subscription authentication is not ready/);
   } finally {
     if (previousPath === undefined) delete process.env.PATH; else process.env.PATH = previousPath;
     await rm(root, { recursive: true, force: true });

@@ -11,18 +11,14 @@ export type EngineAuthVerification = Readonly<{
 
 export interface AuthEngineHooks {
   engineHomePath(runtimeHomePath: string): string;
-  verifyAuth(input: EngineAuthVerification): Promise<void>;
+  /** Only an engine whose login lives in the agent's own home (AGY's keyring) verifies it there. */
+  verifyAuth?(input: EngineAuthVerification): Promise<void>;
   hasRefreshableCredential(bytes: Uint8Array): boolean;
-  credentialSecretValues(bytes: Uint8Array): readonly string[];
 }
 
 export function credentialJson(bytes: Uint8Array): unknown {
   try { return JSON.parse(Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString("utf8")); }
   catch { return undefined; }
-}
-
-export function credentialPairSecrets(pair: { access?: string; refresh?: string }): readonly string[] {
-  return [...new Set([pair.access, pair.refresh].filter((entry): entry is string => entry !== undefined))];
 }
 
 export function object(value: unknown): Record<string, unknown> | undefined {
